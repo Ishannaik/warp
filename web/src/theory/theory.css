@@ -1,0 +1,172 @@
+/*
+ * theory.css — animations + helpers specific to the /how deep-dive.
+ *
+ * The global @keyframes (wrapRise, wrapFade, wrapBlink, wrapFlow, …) live in
+ * src/styles/keyframes.css and are reused freely. This file adds only the
+ * motions the Theory page and its diagrams need, all namespaced `thy*` to avoid
+ * collisions, plus a prefers-reduced-motion block that settles everything to
+ * its final, legible state.
+ *
+ * Imported once from Theory.tsx. Diagram components may reference these
+ * animation names directly.
+ */
+
+/* ---------------------------------------------------------- entrances --- */
+
+/* Rise + fade for scroll-triggered section reveals. Pair with the InView hook
+ * (primitives.tsx): add `.thy-in` once the element scrolls into view. */
+@keyframes thyRise {
+  from {
+    opacity: 0;
+    transform: translateY(34px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes thyFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* descend-reveal — for the PART B layers: enter from slightly above as if
+ * sinking into place, used on the L0..L7 cards as they scroll in. */
+@keyframes thyDescend {
+  from {
+    opacity: 0;
+    transform: translateY(-26px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* ------------------------------------------------------------ ambient --- */
+
+/* Slow breathing glow — for dormant/idle states (e.g. hibernating DO, L0). */
+@keyframes thyPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* Dashed/striped flow along a pipe or beam. Pair with a striped background and
+ * background-size: 32px. */
+@keyframes thyFlow {
+  to {
+    background-position: 32px 0;
+  }
+}
+
+/* Ciphertext shimmer — a sheen sweeping across an encrypted payload. */
+@keyframes thyShimmer {
+  0% {
+    transform: translateX(-130%);
+  }
+  60%,
+  100% {
+    transform: translateX(240%);
+  }
+}
+
+/* Token travel along a horizontal path (0% -> 100% of a track). */
+@keyframes thyTravelX {
+  from {
+    left: 0%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+/* Slow rotation — for the WebRTC loop mark's ambient spin. */
+@keyframes thySpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A single quantum-of-heat pulse — Landauer bit erasure at the bedrock layer. */
+@keyframes thyQuantum {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* Buffer fill drift — generic meter rise used by the backpressure diagram. */
+@keyframes thyMeter {
+  0% {
+    height: 18%;
+  }
+  50% {
+    height: 92%;
+  }
+  100% {
+    height: 18%;
+  }
+}
+
+/* ------------------------------------------------------------- helpers --- */
+
+/* InView trigger classes. Elements start hidden; .thy-in plays the entrance. */
+.thy-reveal {
+  opacity: 0;
+  will-change: opacity, transform;
+}
+.thy-reveal.thy-in {
+  animation: thyRise 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.thy-reveal-descend {
+  opacity: 0;
+  will-change: opacity, transform, filter;
+}
+.thy-reveal-descend.thy-in {
+  animation: thyDescend 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* --------------------------------------------- reduced-motion settle --- */
+/*
+ * a11y-safe: never strand an element at its opacity:0 start frame. Force every
+ * theory animation/transition to ~instant and hold its final frame, and make
+ * the reveal helpers fully visible immediately.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .thy-reveal,
+  .thy-reveal-descend {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    animation: none !important;
+  }
+
+  [class^="thy-"],
+  [class*=" thy-"],
+  .thy-anim,
+  .thy-anim * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-fill-mode: forwards !important;
+    transition-duration: 0.01ms !important;
+  }
+}

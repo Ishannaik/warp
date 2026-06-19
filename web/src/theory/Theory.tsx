@@ -1,18 +1,51 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
+import "./theory.css";
+import WebRtcLogo from "./WebRtcLogo";
+import { DepthGauge, type DepthLayer } from "./diagrams/primitives";
+
+/* --- PART A diagrams (the lifecycle of one transfer) --- */
+import CloudVsDirect from "./diagrams/CloudVsDirect";
+import WebRtcChannel from "./diagrams/WebRtcChannel";
+import Handshake from "./diagrams/Handshake";
+import NatStun from "./diagrams/NatStun";
+import Chunking from "./diagrams/Chunking";
+import LanDiscovery from "./diagrams/LanDiscovery";
+import DurableObject from "./diagrams/DurableObject";
+
+/* --- PART B diagrams (the descent: why a relay is never free) --- */
+import L0Direct from "./diagrams/L0Direct";
+import L1Turn from "./diagrams/L1Turn";
+import L2Edge from "./diagrams/L2Edge";
+import L3Transit from "./diagrams/L3Transit";
+import L4Physical from "./diagrams/L4Physical";
+import L5Power from "./diagrams/L5Power";
+import L6Energy from "./diagrams/L6Energy";
+import L7Bedrock from "./diagrams/L7Bedrock";
 
 /**
- * Theory — the "/how" deep-dive. A genuinely educational, editorial page that
- * teaches how Wrap actually works: the problem with cloud transfer, what P2P +
- * WebRTC means, the SDP/ICE signaling handshake, STUN + NAT traversal (and why
- * some networks honestly can't connect), the encrypted DTLS DataChannel,
- * chunking + backpressure, and the hibernating Durable Object signaling server.
+ * Theory — the "/how" deep-dive (page shell / foundation).
  *
- * Built entirely from the existing Wrap design system — same dark palette,
- * Bricolage/Archivo/JetBrains Mono fonts, hairline borders, mono eyebrows,
- * accent var(--acc). Diagrams are CSS-only (no images). Numbering is real: the
- * sections trace the literal lifecycle of one transfer, so 01..07 carry order.
+ * Editorial technical longform that teaches (PART A) how Wrap actually works,
+ * concept by concept, then descends (PART B) through the economics of a relayed
+ * byte to show why a relay can never be truly free.
+ *
+ * Built entirely on the Wrap design system: dark palette, Bricolage/Archivo/
+ * JetBrains Mono, hairline borders, mono eyebrows, accent var(--acc) /
+ * amber var(--amb). All diagrams are self-contained CSS/SVG components living in
+ * ./diagrams and rendered beside their prose. Final copy comes from
+ * docs/theory-content.md (filled by Assemble); prose here is placeholder-grade.
+ *
+ * This file owns: nav chrome, hero, A1..A7 section slots, the PART B intro, the
+ * L0..L7 descent with a sticky DepthGauge, the closing synthesis, and the CTA +
+ * footer. It does NOT implement the diagrams themselves.
  */
 
 const MONO = "'JetBrains Mono',monospace";
@@ -20,7 +53,10 @@ const DISPLAY = "'Bricolage Grotesque',sans-serif";
 const HAIR = "1px solid rgba(239,233,218,.13)";
 const HAIR_STRONG = "1px solid rgba(239,233,218,.16)";
 
-/* ---------------------------------------------------------------- chrome -- */
+const PROSE_MAX = 880;
+const WIDE_MAX = 1320;
+
+/* ================================================================ chrome == */
 
 const navLink: CSSProperties = { color: "#b6b0a0", textDecoration: "none" };
 
@@ -30,7 +66,7 @@ function Chrome() {
     <>
       <style>{`
         .thy-nav-link:hover{color:#efe9da}
-        .thy-back:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.12)}
+        .thy-back:hover{opacity:.85}
         .thy-launch:hover{background:#6470ff}
         .thy-home:hover{color:#efe9da;border-color:rgba(239,233,218,.55)}
       `}</style>
@@ -52,9 +88,7 @@ function Chrome() {
           zIndex: 5,
         }}
       >
-        <span>
-          WRAP&nbsp;&nbsp;/&nbsp;&nbsp;how it works &mdash; the theory
-        </span>
+        <span>WRAP&nbsp;&nbsp;/&nbsp;&nbsp;how it works &mdash; the theory</span>
         {!isMobile && (
           <span style={{ display: "flex", gap: "26px" }}>
             <span style={{ color: "var(--acc)" }}>&#9679; PEER-TO-PEER</span>
@@ -178,27 +212,34 @@ function Chrome() {
   );
 }
 
-/* ----------------------------------------------------------- primitives -- */
+/* ============================================================ primitives == */
 
-const PROSE_MAX = 880;
-const WIDE_MAX = 1320;
-
+/**
+ * Section — an editorial concept block. Eyebrow ("01 / THE PROBLEM"), heading,
+ * lede, then a two-column body: prose on one side, the diagram slot on the
+ * other (stacks on mobile). `flip` swaps which side the diagram sits on so the
+ * page alternates rhythm. `dark` paints the darker inset background.
+ */
 function Section({
   id,
-  num,
   eyebrow,
   heading,
   lede,
+  prose,
+  diagram,
+  callout,
   dark = false,
-  children,
+  flip = false,
 }: {
   id?: string;
-  num: string;
   eyebrow: string;
   heading: ReactNode;
   lede?: ReactNode;
+  prose?: ReactNode;
+  diagram?: ReactNode;
+  callout?: ReactNode;
   dark?: boolean;
-  children?: ReactNode;
+  flip?: boolean;
 }) {
   const isMobile = useIsMobile();
   return (
@@ -213,54 +254,95 @@ function Section({
       }}
     >
       <div style={{ maxWidth: WIDE_MAX, margin: "0 auto" }}>
-        <div
-          style={{
-            fontFamily: MONO,
-            fontSize: "11.5px",
-            letterSpacing: ".2em",
-            textTransform: "uppercase",
-            color: "#6f6a5d",
-          }}
-        >
-          {num} / {eyebrow}
-        </div>
-        <h2
-          style={{
-            fontFamily: DISPLAY,
-            fontWeight: 700,
-            fontSize: "clamp(30px,3.6vw,50px)",
-            lineHeight: 1.02,
-            letterSpacing: "-.025em",
-            margin: "14px 0 0",
-            color: "#efe9da",
-            maxWidth: "860px",
-          }}
-        >
-          {heading}
-        </h2>
-        {lede && (
-          <p
+        <SectionHead eyebrow={eyebrow} heading={heading} lede={lede} />
+
+        {(prose || diagram) && (
+          <div
             style={{
-              fontSize: "18px",
-              lineHeight: 1.6,
-              color: "#cdc8ba",
-              maxWidth: PROSE_MAX,
-              margin: "20px 0 0",
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) minmax(0,1fr)",
+              gap: isMobile ? "32px" : "clamp(32px,5vw,72px)",
+              alignItems: "start",
+              marginTop: isMobile ? "30px" : "46px",
             }}
           >
-            {lede}
-          </p>
+            <div
+              style={{
+                order: !isMobile && flip ? 2 : 1,
+                maxWidth: PROSE_MAX,
+              }}
+            >
+              {prose}
+              {callout}
+            </div>
+            {diagram && (
+              <div
+                style={{
+                  order: !isMobile && flip ? 1 : 2,
+                  position: !isMobile ? "sticky" : "static",
+                  top: !isMobile ? "92px" : undefined,
+                }}
+              >
+                {diagram}
+              </div>
+            )}
+          </div>
         )}
-        {children}
       </div>
     </section>
   );
 }
 
-/** A constrained reading column for body prose. */
-function Prose({ children }: { children: ReactNode }) {
+function SectionHead({
+  eyebrow,
+  heading,
+  lede,
+}: {
+  eyebrow: string;
+  heading: ReactNode;
+  lede?: ReactNode;
+}) {
   return (
-    <div style={{ maxWidth: PROSE_MAX, marginTop: "26px" }}>{children}</div>
+    <>
+      <div
+        style={{
+          fontFamily: MONO,
+          fontSize: "11.5px",
+          letterSpacing: ".2em",
+          textTransform: "uppercase",
+          color: "#6f6a5d",
+        }}
+      >
+        {eyebrow}
+      </div>
+      <h2
+        style={{
+          fontFamily: DISPLAY,
+          fontWeight: 700,
+          fontSize: "clamp(28px,3.4vw,46px)",
+          lineHeight: 1.04,
+          letterSpacing: "-.025em",
+          margin: "14px 0 0",
+          color: "#efe9da",
+          maxWidth: "18ch",
+        }}
+      >
+        {heading}
+      </h2>
+      {lede && (
+        <p
+          style={{
+            fontSize: "18px",
+            lineHeight: 1.6,
+            color: "#cdc8ba",
+            maxWidth: PROSE_MAX,
+            margin: "20px 0 0",
+          }}
+        >
+          {lede}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -343,43 +425,26 @@ function Callout({
   );
 }
 
-const nodeBox: CSSProperties = {
-  border: HAIR_STRONG,
-  background: "#15140f",
-  padding: "16px 18px",
-  minWidth: "112px",
-  textAlign: "center",
-};
-
-const nodeLabel: CSSProperties = {
-  fontFamily: MONO,
-  fontSize: "10px",
-  letterSpacing: ".2em",
-  textTransform: "uppercase",
-  color: "#6f6a5d",
-};
-
-const nodeName: CSSProperties = {
-  fontFamily: DISPLAY,
-  fontWeight: 700,
-  fontSize: "16px",
-  marginTop: "6px",
-  color: "#efe9da",
-};
-
-/* ------------------------------------------------- signature: hero flow -- */
+/* ============================================= signature: hero flow diagram */
 /**
- * The signature element. Two endpoints, A and B. Phase 0: both reach UP to the
- * signaling server (dashed, brokered, content-free). Phase 1: the server fades
- * out of the path and a solid, flowing, encrypted channel lights up directly
- * between A and B. The two phases auto-toggle so the reader literally watches
- * the relay step aside.
+ * FlowDiagram — the page's signature element (kept inline as the hero, since it
+ * sets the whole metaphor). Phase 1: both peers reach UP to the signaling
+ * server over dashed, content-free links. Phase 2: the server dims and a solid,
+ * flowing, encrypted channel lights up directly between A and B. Auto-toggles.
  */
 function FlowDiagram() {
   const [direct, setDirect] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
+    const reduce =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      setDirect(true);
+      return;
+    }
     const t = setInterval(() => setDirect((d) => !d), 3200);
     return () => clearInterval(t);
   }, []);
@@ -423,9 +488,28 @@ function FlowDiagram() {
             animation: direct ? "wrapBlink 1.1s steps(1) infinite" : "none",
           }}
         />
-        <span style={nodeLabel}>{label}</span>
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: "10px",
+            letterSpacing: ".2em",
+            textTransform: "uppercase",
+            color: "#6f6a5d",
+          }}
+        >
+          {label}
+        </span>
       </div>
-      <div style={nodeName}>{name}</div>
+      <div
+        style={{
+          fontFamily: DISPLAY,
+          fontWeight: 700,
+          fontSize: "16px",
+          color: "#efe9da",
+        }}
+      >
+        {name}
+      </div>
     </div>
   );
 
@@ -439,7 +523,6 @@ function FlowDiagram() {
         overflow: "hidden",
       }}
     >
-      {/* phase label */}
       <div
         style={{
           fontFamily: MONO,
@@ -459,7 +542,6 @@ function FlowDiagram() {
         )}
       </div>
 
-      {/* signaling server */}
       <div style={{ display: "flex", justifyContent: "center" }}>
         <div
           style={{
@@ -475,13 +557,10 @@ function FlowDiagram() {
           }}
         >
           Signaling server
-          <span style={{ color: "#6f6a5d" }}>
-            &nbsp;&middot; introductions only
-          </span>
+          <span style={{ color: "#6f6a5d" }}>&nbsp;&middot; introductions only</span>
         </div>
       </div>
 
-      {/* the two dashed uplinks to the server */}
       <div
         style={{
           display: "grid",
@@ -494,7 +573,6 @@ function FlowDiagram() {
         <div style={dashV} />
       </div>
 
-      {/* endpoints + the direct channel between them */}
       <div
         style={{
           display: "grid",
@@ -544,195 +622,118 @@ function FlowDiagram() {
   );
 }
 
-/* ------------------------------------------------ section-04: NAT lattice */
-/** A small CSS lattice illustrating NAT: who can reach whom, and the wall. */
-function NatDiagram() {
-  const isMobile = useIsMobile();
-  const row = (
-    label: string,
-    ok: boolean,
-    note: string,
-    tone: string,
-  ) => (
-    <div
-      style={{
-        display: "flex",
-        alignItems: isMobile ? "flex-start" : "center",
-        gap: "14px",
-        padding: "14px 0",
-        borderTop: HAIR_STRONG,
-      }}
-    >
-      <span
-        style={{
-          width: "10px",
-          height: "10px",
-          flex: "none",
-          marginTop: isMobile ? "5px" : 0,
-          background: tone,
-          borderRadius: ok ? "50%" : 0,
-        }}
-      />
-      <div
-        style={{
-          display: "flex",
-          flexDirection: isMobile ? "column" : "row",
-          alignItems: isMobile ? "flex-start" : "center",
-          gap: isMobile ? "6px" : "14px",
-          minWidth: 0,
-        }}
-      >
-        <span
-          style={{
-            fontFamily: MONO,
-            fontSize: "12px",
-            letterSpacing: ".05em",
-            color: "#efe9da",
-            minWidth: isMobile ? 0 : "210px",
-          }}
-        >
-          {label}
-        </span>
-        <span style={{ fontSize: "14.5px", color: "#a8a293", lineHeight: 1.5 }}>
-          {note}
-        </span>
-      </div>
-    </div>
-  );
+/* =================================================== PART B descent layout */
 
-  return (
-    <div
-      style={{
-        maxWidth: PROSE_MAX,
-        marginTop: "30px",
-        border: HAIR_STRONG,
-        background: "#15140f",
-        padding: isMobile ? "6px 16px 16px" : "6px 24px 18px",
-      }}
-    >
-      {row(
-        "Open / home networks",
-        true,
-        "STUN reveals each peer's public address; they connect directly. The common case.",
-        "var(--acc)",
-      )}
-      {row(
-        "One side behind a typical NAT",
-        true,
-        "Hole-punching through the router works once both sides know where to aim.",
-        "var(--acc)",
-      )}
-      {row(
-        "Symmetric NAT / locked-down corporate",
-        false,
-        "The router rewrites ports unpredictably. Hole-punching fails — only a TURN relay could bridge it.",
-        "var(--amb)",
-      )}
-    </div>
-  );
+const LAYERS: DepthLayer[] = [
+  { id: "L0", name: "SURFACE" },
+  { id: "L1", name: "THE RELAY" },
+  { id: "L2", name: "THE EDGE" },
+  { id: "L3", name: "TRANSIT" },
+  { id: "L4", name: "PHYSICAL" },
+  { id: "L5", name: "POWER & IRON" },
+  { id: "L6", name: "THE SOURCE" },
+  { id: "L7", name: "BEDROCK" },
+];
+
+interface LayerDef {
+  id: string;
+  depth: string;
+  heading: ReactNode;
+  lede: ReactNode;
+  prose: ReactNode;
+  diagram: ReactNode;
+  callout: ReactNode;
 }
 
-/* ------------------------------------------------ section-06: chunk pipe -- */
-/** Visualizes a large file sliced into 16KB chunks streamed under backpressure. */
-function ChunkDiagram() {
+/**
+ * DescentLayer — one L-layer in PART B. Renders inside the descent column
+ * (right of the sticky DepthGauge). Reports its active state up via
+ * IntersectionObserver so the gauge can light the right marker.
+ */
+function DescentLayer({
+  index,
+  layer,
+  onActive,
+}: {
+  index: number;
+  layer: LayerDef;
+  onActive: (i: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const arrow = isMobile ? "↓" : "→";
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) onActive(index);
+        }
+      },
+      { threshold: 0, rootMargin: "-45% 0px -45% 0px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [index, onActive]);
+
   return (
     <div
+      ref={ref}
+      id={layer.id}
       style={{
-        maxWidth: PROSE_MAX,
-        marginTop: "30px",
-        border: HAIR_STRONG,
-        background: "#15140f",
-        padding: isMobile ? "20px 16px" : "24px",
+        padding: isMobile ? "44px 0" : "60px 0",
+        borderTop: index === 0 ? "none" : HAIR,
       }}
     >
       <div
         style={{
-          display: "flex",
-          flexDirection: isMobile ? "column" : "row",
-          alignItems: isMobile ? "stretch" : "center",
-          gap: "16px",
-          flexWrap: "wrap",
+          fontFamily: MONO,
+          fontSize: "11px",
+          letterSpacing: ".2em",
+          textTransform: "uppercase",
+          color: "var(--acc)",
         }}
       >
-        <div
-          style={{
-            ...nodeBox,
-            minWidth: isMobile ? "0" : "96px",
-            width: isMobile ? "100%" : undefined,
-          }}
-        >
-          <div style={nodeLabel}>FILE</div>
-          <div style={{ ...nodeName, fontSize: "15px" }}>4.2 GB</div>
-        </div>
-
-        <span style={{ color: "#4a463c", fontFamily: MONO, textAlign: "center" }}>
-          {arrow}
-        </span>
-
-        {/* the chunk train */}
-        <div style={{ flex: 1, minWidth: isMobile ? "0" : "200px" }}>
-          <div
-            style={{
-              display: "flex",
-              gap: "4px",
-              overflow: "hidden",
-              WebkitMaskImage:
-                "linear-gradient(90deg,#000 70%,transparent)",
-              maskImage: "linear-gradient(90deg,#000 70%,transparent)",
-            }}
-          >
-            {Array.from({ length: 14 }).map((_, i) => (
-              <span
-                key={i}
-                style={{
-                  width: "16px",
-                  height: "22px",
-                  flex: "none",
-                  border: "1px solid var(--acc)",
-                  background:
-                    i < 6 ? "rgba(var(--acc-rgb),.25)" : "transparent",
-                }}
-              />
-            ))}
-          </div>
-          <div
-            style={{
-              fontFamily: MONO,
-              fontSize: "10px",
-              letterSpacing: ".14em",
-              textTransform: "uppercase",
-              color: "#6f6a5d",
-              marginTop: "8px",
-            }}
-          >
-            16 KB chunks &middot; sent only while the buffer has room
-          </div>
-        </div>
-
-        <span style={{ color: "#4a463c", fontFamily: MONO, textAlign: "center" }}>
-          {arrow}
-        </span>
-
-        <div
-          style={{
-            ...nodeBox,
-            minWidth: isMobile ? "0" : "96px",
-            width: isMobile ? "100%" : undefined,
-          }}
-        >
-          <div style={nodeLabel}>PEER B</div>
-          <div style={{ ...nodeName, fontSize: "15px" }}>reassembles</div>
-        </div>
+        {layer.depth}
       </div>
+      <h3
+        style={{
+          fontFamily: DISPLAY,
+          fontWeight: 700,
+          fontSize: "clamp(24px,2.8vw,38px)",
+          lineHeight: 1.06,
+          letterSpacing: "-.02em",
+          margin: "12px 0 0",
+          color: "#efe9da",
+          maxWidth: "20ch",
+        }}
+      >
+        {layer.heading}
+      </h3>
+      <p
+        style={{
+          fontSize: "17px",
+          lineHeight: 1.6,
+          color: "#cdc8ba",
+          maxWidth: PROSE_MAX,
+          margin: "16px 0 0",
+        }}
+      >
+        {layer.lede}
+      </p>
+
+      <div style={{ marginTop: isMobile ? "26px" : "34px" }}>{layer.diagram}</div>
+
+      <div style={{ marginTop: "28px", maxWidth: PROSE_MAX }}>{layer.prose}</div>
+      {layer.callout}
     </div>
   );
 }
 
-/* --------------------------------------------------------------- footer -- */
+/* ======================================================== closing + footer */
 
-function FooterCta() {
+function ClosingCta() {
   const isMobile = useIsMobile();
   return (
     <section
@@ -755,21 +756,21 @@ function FooterCta() {
             marginBottom: "20px",
           }}
         >
-          Now you know how
+          The whole story, in one breath
         </div>
         <h2
           style={{
             fontFamily: DISPLAY,
             fontWeight: 800,
-            fontSize: "clamp(44px,8vw,124px)",
-            lineHeight: 0.9,
+            fontSize: "clamp(40px,7vw,108px)",
+            lineHeight: 0.92,
             letterSpacing: "-.04em",
             textTransform: "uppercase",
             margin: 0,
             color: "#efe9da",
           }}
         >
-          Watch it
+          Free by refusing
           <br />
           <span
             style={{
@@ -777,7 +778,7 @@ function FooterCta() {
               textShadow: "0 0 60px rgba(var(--acc-rgb),.4)",
             }}
           >
-            happen.
+            to relay.
           </span>
         </h2>
         <p
@@ -785,12 +786,13 @@ function FooterCta() {
             fontSize: "17px",
             lineHeight: 1.6,
             color: "#a8a293",
-            maxWidth: "520px",
+            maxWidth: "560px",
             margin: "26px auto 0",
           }}
         >
-          Open a channel, share the code, and read the live state for yourself
-          &mdash; offer, answer, ICE, connected.
+          Free where free is real. Honest where it isn't. Open a channel, share
+          the code, and watch your bytes go straight across &mdash; never a
+          middleman by stealth.
         </p>
         <div
           style={{
@@ -873,9 +875,7 @@ function FooterCta() {
           >
             <div style={{ width: "8px", height: "8px", background: "#121110" }} />
           </div>
-          <span
-            style={{ fontFamily: DISPLAY, fontSize: "17px", fontWeight: 800 }}
-          >
+          <span style={{ fontFamily: DISPLAY, fontSize: "17px", fontWeight: 800 }}>
             WRAP
           </span>
         </div>
@@ -911,10 +911,243 @@ function FooterCta() {
   );
 }
 
-/* =============================================================== page === */
+/* ================================================================== page == */
 
 export default function Theory() {
   const isMobile = useIsMobile();
+  const [activeLayer, setActiveLayer] = useState(0);
+
+  /* PART B layer definitions — placeholder prose; Assemble fills from the doc. */
+  const layers: LayerDef[] = [
+    {
+      id: "L0",
+      depth: "L0 · Surface",
+      heading: "At the top, it really is free — because nothing is relayed.",
+      lede: (
+        <>
+          A direct peer-to-peer transfer reuses the internet access both people
+          are <em>already</em> paying for. No new pipe, no third party in the data
+          path, no marginal cost.
+        </>
+      ),
+      prose: (
+        <>
+          <P>
+            When Wrap connects two peers directly, your bytes ride existing
+            broadband on both ends &mdash; sunk costs, already paid. Wrap adds a
+            few seconds of tiny, content-free signaling on top, cheap enough to
+            give away. <Term>Free</Term> isn&rsquo;t magic; it&rsquo;s the absence
+            of a relay.
+          </P>
+        </>
+      ),
+      diagram: <L0Direct />,
+      callout: (
+        <Callout kicker="The surface">
+          Free is the absence of a relay. Reuse pipes that are already paid for
+          and the marginal cost really is zero.
+        </Callout>
+      ),
+    },
+    {
+      id: "L1",
+      depth: "L1 · The relay",
+      heading: "A relay has to carry every byte twice.",
+      lede: (
+        <>
+          When the direct path fails, a <Term>TURN</Term> relay steps in. Now your
+          file goes <em>up</em> to the relay and <em>down</em> to the peer &mdash;
+          received and re-sent in full.
+        </>
+      ),
+      prose: (
+        <P>
+          Send 4&nbsp;GB through TURN and the relay handles ~8&nbsp;GB &mdash; in
+          and back out. That bandwidth is metered and scales linearly with every
+          byte. No caching, no amortization: relayed traffic is pure, recurring,
+          per-byte cost.
+        </P>
+      ),
+      diagram: <L1Turn />,
+      callout: (
+        <Callout kicker="The relay" tone="amb">
+          A relay&rsquo;s cost scales one-to-one with traffic. Every byte in is a
+          byte out &mdash; there is nothing to amortize.
+        </Callout>
+      ),
+    },
+    {
+      id: "L2",
+      depth: "L2 · The edge",
+      heading: "&ldquo;Just put it on a CDN&rdquo; doesn't help — this can't be cached.",
+      lede: (
+        <>
+          CDNs make <em>popular, repeated</em> content cheap. A private one-to-one
+          transfer is the opposite: unique, encrypted, requested exactly once.
+        </>
+      ),
+      prose: (
+        <P>
+          Every transfer is a distinct, end-to-end-encrypted payload to exactly
+          one recipient &mdash; cache hit rate zero. So even at the edge you pay
+          full <Term>egress</Term> for every byte, one of the most aggressively
+          priced lines on any cloud bill.
+        </P>
+      ),
+      diagram: <L2Edge />,
+      callout: (
+        <Callout kicker="The edge" tone="amb">
+          Caching amortizes <em>repeated</em> bytes. A private transfer is
+          requested once &mdash; hit rate zero, full egress every time.
+        </Callout>
+      ),
+    },
+    {
+      id: "L3",
+      depth: "L3 · Transit",
+      heading: "Bytes between networks ride paid transit and peering.",
+      lede: (
+        <>
+          The internet is many separate networks. Crossing between them costs{" "}
+          <Term>transit</Term> &mdash; sold by committed bandwidth, not goodwill.
+        </>
+      ),
+      prose: (
+        <P>
+          IP transit commonly runs ~$0.05&ndash;$0.80 per Mbps per month: cheapest
+          in major hubs, far higher where fiber is scarce. Your free direct
+          transfer rides this bundled into flat-rate access fees; a relay operator
+          buys it explicitly, by the committed Mbps, every month.
+        </P>
+      ),
+      diagram: <L3Transit />,
+      callout: (
+        <Callout kicker="Transit" tone="amb">
+          Transit is sold by committed Mbps, every month &mdash; ~$0.05 in a major
+          hub, up to ~$0.80 or more where the fiber is scarce.
+        </Callout>
+      ),
+    },
+    {
+      id: "L4",
+      depth: "L4 · The physical layer",
+      heading: "Under the transit price is glass, steel, and ships.",
+      lede: (
+        <>
+          Transit is cheap only because the physical link already exists &mdash;
+          fiber-optic cable, including the subsea cables carrying nearly all
+          intercontinental traffic.
+        </>
+      ),
+      prose: (
+        <P>
+          You can&rsquo;t relay a byte across an ocean without a cable under it.
+          Subsea systems run on the order of <Term>~$25,000/km</Term>, with a
+          transatlantic system around <Term>~$250M</Term> to build &mdash; plus
+          ships, repeaters every ~80&nbsp;km, landing stations, and decades of
+          repair. There is no software layer beneath the cable.
+        </P>
+      ),
+      diagram: <L4Physical />,
+      callout: (
+        <Callout kicker="The physical layer" tone="amb">
+          ~$25k per kilometer of subsea cable; ~$250M for a transatlantic system.
+          You can&rsquo;t relay a byte across an ocean without one.
+        </Callout>
+      ),
+    },
+    {
+      id: "L5",
+      depth: "L5 · Power & iron",
+      heading: "The machines run on electricity that is never free.",
+      lede: (
+        <>
+          Relays and the networks under them live in data centers &mdash; capital
+          poured into buildings, servers, and cooling, drawing continuous power
+          billed by the kilowatt-hour.
+        </>
+      ),
+      prose: (
+        <P>
+          Industry-average <Term>PUE &asymp; 1.56</Term>: for every watt reaching
+          the compute, ~0.56&nbsp;W extra goes to cooling, conversion, and
+          overhead. None of it amortizes away &mdash; the relayed byte you
+          didn&rsquo;t want to pay for is a measurable quantity of joules pulled
+          off a grid.
+        </P>
+      ),
+      diagram: <L5Power />,
+      callout: (
+        <Callout kicker="Power & iron" tone="amb">
+          PUE ~1.56 means ~56% overhead on top of the compute itself &mdash; every
+          relayed byte is metered electricity, billed continuously.
+        </Callout>
+      ),
+    },
+    {
+      id: "L6",
+      depth: "L6 · The source",
+      heading: "That electricity comes from somewhere finite.",
+      lede: (
+        <>
+          Power isn&rsquo;t conjured. It&rsquo;s generated from fuel, sun, wind, or
+          water &mdash; all bounded by physical supply, infrastructure, and cost.
+        </>
+      ),
+      prose: (
+        <P>
+          Trace the kilowatt-hour back and it lands on a finite source: fuel
+          burned out of the ground, or renewables capped by how much generation
+          humanity has actually built. Energy is a scarce, priced good &mdash; and
+          a relay&rsquo;s appetite for joules is real demand on that finite pool.
+        </P>
+      ),
+      diagram: <L6Energy />,
+      callout: (
+        <Callout kicker="The source" tone="amb">
+          Energy is a scarce, priced good drawn from finite sources. A relay&rsquo;s
+          joules are real demand competing against everyone else&rsquo;s.
+        </Callout>
+      ),
+    },
+    {
+      id: "L7",
+      depth: "L7 · Bedrock",
+      heading: "At the bottom: physics doesn't let a bit move for free.",
+      lede: (
+        <>
+          Strip away every layer of business and you reach laws, not policies.
+          Moving and erasing information has a hard physical floor; economics has a
+          hard scarcity floor. Neither is negotiable.
+        </>
+      ),
+      prose: (
+        <>
+          <P>
+            <Term>Landauer</Term> says erasing one bit dissipates at least
+            kT&middot;ln2 &asymp; 2.75&times;10&#8315;&#178;&#185;&nbsp;J at room
+            temperature. <Term>Shannon</Term> caps a channel at C =
+            B&middot;log&#8322;(1 + S/N). And <Term>scarcity</Term> says any finite
+            resource against unlimited wants must carry a price.
+          </P>
+          <P>
+            Stack them and the conclusion is forced: relaying information is a
+            physical process, physical processes cost energy, energy is finite, and
+            finite things are never free. The only way to pay nothing is to relay
+            nothing.
+          </P>
+        </>
+      ),
+      diagram: <L7Bedrock />,
+      callout: (
+        <Callout kicker="Bedrock">
+          A truly free relay would have to break thermodynamics, Shannon, or
+          scarcity. The only winning move is to not relay at all.
+        </Callout>
+      ),
+    },
+  ];
+
   return (
     <div
       style={{
@@ -927,7 +1160,7 @@ export default function Theory() {
     >
       <Chrome />
 
-      {/* ---- hero ---- */}
+      {/* ---------------------------------------------------------- hero -- */}
       <header
         style={{
           position: "relative",
@@ -987,62 +1220,80 @@ export default function Theory() {
               fontSize: "19px",
               lineHeight: 1.6,
               color: "#cdc8ba",
-              maxWidth: "560px",
+              maxWidth: "600px",
               margin: "28px 0 0",
               animation: "wrapFade .8s ease .5s both",
             }}
           >
             Wrap moves a file straight from one device to another over an
             encrypted, peer-to-peer channel. Here is exactly how that works
-            &mdash; and why a server never gets to read a single byte.
+            &mdash; and, at the end, the honest reason a relay-based service can
+            never be truly free.
           </p>
 
-          <div style={{ marginTop: isMobile ? "36px" : "52px", animation: "wrapFade .8s ease .65s both" }}>
+          <div
+            style={{
+              marginTop: isMobile ? "36px" : "52px",
+              animation: "wrapFade .8s ease .65s both",
+            }}
+          >
             <FlowDiagram />
           </div>
         </div>
       </header>
 
-      {/* ---- 01 · the problem ---- */}
+      {/* ===================================================== PART A === */}
+      {/* A1 · cloud vs direct */}
       <Section
-        num="01"
-        eyebrow="The problem"
+        eyebrow="01 / The problem"
         heading="Most transfers park your file on a stranger's computer."
         lede={
           <>
             Upload to a typical sharing service and your file makes a detour: it
-            travels up to a company's server, sits there as a complete copy, and
-            only then travels back down to whoever you sent it to.
+            travels up to a company&rsquo;s server, sits there as a complete copy,
+            and only then travels back down to whoever you sent it to.
           </>
         }
+        prose={
+          <>
+            <P>
+              That detour has real costs. Your file now exists on hardware you
+              don&rsquo;t control &mdash; it can be scanned, logged, retained,
+              subpoenaed, or leaked in a breach. You usually hit a size cap. And
+              the round trip is slower than it needs to be, because every byte
+              goes up before it can come down.
+            </P>
+            <P>
+              The uncomfortable part: the server didn&rsquo;t need to see the file
+              at all. It was only ever a middleman. Wrap removes the middleman.
+            </P>
+          </>
+        }
+        diagram={<CloudVsDirect />}
+        callout={
+          <Callout kicker="The core idea" tone="amb">
+            If two devices are both online, the file should go directly between
+            them. No third computer needs a copy.
+          </Callout>
+        }
         dark
-      >
-        <Prose>
-          <P>
-            That detour has real costs. Your file now exists on hardware you
-            don't control, often for far longer than the transfer itself. It can
-            be scanned, logged, retained, subpoenaed, or quietly leaked in a
-            breach. You usually hit a size cap. And the round trip is slower than
-            it needs to be, because every byte goes up before it can come down.
-          </P>
-          <P>
-            The uncomfortable part is that the server didn't need to see the
-            file at all. It was only ever a middleman &mdash; a place to leave
-            the file so the other person could pick it up later. Wrap removes the
-            middleman.
-          </P>
-        </Prose>
-        <Callout kicker="The core idea" tone="amb">
-          If two devices are both online, the file should go directly between
-          them. No third computer needs a copy.
-        </Callout>
-      </Section>
+      />
 
-      {/* ---- 02 · peer-to-peer + WebRTC ---- */}
+      {/* A2 · WebRTC + DTLS */}
       <Section
-        num="02"
-        eyebrow="Peer-to-peer"
-        heading="A direct line between two browsers — that's WebRTC."
+        eyebrow="02 / Peer-to-peer"
+        heading={
+          <>
+            A direct line between two browsers &mdash; that&rsquo;s{" "}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: ".3em", verticalAlign: "middle" }}>
+              <WebRtcLogo
+                size={36}
+                style={{ color: "var(--acc)", animation: "thySpin 9s linear infinite" }}
+              />
+              WebRTC.
+            </span>
+          </>
+        }
         lede={
           <>
             Peer-to-peer means the two devices talk to each other, not through a
@@ -1050,29 +1301,35 @@ export default function Theory() {
             built-in standard called <Term>WebRTC</Term>.
           </>
         }
-      >
-        <Prose>
-          <P>
-            WebRTC was designed for live video calls, where routing every frame
-            through a server would be slow and expensive. So browsers learned how
-            to open a direct connection between two machines and stream data
-            across it. Wrap uses that exact capability &mdash; not for video, but
-            for your files.
-          </P>
-          <P>
-            There's a catch that the rest of this page is really about: two
-            browsers can't just dial each other out of nowhere. Neither one knows
-            the other's address yet, and home and office networks hide their
-            devices behind routers. So before the direct line can open, the two
-            peers need a brief, carefully limited introduction.
-          </P>
-        </Prose>
-      </Section>
+        prose={
+          <>
+            <P>
+              WebRTC was built for live video, where routing every frame through a
+              server would be slow and costly. Wrap uses that same capability
+              &mdash; not for video, but for your files, over a{" "}
+              <Term>DataChannel</Term> wrapped in <Term>DTLS</Term> by the standard
+              itself. Encryption isn&rsquo;t a toggle; it&rsquo;s the only mode.
+            </P>
+            <P>
+              The catch the rest of this page is about: two browsers can&rsquo;t
+              dial each other out of nowhere. First, a brief, carefully limited
+              introduction.
+            </P>
+          </>
+        }
+        diagram={<WebRtcChannel />}
+        callout={
+          <Callout kicker="End-to-end, by default">
+            The keys live on the two devices. No server holds them, so no server
+            could read the transfer even if it wanted to.
+          </Callout>
+        }
+        flip
+      />
 
-      {/* ---- 03 · signaling handshake ---- */}
+      {/* A3 · handshake */}
       <Section
-        num="03"
-        eyebrow="The handshake"
+        eyebrow="03 / The handshake"
         heading="An introduction, not a delivery: SDP offer, answer, and ICE."
         lede={
           <>
@@ -1081,182 +1338,307 @@ export default function Theory() {
             and forth &mdash; and that is the only thing it ever does.
           </>
         }
+        prose={
+          <>
+            <P>
+              Peer A writes an <Term>SDP offer</Term> &mdash; codecs, encryption
+              parameters, capabilities. Peer B replies with an <Term>SDP answer</Term>.
+              Alongside, each peer emits <Term>ICE candidates</Term>: addresses
+              where it might be reachable.
+            </P>
+            <P>
+              The server relays those notes and nothing else &mdash; a switchboard
+              operator who connects the call but never joins it. Once offer,
+              answer, and candidates are exchanged, the peers connect directly and
+              the server&rsquo;s part is over.
+            </P>
+          </>
+        }
+        diagram={<Handshake />}
+        callout={
+          <Callout kicker="What the server sees">
+            Connection coordinates &mdash; never content. The notes describe{" "}
+            <em>how</em> to connect, not <em>what</em> you&rsquo;re sending.
+          </Callout>
+        }
         dark
-      >
-        <Prose>
-          <P>
-            Peer A writes an <Term>SDP offer</Term>: a plain-text summary of how
-            it would like to connect &mdash; which codecs, which encryption
-            parameters, which capabilities. Peer B replies with an{" "}
-            <Term>SDP answer</Term> describing its side. Alongside these, each
-            peer emits <Term>ICE candidates</Term>: a running list of network
-            addresses where it might be reachable.
-          </P>
-          <P>
-            The signaling server's entire job is to relay those notes from A to B
-            and back. It is a switchboard operator connecting a call: it knows two
-            parties want to talk and helps them find each other, but it never
-            joins the conversation. Once the peers have exchanged offer, answer,
-            and candidates, they connect directly and the server's part is over.
-          </P>
-        </Prose>
-        <Callout kicker="What the server sees">
-          Connection coordinates &mdash; never content. The offer/answer
-          describe <em>how</em> to connect, not <em>what</em> you're sending. The
-          file never passes through it.
-        </Callout>
-      </Section>
+      />
 
-      {/* ---- 04 · STUN + NAT ---- */}
+      {/* A4 · NAT + STUN */}
       <Section
-        num="04"
-        eyebrow="NAT traversal"
+        eyebrow="04 / NAT traversal"
         heading="Finding a public address with STUN — and being honest when there isn't one."
         lede={
           <>
             Almost no device has a clean public address anymore. They sit behind a
-            router doing <Term>NAT</Term>, which is why peers need help working
-            out where they actually appear from the outside.
+            router doing <Term>NAT</Term>, so peers need help working out where they
+            appear from the outside.
           </>
         }
-      >
-        <Prose>
-          <P>
-            A <Term>STUN</Term> server solves the easy half. A peer asks it one
-            question &mdash; &ldquo;from out here, what address and port do I look
-            like?&rdquo; &mdash; and STUN answers. Armed with that, two peers
-            behind ordinary routers can &ldquo;hole-punch&rdquo;: aim packets at
-            each other's discovered addresses at the same moment so each router
-            accepts the other's traffic. STUN is tiny and cheap, so Wrap uses it
-            freely.
-          </P>
-          <P>
-            But some networks &mdash; symmetric NATs, strict corporate firewalls
-            &mdash; rewrite ports so unpredictably that hole-punching can't work.
-            The only fix is a <Term>TURN</Term> relay: a server that forwards
-            every encrypted byte for the whole transfer. That's bandwidth someone
-            has to pay for, and it quietly puts a server back in the middle of
-            your data.
-          </P>
-        </Prose>
-
-        <NatDiagram />
-
-        <Callout kicker="The $0 tradeoff" tone="amb">
-          Wrap runs no TURN relay. On the rare network where a direct path can't
-          form, it tells you plainly instead of routing your file through a paid
-          server. Free, honest, and never a middleman by stealth.
-        </Callout>
-      </Section>
-
-      {/* ---- 05 · DTLS DataChannel ---- */}
-      <Section
-        num="05"
-        eyebrow="Encryption"
-        heading="The channel is encrypted before it carries a single byte."
-        lede={
+        prose={
           <>
-            Once the peers connect, the file rides a WebRTC{" "}
-            <Term>DataChannel</Term> &mdash; and every DataChannel is wrapped in{" "}
-            <Term>DTLS</Term> by the standard itself. Encryption isn't a feature
-            you switch on; it's the only mode there is.
+            <P>
+              A <Term>STUN</Term> server answers one question &mdash; &ldquo;from out
+              here, what address and port do I look like?&rdquo; Behind ordinary
+              routers, two peers can then <em>hole-punch</em> a direct path. STUN is
+              tiny and cheap, so Wrap uses it freely.
+            </P>
+            <P>
+              But <Term>symmetric NATs</Term> and <Term>CGNAT</Term> rewrite the port
+              per destination, so the address STUN found no longer matches.
+              Hole-punching fails. The only fix is a <Term>TURN</Term> relay &mdash;
+              and that quietly puts a paid server back in your data path.
+            </P>
           </>
         }
-        dark
-      >
-        <Prose>
-          <P>
-            During the handshake, the two peers also negotiate encryption keys
-            and verify each other with certificate fingerprints. From that point
-            on, the connection is end-to-end encrypted between the two devices.
-            Because the bytes are encrypted at the source and decrypted only at
-            the destination, anything in between &mdash; your router, your ISP,
-            any network hop &mdash; sees only ciphertext.
-          </P>
-          <P>
-            And since the file never touches Wrap's signaling server in the first
-            place, end-to-end isn't a promise we ask you to trust. It's a
-            consequence of the architecture: there is simply no point at which a
-            server holds your readable file.
-          </P>
-        </Prose>
-        <Callout kicker="End-to-end, by default">
-          The keys live on the two devices. No server holds them, so no server
-          could read the transfer even if it wanted to.
-        </Callout>
-      </Section>
+        diagram={<NatStun />}
+        callout={
+          <Callout kicker="The $0 tradeoff" tone="amb">
+            Wrap runs no TURN relay. On the rare network where a direct path
+            can&rsquo;t form, it tells you plainly &mdash; never a middleman by
+            stealth.
+          </Callout>
+        }
+        flip
+      />
 
-      {/* ---- 06 · chunking + backpressure ---- */}
+      {/* A5 · chunking + backpressure */}
       <Section
-        num="06"
-        eyebrow="Moving the bytes"
+        eyebrow="05 / Moving the bytes"
         heading="Big files go across as a steady stream of 16 KB chunks."
         lede={
           <>
-            You can't hand a multi-gigabyte file to the channel in one piece
-            &mdash; it would exhaust memory. Wrap slices the file into small{" "}
-            <Term>16 KB chunks</Term> and feeds them through one after another.
+            You can&rsquo;t hand a multi-gigabyte file to the channel in one piece.
+            Wrap slices it into small <Term>16 KB chunks</Term> and feeds them
+            through one after another.
           </>
         }
-      >
-        <Prose>
-          <P>
-            Chunking keeps memory flat: only a small window of the file is in
-            flight at any moment, no matter how large the whole thing is. That's
-            why there's no size cap &mdash; the only real limit is free space on
-            the receiving device.
-          </P>
-          <P>
-            The second half is <Term>backpressure</Term>. The sender can produce
-            chunks far faster than the network can carry them, so Wrap watches the
-            channel's outgoing buffer. When it fills past a threshold, the sender
-            pauses; when it drains, the sender resumes. The file moves at exactly
-            the speed the link can sustain &mdash; fast where the network is fast,
-            patient where it isn't, and never overflowing.
-          </P>
-        </Prose>
+        prose={
+          <>
+            <P>
+              Chunking keeps memory flat: only a small window is ever in flight, no
+              matter how large the file. That&rsquo;s why there&rsquo;s no size cap
+              &mdash; the real limit is free space on the receiving device.
+            </P>
+            <P>
+              The other half is <Term>backpressure</Term>. Wrap watches the
+              channel&rsquo;s outgoing buffer: when it fills past a threshold the
+              sender pauses; when it drains, it resumes. The file moves at exactly
+              the speed the link can sustain &mdash; never overflowing.
+            </P>
+          </>
+        }
+        diagram={<Chunking />}
+        callout={
+          <Callout kicker="No size cap">
+            Only a small window is ever in memory, so the real limit is free space
+            on the receiving device.
+          </Callout>
+        }
+        dark
+      />
 
-        <ChunkDiagram />
-      </Section>
-
-      {/* ---- 07 · durable object ---- */}
+      {/* A6 · LAN discovery */}
       <Section
-        num="07"
-        eyebrow="The server that barely exists"
+        eyebrow="06 / Nearby"
+        heading="Devices on the same network find each other automatically."
+        lede={
+          <>
+            When two devices share a network, Wrap can let them discover each other
+            with no code at all &mdash; grouped by the public address they share.
+          </>
+        }
+        prose={
+          <>
+            <P>
+              Two devices on one home or office network almost always egress from
+              the same public <Term>IPv4</Term> address. Wrap groups connections by
+              that address and shows you the devices sitting right next to you
+              &mdash; no room code to type.
+            </P>
+            <P>
+              IPv6 needs a gentler match: a subscriber line gets a whole{" "}
+              <Term>/64 prefix</Term>, and devices take different addresses within
+              it. So Wrap groups by the /64 prefix &mdash; the part that identifies
+              the network, not the device.
+            </P>
+          </>
+        }
+        diagram={<LanDiscovery />}
+        callout={
+          <Callout kicker="Same network, no code">
+            Group by shared public IPv4, or by the IPv6 /64 prefix &mdash; then
+            transfer directly, edge to edge.
+          </Callout>
+        }
+        flip
+      />
+
+      {/* A7 · Durable Object */}
+      <Section
+        eyebrow="07 / The server that barely exists"
         heading="A Cloudflare Durable Object that wakes to introduce two peers, then sleeps."
         lede={
           <>
-            The one piece of server Wrap needs is the signaling switchboard. It
-            runs as a Cloudflare <Term>Durable Object</Term> &mdash; a tiny,
-            single-purpose coordinator that hibernates the instant it goes idle.
+            The one piece of server Wrap needs is the signaling switchboard. It runs
+            as a Cloudflare <Term>Durable Object</Term> &mdash; a tiny coordinator
+            that hibernates the instant it goes idle.
           </>
         }
+        prose={
+          <>
+            <P>
+              Open a transfer and a Durable Object spins up to hold one
+              room&rsquo;s signaling: offer, answer, ICE. The moment the peers
+              connect directly and the room falls quiet, it{" "}
+              <Term>hibernates</Term> &mdash; freeing its resources until something
+              else needs it.
+            </P>
+            <P>
+              No fleets of servers, no storage buckets, no file-handling tier to pay
+              for or to breach. Just a coordinator that sees connection notes for a
+              few seconds and goes back to sleep &mdash; while your file travels a
+              path it was never on.
+            </P>
+          </>
+        }
+        diagram={<DurableObject />}
+        callout={
+          <Callout kicker="The whole architecture, in one line">
+            A server introduces the peers, then disappears. Everything that matters
+            &mdash; your file &mdash; goes directly, encrypted, edge to edge.
+          </Callout>
+        }
         dark
-      >
-        <Prose>
-          <P>
-            When you open a transfer, a Durable Object spins up to hold one
-            room's worth of signaling: it relays the offer, the answer, and the
-            ICE candidates between your two devices. The moment the peers connect
-            directly and the room falls quiet, it{" "}
-            <Term>hibernates</Term> &mdash; freeing its resources until something
-            else needs it.
-          </P>
-          <P>
-            This is what makes Wrap free to run and trustworthy by design. There
-            are no fleets of servers, no storage buckets, no file-handling tier to
-            pay for or to breach. The only server-side component is a coordinator
-            that sees connection notes for a few seconds and then goes back to
-            sleep &mdash; while your file travels a path it was never on.
-          </P>
-        </Prose>
-        <Callout kicker="The whole architecture, in one line">
-          A server introduces the peers, then disappears. Everything that matters
-          &mdash; your file &mdash; goes directly, encrypted, edge to edge.
-        </Callout>
-      </Section>
+      />
 
-      <FooterCta />
+      {/* ============================================ PART B intro === */}
+      <section
+        style={{
+          position: "relative",
+          zIndex: 4,
+          borderTop: HAIR,
+          padding: isMobile ? "64px 18px" : "120px 26px",
+          background: "#0e0d0a",
+        }}
+      >
+        <div style={{ maxWidth: WIDE_MAX, margin: "0 auto" }}>
+          <div
+            style={{
+              fontFamily: MONO,
+              fontSize: "11.5px",
+              letterSpacing: ".2em",
+              textTransform: "uppercase",
+              color: "var(--amb)",
+            }}
+          >
+            Part B / The economics of a byte
+          </div>
+          <h2
+            style={{
+              fontFamily: DISPLAY,
+              fontWeight: 800,
+              fontSize: "clamp(36px,5.5vw,76px)",
+              lineHeight: 0.96,
+              letterSpacing: "-.035em",
+              margin: "16px 0 0",
+              color: "#efe9da",
+              maxWidth: "16ch",
+            }}
+          >
+            Why a relay can never be completely free.
+          </h2>
+          <p
+            style={{
+              fontSize: "19px",
+              lineHeight: 1.6,
+              color: "#cdc8ba",
+              maxWidth: "680px",
+              margin: "26px 0 0",
+            }}
+          >
+            Wrap is free because, in the common case, it relays nothing &mdash; it
+            reuses pipes you&rsquo;ve <em>already</em> paid for. The moment a service
+            relays your bytes, it inherits a cost that doesn&rsquo;t disappear no
+            matter how deep you push it. Follow it down.
+          </p>
+
+          <p
+            style={{
+              fontFamily: DISPLAY,
+              fontWeight: 600,
+              fontSize: "clamp(20px,2.4vw,30px)",
+              lineHeight: 1.34,
+              letterSpacing: "-.015em",
+              color: "#efe9da",
+              maxWidth: "20ch",
+              margin: isMobile ? "34px 0 0" : "44px 0 0",
+              borderLeft: "2px solid var(--amb)",
+              paddingLeft: isMobile ? "18px" : "24px",
+            }}
+          >
+            P2P reuses a paid pipe; a relay is a new pipe &mdash; and pipes cost
+            energy and capital all the way down.
+          </p>
+        </div>
+      </section>
+
+      {/* ============================================ PART B descent === */}
+      <section
+        style={{
+          position: "relative",
+          zIndex: 4,
+          background: "#0e0d0a",
+          padding: isMobile ? "0 18px 24px" : "0 26px 40px",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: WIDE_MAX,
+            margin: "0 auto",
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "220px minmax(0,1fr)",
+            gap: isMobile ? 0 : "clamp(32px,4vw,64px)",
+            alignItems: "start",
+          }}
+        >
+          {/* sticky DepthGauge rail (desktop only) */}
+          {!isMobile && (
+            <div
+              style={{
+                position: "sticky",
+                top: "96px",
+                height: "calc(100vh - 160px)",
+                paddingTop: "60px",
+              }}
+            >
+              <DepthGauge
+                layers={LAYERS}
+                activeIndex={activeLayer}
+                onSelect={(i) => {
+                  const el = document.getElementById(LAYERS[i].id);
+                  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              />
+            </div>
+          )}
+
+          {/* the descending layers */}
+          <div>
+            {layers.map((layer, i) => (
+              <DescentLayer
+                key={layer.id}
+                index={i}
+                layer={layer}
+                onActive={setActiveLayer}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================== closing === */}
+      <ClosingCta />
     </div>
   );
 }
