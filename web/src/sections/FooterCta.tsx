@@ -13,18 +13,20 @@ import { useIsMobile } from "../lib/useIsMobile";
  * React hover state (muted #6f6a5d -> ink #efe9da).
  */
 
-const footerLinks: { label: string; href: string }[] = [
+const footerLinks: { label: string; href: string; external?: boolean }[] = [
   { label: "How it works", href: "#work" },
   { label: "Security", href: "#trust" },
   { label: "FAQ", href: "#faq" },
-  { label: "GitHub", href: "#" },
+  { label: "GitHub", href: "https://github.com/Ishannaik/warp", external: true },
 ];
 
-function FooterLink({ label, href }: { label: string; href: string }) {
+function FooterLink({ label, href, external }: { label: string; href: string; external?: boolean }) {
   const [hover, setHover] = useState(false);
   return (
     <a
       href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{ color: hover ? "#efe9da" : "#6f6a5d", textDecoration: "none" }}
@@ -159,7 +161,7 @@ export default function FooterCta() {
           }}
         >
           {footerLinks.map((l) => (
-            <FooterLink key={l.label} label={l.label} href={l.href} />
+            <FooterLink key={l.label} label={l.label} href={l.href} external={l.external} />
           ))}
         </div>
         <div

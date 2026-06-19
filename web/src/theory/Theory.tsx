@@ -137,6 +137,17 @@ function Chrome() {
               &larr; HOME
             </a>
           )}
+          {!isMobile && (
+            <a
+              href="https://github.com/Ishannaik/warp"
+              className="thy-nav-link"
+              style={navLink}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GITHUB
+            </a>
+          )}
           <a
             href="/send"
             className="thy-launch"
@@ -868,6 +879,22 @@ function FooterCta() {
             WRAP
           </span>
         </div>
+        <a
+          href="https://github.com/Ishannaik/warp"
+          className="thy-nav-link"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            fontFamily: MONO,
+            fontSize: "12px",
+            color: "#6f6a5d",
+            letterSpacing: ".06em",
+            textTransform: "uppercase",
+            textDecoration: "none",
+          }}
+        >
+          GitHub
+        </a>
         <div
           style={{
             fontFamily: MONO,

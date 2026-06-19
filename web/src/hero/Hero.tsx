@@ -182,6 +182,17 @@ export default function Hero() {
             >
               HOW IT WORKS
             </a>
+            <a
+              href="/receive"
+              className="wrap-nav-link"
+              style={navLink}
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/receive");
+              }}
+            >
+              RECEIVE
+            </a>
             <a href="#trust" className="wrap-nav-link" style={navLink}>
               SECURITY
             </a>
@@ -191,7 +202,29 @@ export default function Hero() {
             <a href="#faq" className="wrap-nav-link" style={navLink}>
               FAQ
             </a>
+            <a
+              href="https://github.com/Ishannaik/warp"
+              className="wrap-nav-link"
+              style={navLink}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GITHUB
+            </a>
           </div>
+        )}
+        {isMobile && (
+          <a
+            href="/receive"
+            className="wrap-nav-link"
+            style={{ ...navLink, fontFamily: MONO, fontSize: "12px", letterSpacing: ".05em" }}
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/receive");
+            }}
+          >
+            RECEIVE
+          </a>
         )}
         <a
           href="/send"
@@ -318,7 +351,7 @@ export default function Hero() {
               display: "flex",
               flexDirection: isMobile ? "column" : "row",
               gap: "14px",
-              marginBottom: "26px",
+              marginBottom: "18px",
             }}
           >
             <a
@@ -371,6 +404,26 @@ export default function Hero() {
               How it works
             </a>
           </div>
+          <a
+            href="/receive"
+            className="wrap-nav-link"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/receive");
+            }}
+            style={{
+              animation: "wrapFade .8s ease .72s both",
+              display: "inline-block",
+              fontFamily: MONO,
+              fontSize: "12px",
+              letterSpacing: ".04em",
+              color: "#a8a293",
+              textDecoration: "none",
+              marginBottom: "26px",
+            }}
+          >
+            Got a code? Receive a file <span style={{ color: "var(--acc)" }}>→</span>
+          </a>
           <div
             style={{
               animation: "wrapFade .8s ease .8s both",

@@ -69,6 +69,7 @@ export class SignalingRoom {
     catch { return this.send(ws, { type: 'error', error: 'bad-message', message: 'Expected JSON.' }); }
     if (!msg || typeof msg.type !== 'string') return this.send(ws, { type: 'error', error: 'bad-message' });
 
+    if (msg.type === 'ping') return; // keepalive — receiving it keeps the DO awake so it won't hibernate (10s) and drop a waiting room
     if (msg.type === 'join') return this.handleJoin(ws, msg);
     if (msg.type === 'signal') return this.handleSignal(ws, msg);
     return this.send(ws, { type: 'error', error: 'unknown-type', message: msg.type });

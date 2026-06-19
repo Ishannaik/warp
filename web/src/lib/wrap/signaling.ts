@@ -63,6 +63,7 @@ export class SignalingClient {
   /** Queue of frames sent before the socket finished opening. */
   private pending: string[] = [];
   private closed = false;
+  private keepalive: ReturnType<typeof setInterval> | null = null;
 
   selfId: string | null = null;
   room: string | null = null;
@@ -93,6 +94,9 @@ export class SignalingClient {
       // Flush anything queued while connecting.
       for (const frame of this.pending) ws.send(frame);
       this.pending = [];
+      // Keepalive: ping every 8s so the Durable Object never sits 10s idle and
+      // hibernates — which was dropping a waiting room before the peer could join.
+      this.keepalive = setInterval(() => this.rawSend(JSON.stringify({ type: "ping" })), 8000);
     });
 
     ws.addEventListener("message", (ev) => {
@@ -110,6 +114,7 @@ export class SignalingClient {
     });
 
     ws.addEventListener("close", (ev) => {
+      if (this.keepalive) { clearInterval(this.keepalive); this.keepalive = null; }
       this.emit("close", { code: ev.code, reason: ev.reason });
     });
   }
@@ -156,6 +161,7 @@ export class SignalingClient {
   close(): void {
     this.closed = true;
     this.pending = [];
+    if (this.keepalive) { clearInterval(this.keepalive); this.keepalive = null; }
     if (this.ws) {
       try {
         this.ws.close();
