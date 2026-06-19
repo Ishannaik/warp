@@ -260,7 +260,10 @@ function Section({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) minmax(0,1fr)",
+              // minmax(0,1fr) — NOT plain "1fr" (== minmax(auto,1fr)) — so a wide
+              // child's min-content can't inflate the column past the viewport.
+              // Plain 1fr was dragging the prose to the diagram's intrinsic width.
+              gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)",
               gap: isMobile ? "32px" : "clamp(32px,5vw,72px)",
               alignItems: "start",
               marginTop: isMobile ? "30px" : "46px",
