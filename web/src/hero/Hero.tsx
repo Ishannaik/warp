@@ -362,6 +362,7 @@ export default function Hero() {
                 navigate("/send");
               }}
               style={{
+                flex: isMobile ? undefined : "1 1 0",
                 padding: "16px 26px",
                 background: "var(--acc)",
                 color: "#fff",
@@ -371,58 +372,59 @@ export default function Hero() {
                 letterSpacing: ".07em",
                 textTransform: "uppercase",
                 cursor: "pointer",
-                display: isMobile ? "block" : "inline-block",
-                textAlign: isMobile ? "center" : undefined,
+                display: "block",
+                textAlign: "center",
                 textDecoration: "none",
               }}
             >
-              Start a transfer &nbsp;→
+              Send files &nbsp;→
             </a>
             <a
-              href="/how"
+              href="/receive"
               className="wrap-cta-secondary"
               onClick={(e) => {
                 e.preventDefault();
-                navigate("/how");
+                navigate("/receive");
               }}
               style={{
-                padding: "16px 24px",
+                flex: isMobile ? undefined : "1 1 0",
+                padding: "16px 26px",
                 background: "transparent",
                 border: "1px solid rgba(239,233,218,.25)",
                 color: "#efe9da",
                 fontFamily: MONO,
                 fontSize: "12.5px",
-                fontWeight: 500,
+                fontWeight: 600,
                 letterSpacing: ".07em",
                 textTransform: "uppercase",
                 cursor: "pointer",
-                display: isMobile ? "block" : "inline-block",
-                textAlign: isMobile ? "center" : undefined,
+                display: "block",
+                textAlign: "center",
                 textDecoration: "none",
               }}
             >
-              How it works
+              Receive &nbsp;→
             </a>
           </div>
           <a
-            href="/receive"
-            className="wrap-nav-link"
+            href="/how"
+            className="wrap-footer-link"
             onClick={(e) => {
               e.preventDefault();
-              navigate("/receive");
+              navigate("/how");
             }}
             style={{
               animation: "wrapFade .8s ease .72s both",
               display: "inline-block",
               fontFamily: MONO,
-              fontSize: "12px",
-              letterSpacing: ".04em",
-              color: "#a8a293",
+              fontSize: "11.5px",
+              letterSpacing: ".05em",
+              color: "#6f6a5d",
               textDecoration: "none",
               marginBottom: "26px",
             }}
           >
-            Got a code? Receive a file <span style={{ color: "var(--acc)" }}>→</span>
+            How it works <span style={{ color: "var(--acc)" }}>→</span>
           </a>
           <div
             style={{

@@ -24,9 +24,14 @@ export const LOW_WATER_MARK = 1 * 1024 * 1024; // 1 MiB
 
 /** Control frames (JSON strings) sent over the data channel. */
 export type ControlMessage =
+  /** Sent once before a multi-file send so the receiver can pick a strategy
+   *  (one directory prompt / one zip) instead of prompting per file. */
+  | { t: "batch-start"; count: number; totalSize: number }
   | { t: "file-offer"; id: string; name: string; size: number; mime: string }
   | { t: "file-end"; id: string }
   | { t: "file-ack"; id: string }
+  /** Sent after the last file of a batch, before `all-done`. */
+  | { t: "batch-end" }
   | { t: "all-done" };
 
 /** Direction of a transfer relative to this peer. */
