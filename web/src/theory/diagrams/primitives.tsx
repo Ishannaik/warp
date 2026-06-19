@@ -131,38 +131,40 @@ export function useReducedMotion(): boolean {
 /* ----------------------------------------------------------- ScaleToFit -- */
 
 /**
- * ScaleToFit — shrink-to-fit wrapper for fixed-design-width diagram stages.
+ * ScaleToFit — shrink-to-fit wrapper that measures the diagram's *actual*
+ * natural width and scales it down only as much as needed to fit.
  *
- * Several /how diagrams are authored at a fixed design width (mono nowrap rows,
- * min-px node grids, absolutely-positioned beams) and naturally render wider
- * than a phone viewport. Reflowing them would break the carefully tuned
- * absolute layout, so instead we keep the layout intact and uniformly scale it
- * DOWN to fit the available width.
+ * Some /how diagrams are authored with mono nowrap rows, min-px node grids and
+ * absolutely-positioned beams whose intrinsic content is wider than a phone
+ * viewport. Reflowing them would break the carefully tuned absolute layout, so
+ * instead we keep the layout intact and uniformly scale it DOWN to fit.
  *
  * Mechanism (ResizeObserver-based, deterministic — no measure/resize feedback):
- *  1. The content is laid out at a fixed `designWidth` (px). This is the width
- *     the diagram was authored for, so its internal layout is exactly as on
- *     desktop regardless of how narrow the screen is.
- *  2. A ResizeObserver measures the container's available content-box width.
- *  3. scale = min(1, available / designWidth). On desktop the column is wider
- *     than (or equal to) designWidth, so scale === 1 and the diagram is
- *     pixel-identical to before. On a phone, scale < 1 and it shrinks to fit.
+ *  1. The children render in a content box laid out at the container's own
+ *     width (`width: 100%`). Whatever the children's intrinsic layout is —
+ *     fluid rows that reflow, or fixed min-px rows that cannot shrink — the
+ *     box's `scrollWidth` reports the *true* width the content occupies:
+ *     equal to the box width when it fits, or larger when min-px content
+ *     overflows. This is the diagram's actual natural width at this container
+ *     size. Transforms never change `scrollWidth`, and the box width is the
+ *     fixed container width (not derived from the scale), so the measurement
+ *     can never feed back into the scale → no oscillation.
+ *  2. A ResizeObserver measures the container's available width and the
+ *     content's `scrollWidth`.
+ *  3. scale = min(1, available / scrollWidth). On desktop (and whenever the
+ *     content fits) scrollWidth === available, so scale === 1 and the diagram
+ *     is pixel-identical to before. When min-px content overflows, scale < 1
+ *     and it shrinks to *exactly* fit — so the full diagram is always visible
+ *     and nothing is clipped, whatever its real width.
  *  4. Apply `transform: scale(scale)` with `transform-origin: top left`, and
  *     reserve the scaled height on the wrapper so following content never
  *     overlaps and nothing is clipped.
- *
- * Because the content always renders at the constant `designWidth`, its own
- * size never depends on the scale we apply — so there is no oscillation.
  */
-const DIAGRAM_DESIGN_WIDTH = 460;
-
 export function ScaleToFit({
   children,
-  designWidth = DIAGRAM_DESIGN_WIDTH,
   style,
 }: {
   children: ReactNode;
-  designWidth?: number;
   style?: CSSProperties;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -178,8 +180,16 @@ export function ScaleToFit({
     const measure = () => {
       const available = container.clientWidth;
       if (!available) return;
+      // The content's real occupied width at this container size. The box is
+      // `width: 100%`, so when content fits this equals `available`; when
+      // min-px content overflows, scrollWidth reports the true wider extent.
+      // Transforms don't affect scrollWidth and the box width is the fixed
+      // container width, so this never feeds back into the scale.
+      const natural = content.scrollWidth;
+      if (!natural) return;
       // Never enlarge: cap at 1 so desktop stays exactly as authored.
-      setScale(Math.min(1, available / designWidth));
+      const next = Math.min(1, available / natural);
+      setScale(next);
       // Natural (unscaled) height — scrollHeight ignores the transform.
       setContentHeight(content.scrollHeight);
     };
@@ -193,11 +203,11 @@ export function ScaleToFit({
 
     const ro = new ResizeObserver(measure);
     ro.observe(container);
-    // Observe the content too: its height changes as phases/animations toggle
+    // Observe the content too: its size changes as phases/animations toggle
     // and as web fonts finish loading, so the reserved space stays correct.
     ro.observe(content);
     return () => ro.disconnect();
-  }, [designWidth]);
+  }, []);
 
   const scaled = scale < 1;
 
@@ -217,8 +227,10 @@ export function ScaleToFit({
       <div
         ref={contentRef}
         style={{
-          // Fixed design width keeps the authored layout intact; we only scale.
-          width: scaled ? `${designWidth}px` : "100%",
+          // Lay out at the container width; scrollWidth then reports the true
+          // occupied width (== width when it fits, larger when min-px content
+          // overflows). We scale that down, never reflowing the authored layout.
+          width: "100%",
           transform: scaled ? `scale(${scale})` : undefined,
           transformOrigin: "top left",
         }}

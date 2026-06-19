@@ -3,6 +3,7 @@ import {
   DiagramFrame,
   Label,
   useInView,
+  useNarrowViewport,
   useReducedMotion,
   ACC,
   AMB,
@@ -45,8 +46,13 @@ const SOURCES: Source[] = [
 export default function L6Energy() {
   const ref = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+  const narrow = useNarrowViewport();
   const inView = useInView(ref);
   const animate = inView && !reduced;
+
+  // On phones, stack the three finite sources into one readable column instead
+  // of squeezing three cards across ~360px; the feed-lines row collapses too.
+  const sourceCols = narrow ? "1fr" : "repeat(3, minmax(0,1fr))";
 
   return (
     <DiagramFrame caption="L6 · FINITE SOURCES" tone="amb">
@@ -55,7 +61,7 @@ export default function L6Energy() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+            gridTemplateColumns: sourceCols,
             gap: "10px",
           }}
         >
@@ -68,7 +74,7 @@ export default function L6Energy() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+            gridTemplateColumns: sourceCols,
             gap: "10px",
             height: "22px",
           }}
@@ -149,11 +155,18 @@ export default function L6Energy() {
         </div>
 
         {/* split: relay demand vs everyone else */}
-        <div style={{ display: "flex", gap: "12px", marginTop: "22px" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: narrow ? "column" : "row",
+            gap: "12px",
+            marginTop: "22px",
+          }}
+        >
           {/* relay's slice */}
           <div
             style={{
-              flex: "0 0 38%",
+              flex: narrow ? "1 1 auto" : "0 0 38%",
               border: `1px solid rgba(239,106,61,.5)`,
               borderLeft: `2px solid ${AMB}`,
               background: CARD,

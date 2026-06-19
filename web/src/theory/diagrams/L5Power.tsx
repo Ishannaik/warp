@@ -3,6 +3,7 @@ import {
   DiagramFrame,
   Label,
   useInView,
+  useNarrowViewport,
   useReducedMotion,
   AMB,
   INK,
@@ -28,6 +29,7 @@ import {
 export default function L5Power() {
   const ref = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+  const narrow = useNarrowViewport();
   const inView = useInView(ref);
   const animate = inView && !reduced;
 
@@ -236,7 +238,10 @@ export default function L5Power() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)",
+            // Phones: stack the two destination cards into one column.
+            gridTemplateColumns: narrow
+              ? "1fr"
+              : "minmax(0,1fr) minmax(0,1fr)",
             gap: "12px",
             marginTop: "20px",
           }}

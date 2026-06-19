@@ -3,6 +3,7 @@ import {
   DiagramFrame,
   Endpoint,
   FileToken,
+  useNarrowViewport,
   useReducedMotion,
   ACC,
   AMB,
@@ -50,6 +51,7 @@ const DEVICE_GLYPH = (
 
 export default function CloudVsDirect() {
   const reduced = useReducedMotion();
+  const narrow = useNarrowViewport();
   const [phase, setPhase] = useState(reduced ? 5 : 0);
 
   useEffect(() => {
@@ -74,7 +76,8 @@ export default function CloudVsDirect() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          // Phones: stack the CLOUD and DIRECT panels so each gets full width.
+          gridTemplateColumns: narrow ? "1fr" : "1fr 1fr",
           gap: "1px",
           background: "rgba(239,233,218,.13)",
         }}
