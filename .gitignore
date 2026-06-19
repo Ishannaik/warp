@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+
+# env (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# deploy
+.vercel/
+
+# logs / os
+*.log
+.DS_Store
+Thumbs.db

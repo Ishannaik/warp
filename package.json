@@ -1,0 +1,18 @@
+{
+  "name": "warp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Send files directly between devices. Peer-to-peer, encrypted, no uploads.",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "dev": "pnpm --filter @warp/web dev",
+    "dev:server": "pnpm --filter @warp/server dev",
+    "build": "pnpm --filter @warp/web build",
+    "test": "pnpm -r --if-present test",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck"
+  }
+}

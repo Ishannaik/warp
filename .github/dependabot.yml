@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # One npm entry covers the whole pnpm workspace (root pnpm-lock.yaml).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+  # Keeps the SHA-pinned actions in ci.yml current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

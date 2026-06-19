@@ -1,0 +1,17 @@
+{
+  "name": "@warp/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stateless WebRTC signaling server for Warp.",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node signaling.js",
+    "dev": "node --watch signaling.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
