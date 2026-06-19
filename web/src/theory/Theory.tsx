@@ -1155,7 +1155,10 @@ export default function Theory() {
         minHeight: "100vh",
         fontFamily: "'Archivo',system-ui,sans-serif",
         color: "#efe9da",
-        overflowX: "hidden",
+        // `clip` (not `hidden`) is the page-level safety net: it contains any
+        // stray horizontal overflow WITHOUT creating a scroll container, so the
+        // sticky DepthGauge rail / sticky diagram columns keep working.
+        overflowX: "clip",
       }}
     >
       <Chrome />

@@ -3,6 +3,7 @@ import {
   DiagramFrame,
   Label,
   useInView,
+  useNarrowViewport,
   useReducedMotion,
   ACC,
   AMB,
@@ -31,6 +32,7 @@ import {
 export default function L7Bedrock() {
   const ref = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+  const narrow = useNarrowViewport();
   const inView = useInView(ref);
   const animate = inView && !reduced;
 
@@ -40,8 +42,11 @@ export default function L7Bedrock() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-            gap: "12px",
+            // Mobile: stack the three law plates into one readable column.
+            gridTemplateColumns: narrow
+              ? "1fr"
+              : "repeat(auto-fit, minmax(170px, 1fr))",
+            gap: narrow ? "10px" : "12px",
           }}
         >
           {/* ---- Landauer ---- */}

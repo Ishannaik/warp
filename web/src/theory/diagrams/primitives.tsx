@@ -128,6 +128,107 @@ export function useReducedMotion(): boolean {
   return reduced;
 }
 
+/* ----------------------------------------------------------- ScaleToFit -- */
+
+/**
+ * ScaleToFit — shrink-to-fit wrapper for fixed-design-width diagram stages.
+ *
+ * Several /how diagrams are authored at a fixed design width (mono nowrap rows,
+ * min-px node grids, absolutely-positioned beams) and naturally render wider
+ * than a phone viewport. Reflowing them would break the carefully tuned
+ * absolute layout, so instead we keep the layout intact and uniformly scale it
+ * DOWN to fit the available width.
+ *
+ * Mechanism (ResizeObserver-based, deterministic — no measure/resize feedback):
+ *  1. The content is laid out at a fixed `designWidth` (px). This is the width
+ *     the diagram was authored for, so its internal layout is exactly as on
+ *     desktop regardless of how narrow the screen is.
+ *  2. A ResizeObserver measures the container's available content-box width.
+ *  3. scale = min(1, available / designWidth). On desktop the column is wider
+ *     than (or equal to) designWidth, so scale === 1 and the diagram is
+ *     pixel-identical to before. On a phone, scale < 1 and it shrinks to fit.
+ *  4. Apply `transform: scale(scale)` with `transform-origin: top left`, and
+ *     reserve the scaled height on the wrapper so following content never
+ *     overlaps and nothing is clipped.
+ *
+ * Because the content always renders at the constant `designWidth`, its own
+ * size never depends on the scale we apply — so there is no oscillation.
+ */
+const DIAGRAM_DESIGN_WIDTH = 460;
+
+export function ScaleToFit({
+  children,
+  designWidth = DIAGRAM_DESIGN_WIDTH,
+  style,
+}: {
+  children: ReactNode;
+  designWidth?: number;
+  style?: CSSProperties;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
+
+    const measure = () => {
+      const available = container.clientWidth;
+      if (!available) return;
+      // Never enlarge: cap at 1 so desktop stays exactly as authored.
+      setScale(Math.min(1, available / designWidth));
+      // Natural (unscaled) height — scrollHeight ignores the transform.
+      setContentHeight(content.scrollHeight);
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(container);
+    // Observe the content too: its height changes as phases/animations toggle
+    // and as web fonts finish loading, so the reserved space stays correct.
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [designWidth]);
+
+  const scaled = scale < 1;
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        width: "100%",
+        // Reserve only the visible (scaled) height so nothing below overlaps.
+        height:
+          scaled && contentHeight != null
+            ? `${contentHeight * scale}px`
+            : undefined,
+        ...style,
+      }}
+    >
+      <div
+        ref={contentRef}
+        style={{
+          // Fixed design width keeps the authored layout intact; we only scale.
+          width: scaled ? `${designWidth}px` : "100%",
+          transform: scaled ? `scale(${scale})` : undefined,
+          transformOrigin: "top left",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------- DiagramFrame -- */
 
 export interface DiagramFrameProps {
@@ -158,6 +259,10 @@ export function DiagramFrame({
   className,
   children,
 }: DiagramFrameProps) {
+  const narrow = useNarrowViewport();
+  // Slimmer inner padding on phones gives the scaled stage more usable width
+  // (so it shrinks less); desktop padding is unchanged.
+  const innerPad = pad ? (narrow ? "14px 12px" : "clamp(18px,3vw,30px)") : 0;
   return (
     <div
       className={className}
@@ -165,7 +270,10 @@ export function DiagramFrame({
         position: "relative",
         border: HAIR_STRONG,
         background: inset ? DARKER : CARD,
+        // clip (not hidden) keeps any rare sub-pixel scale spill from creating
+        // a scrollbar, without disabling position:sticky on the page.
         overflow: "hidden",
+        maxWidth: "100%",
         ...style,
       }}
     >
@@ -190,14 +298,41 @@ export function DiagramFrame({
               height: "7px",
               background: toneColor(tone),
               borderRadius: "50%",
+              flex: "0 0 auto",
             }}
           />
           {caption}
         </div>
       ) : null}
-      <div style={{ padding: pad ? "clamp(18px,3vw,30px)" : 0 }}>{children}</div>
+      <div style={{ padding: innerPad }}>
+        <ScaleToFit>{children}</ScaleToFit>
+      </div>
     </div>
   );
+}
+
+/**
+ * useNarrowViewport — SSR-safe phone-width check, mirroring useIsMobile (≤767px)
+ * but local to the diagram primitives so they have no app-layer import. Used
+ * only to trim padding/gaps; layout correctness comes from ScaleToFit.
+ */
+export function useNarrowViewport(breakpoint = 767): boolean {
+  const query = `(max-width: ${breakpoint}px)`;
+  const [narrow, setNarrow] = useState<boolean>(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+      return false;
+    return window.matchMedia(query).matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+      return;
+    const mql = window.matchMedia(query);
+    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    setNarrow(mql.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [query]);
+  return narrow;
 }
 
 /**
