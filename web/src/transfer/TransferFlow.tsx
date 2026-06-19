@@ -95,9 +95,9 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   const openChannel = () => {
     if (!files.length) return;
+    // Open the channel ONLY. The queue stays editable while pairing; nothing is
+    // offered until the user hits "Send" in the session (ShareX stay-in-control).
     wrap.createRoom();
-    // Stage the files; the hook flushes them the moment the channel opens.
-    void wrap.sendFiles(files);
   };
 
   const peerLabel = useMemo(() => {
@@ -161,15 +161,32 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               onDownloadAll={wrap.downloadAll}
               isMobile={isMobile}
               heading={mode === "receive" ? "Connected to sender" : "Connected"}
+              // Sender only: the staged queue stays editable until they hit Send.
+              // The receiver has no pre-queue, so these stay undefined.
+              pending={mode === "send" ? queue : undefined}
+              onAddFiles={mode === "send" ? addFiles : undefined}
+              onRemovePending={mode === "send" ? removeFile : undefined}
+              onSendPending={
+                mode === "send"
+                  ? () => {
+                      void wrap.sendFiles(queue.map((q) => q.file));
+                      setQueue([]);
+                    }
+                  : undefined
+              }
             />
           ) : showPair ? (
             <PairStep
               mode={mode}
               code={code}
               shareUrl={shareUrl}
+              queue={queue}
               fileCount={fileCount}
               totalBytes={totalBytes}
               connecting={status === "connecting"}
+              onBrowse={browse}
+              onDropFiles={addFiles}
+              onRemove={removeFile}
               isMobile={isMobile}
             />
           ) : (
@@ -304,6 +321,121 @@ const stepLabel: CSSProperties = {
   color: "#6f6a5d",
 };
 
+/* --------------------------------------------------- shared editable queue */
+
+/** The queue header + file rows with per-row remove. Reused by Select + Pair. */
+function QueueList({
+  queue,
+  fileCount,
+  totalBytes,
+  onRemove,
+  isMobile,
+  style,
+}: {
+  queue: QueuedFile[];
+  fileCount: string;
+  totalBytes: number;
+  onRemove: (id: string) => void;
+  isMobile: boolean;
+  style?: CSSProperties;
+}) {
+  return (
+    <div style={{ border: "1px solid rgba(239,233,218,.14)", ...style }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "11px 15px",
+          borderBottom: "1px solid rgba(239,233,218,.12)",
+          fontFamily: MONO,
+          fontSize: "10.5px",
+          letterSpacing: ".14em",
+          textTransform: "uppercase",
+          color: "#6f6a5d",
+        }}
+      >
+        <span>Queue</span>
+        <span>
+          <span style={{ color: "#efe9da" }}>{fileCount}</span> files · {formatBytes(totalBytes)}
+        </span>
+      </div>
+
+      {queue.length === 0 ? (
+        <div
+          style={{
+            padding: "24px 15px",
+            textAlign: "center",
+            fontFamily: MONO,
+            fontSize: "12px",
+            color: "#6f6a5d",
+          }}
+        >
+          Nothing queued yet — drop files above to begin.
+        </div>
+      ) : (
+        queue.map((q) => (
+          <div
+            key={q.id}
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "28px 1fr auto 26px" : "34px 1fr auto 30px",
+              gap: isMobile ? "8px" : "12px",
+              alignItems: "center",
+              padding: isMobile ? "12px" : "13px 15px",
+              borderBottom: "1px solid rgba(239,233,218,.07)",
+              textAlign: "left",
+            }}
+          >
+            <div
+              style={{
+                width: "30px",
+                height: "30px",
+                border: "1px solid var(--acc)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <div style={{ width: "8px", height: "8px", background: "var(--acc)" }} />
+            </div>
+            <span
+              style={{
+                fontSize: "14px",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {q.file.name}
+            </span>
+            <span style={{ fontFamily: MONO, fontSize: "11.5px", color: "#908a7b" }}>
+              {formatBytes(q.file.size)}
+            </span>
+            <span
+              className="wrap-remove"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(q.id);
+              }}
+              style={{
+                fontFamily: MONO,
+                fontSize: "15px",
+                color: "#6f6a5d",
+                textAlign: "center",
+                cursor: "pointer",
+              }}
+            >
+              ✕
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------------- step 01 */
 
 function SelectStep({
@@ -384,98 +516,14 @@ function SelectStep({
         </div>
       </div>
 
-      <div style={{ marginTop: "22px", border: "1px solid rgba(239,233,218,.14)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "11px 15px",
-            borderBottom: "1px solid rgba(239,233,218,.12)",
-            fontFamily: MONO,
-            fontSize: "10.5px",
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: "#6f6a5d",
-          }}
-        >
-          <span>Queue</span>
-          <span>
-            <span style={{ color: "#efe9da" }}>{fileCount}</span> files · {formatBytes(totalBytes)}
-          </span>
-        </div>
-
-        {queue.length === 0 ? (
-          <div
-            style={{
-              padding: "24px 15px",
-              textAlign: "center",
-              fontFamily: MONO,
-              fontSize: "12px",
-              color: "#6f6a5d",
-            }}
-          >
-            Nothing queued yet — drop files above to begin.
-          </div>
-        ) : (
-          queue.map((q) => (
-            <div
-              key={q.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: isMobile ? "28px 1fr auto 26px" : "34px 1fr auto 30px",
-                gap: isMobile ? "8px" : "12px",
-                alignItems: "center",
-                padding: isMobile ? "12px" : "13px 15px",
-                borderBottom: "1px solid rgba(239,233,218,.07)",
-              }}
-            >
-              <div
-                style={{
-                  width: "30px",
-                  height: "30px",
-                  border: "1px solid var(--acc)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <div style={{ width: "8px", height: "8px", background: "var(--acc)" }} />
-              </div>
-              <span
-                style={{
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {q.file.name}
-              </span>
-              <span style={{ fontFamily: MONO, fontSize: "11.5px", color: "#908a7b" }}>
-                {formatBytes(q.file.size)}
-              </span>
-              <span
-                className="wrap-remove"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove(q.id);
-                }}
-                style={{
-                  fontFamily: MONO,
-                  fontSize: "15px",
-                  color: "#6f6a5d",
-                  textAlign: "center",
-                  cursor: "pointer",
-                }}
-              >
-                ✕
-              </span>
-            </div>
-          ))
-        )}
-      </div>
+      <QueueList
+        queue={queue}
+        fileCount={fileCount}
+        totalBytes={totalBytes}
+        onRemove={onRemove}
+        isMobile={isMobile}
+        style={{ marginTop: "22px" }}
+      />
 
       <div
         style={{
@@ -527,17 +575,25 @@ function PairStep({
   mode,
   code,
   shareUrl,
+  queue,
   fileCount,
   totalBytes,
   connecting,
+  onBrowse,
+  onDropFiles,
+  onRemove,
   isMobile,
 }: {
   mode: "send" | "receive";
   code: string | null;
   shareUrl: string | null;
+  queue: QueuedFile[];
   fileCount: string;
   totalBytes: number;
   connecting: boolean;
+  onBrowse: () => void;
+  onDropFiles: (l: FileList) => void;
+  onRemove: (id: string) => void;
   isMobile: boolean;
 }) {
   const [copied, setCopied] = useState(false);
@@ -751,6 +807,43 @@ function PairStep({
               {shareUrl}
             </div>
           )}
+
+          {/* EDITABLE QUEUE — keep adding / removing while you wait. Nothing is
+              offered until the peer connects and you hit Send in the session. */}
+          <div style={{ marginTop: "30px", textAlign: "left" }}>
+            <div
+              className="wrap-drop"
+              onClick={onBrowse}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (e.dataTransfer?.files?.length) onDropFiles(e.dataTransfer.files);
+              }}
+              style={{
+                border: "1.5px dashed rgba(239,233,218,.28)",
+                background: "rgba(239,233,218,.02)",
+                padding: isMobile ? "18px 16px" : "20px 22px",
+                textAlign: "center",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "16px" }}>
+                Add more files
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: "11px", color: "#6f6a5d", marginTop: "6px" }}>
+                drop or click — edit the queue until your peer joins
+              </div>
+            </div>
+
+            <QueueList
+              queue={queue}
+              fileCount={fileCount}
+              totalBytes={totalBytes}
+              onRemove={onRemove}
+              isMobile={isMobile}
+              style={{ marginTop: "16px" }}
+            />
+          </div>
         </>
       )}
     </div>

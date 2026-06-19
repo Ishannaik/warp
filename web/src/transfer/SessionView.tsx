@@ -314,14 +314,29 @@ function Composer({
   onSendFiles,
   onSendText,
   isMobile,
+  pending,
+  onAddFiles,
+  onRemovePending,
+  onSendPending,
 }: {
   onSendFiles: (files: File[]) => void;
   onSendText: (text: string) => void;
   isMobile: boolean;
+  pending?: PendingFile[];
+  onAddFiles?: (files: File[]) => void;
+  onRemovePending?: (id: string) => void;
+  onSendPending?: () => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
+
+  // When staging callbacks are provided (TransferFlow), file pickers ADD to the
+  // editable pending queue instead of offering immediately. The nearby flow
+  // passes none, so picks fall through to the original direct-offer behavior.
+  const staging = !!onAddFiles;
+  const acceptFiles = staging ? onAddFiles! : onSendFiles;
+  const pendingList = pending ?? [];
 
   const pickFiles = () => fileInput.current?.click();
   const pickFolder = () => folderInput.current?.click();
@@ -353,12 +368,22 @@ function Composer({
         {/* file pickers */}
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: "10px" }}>
           <button type="button" className="wrap-ghost" onClick={pickFiles} style={composerBtn(isMobile)}>
-            ＋ Send files
+            ＋ {staging ? "Add files" : "Send files"}
           </button>
           <button type="button" className="wrap-ghost" onClick={pickFolder} style={composerBtn(isMobile)}>
-            ▤ Send a folder
+            ▤ {staging ? "Add a folder" : "Send a folder"}
           </button>
         </div>
+
+        {/* staged "ready to send" queue — editable until you hit Send */}
+        {staging && pendingList.length > 0 && onRemovePending && onSendPending && (
+          <PendingTray
+            pending={pendingList}
+            onRemovePending={onRemovePending}
+            onSendPending={onSendPending}
+            isMobile={isMobile}
+          />
+        )}
 
         {/* text snippet */}
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -417,7 +442,7 @@ function Composer({
         multiple
         style={{ display: "none" }}
         onChange={(e) => {
-          if (e.target.files?.length) onSendFiles(Array.from(e.target.files));
+          if (e.target.files?.length) acceptFiles(Array.from(e.target.files));
           e.target.value = "";
         }}
       />
@@ -430,10 +455,134 @@ function Composer({
         directory=""
         style={{ display: "none" }}
         onChange={(e) => {
-          if (e.target.files?.length) onSendFiles(Array.from(e.target.files));
+          if (e.target.files?.length) acceptFiles(Array.from(e.target.files));
           e.target.value = "";
         }}
       />
+    </div>
+  );
+}
+
+/* --------------------------------------------------- pending ("ready to send") */
+
+export interface PendingFile {
+  id: string;
+  file: File;
+}
+
+/**
+ * The "ready to send" staging region inside the composer: every file queued
+ * locally but NOT yet offered. Editable right up until the user hits Send —
+ * remove any item, add more, then offer the whole batch in one shot. This is
+ * what keeps the sender in control (ShareX-style) instead of locking the queue
+ * the moment a channel opens.
+ */
+function PendingTray({
+  pending,
+  onRemovePending,
+  onSendPending,
+  isMobile,
+}: {
+  pending: PendingFile[];
+  onRemovePending: (id: string) => void;
+  onSendPending: () => void;
+  isMobile: boolean;
+}) {
+  const total = pending.reduce((s, p) => s + p.file.size, 0);
+  const count = pending.length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "10px",
+          fontFamily: MONO,
+          fontSize: "10.5px",
+          letterSpacing: ".14em",
+          textTransform: "uppercase",
+          color: "#6f6a5d",
+        }}
+      >
+        <span>
+          Ready to send · <span style={{ color: "#efe9da" }}>{String(count).padStart(2, "0")}</span>
+        </span>
+        <span style={{ letterSpacing: ".06em", color: "#908a7b" }}>{formatBytes(total)}</span>
+      </div>
+
+      <div
+        style={{
+          border: `1px solid ${HAIRLINE}`,
+          background: "rgba(239,233,218,.02)",
+          maxHeight: "208px",
+          overflow: "auto",
+        }}
+      >
+        {pending.map((p) => (
+          <div
+            key={p.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: isMobile ? "10px" : "12px",
+              padding: isMobile ? "10px 11px" : "11px 13px",
+              borderBottom: "1px solid rgba(239,233,218,.07)",
+            }}
+          >
+            <Thumb item={{ mime: p.file.type, kind: "file" }} size={isMobile ? 34 : 38} />
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: "13.5px",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                color: "#efe9da",
+              }}
+            >
+              {p.file.name}
+            </span>
+            <span style={{ fontFamily: MONO, fontSize: "11px", color: "#908a7b", flexShrink: 0 }}>
+              {formatBytes(p.file.size)}
+            </span>
+            <button
+              type="button"
+              className="wrap-rowbtn"
+              onClick={() => onRemovePending(p.id)}
+              aria-label={`Remove ${p.file.name}`}
+              style={{ ...iconBtn, flexShrink: 0 }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="wrap-cta"
+        onClick={onSendPending}
+        disabled={count === 0}
+        style={{
+          width: "100%",
+          padding: "13px 24px",
+          background: "var(--acc)",
+          color: "#fff",
+          border: "none",
+          fontFamily: MONO,
+          fontSize: "12.5px",
+          fontWeight: 600,
+          letterSpacing: ".07em",
+          textTransform: "uppercase",
+          cursor: "pointer",
+        }}
+      >
+        Send {count} {count === 1 ? "file" : "files"} →
+      </button>
     </div>
   );
 }
@@ -742,6 +891,10 @@ export function SessionView({
   onDownloadAll,
   isMobile,
   heading = "Session open",
+  pending,
+  onAddFiles,
+  onRemovePending,
+  onSendPending,
 }: {
   peerLabel: string;
   items: TransferItem[];
@@ -752,6 +905,14 @@ export function SessionView({
   onDownloadAll: () => void;
   isMobile: boolean;
   heading?: string;
+  /** Files staged but not yet offered. Editable until onSendPending fires. */
+  pending?: PendingFile[];
+  /** Add picked/dropped files to the pending queue. */
+  onAddFiles?: (files: File[]) => void;
+  /** Remove one staged file from the pending queue. */
+  onRemovePending?: (id: string) => void;
+  /** Offer every staged file now (receiver then sees the accept modal). */
+  onSendPending?: () => void;
 }) {
   return (
     <div style={{ animation: "wrapFade .5s ease both", display: "flex", flexDirection: "column", gap: "18px" }}>
@@ -805,7 +966,15 @@ export function SessionView({
         </span>
       </div>
 
-      <Composer onSendFiles={onSendFiles} onSendText={onSendText} isMobile={isMobile} />
+      <Composer
+        onSendFiles={onSendFiles}
+        onSendText={onSendText}
+        isMobile={isMobile}
+        pending={pending}
+        onAddFiles={onAddFiles}
+        onRemovePending={onRemovePending}
+        onSendPending={onSendPending}
+      />
 
       <Tray
         items={items}
