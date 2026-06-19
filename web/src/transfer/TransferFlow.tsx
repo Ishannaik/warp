@@ -3,27 +3,28 @@ import type { CSSProperties, DragEvent } from "react";
 import QRCode from "qrcode";
 import { navigate } from "../router";
 import { useWrapTransfer } from "../lib/wrap/useWrapTransfer";
-import { formatBytes, type TransferItem } from "../lib/wrap/transfer";
+import { formatBytes } from "../lib/wrap/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
+import { AcceptModal, SessionView } from "./SessionView";
 
 /**
- * Wrap Transfer flow — a real, WebRTC-backed port of the 4-step design
- * ("Wrap Transfer.dc.html"). The x-dc/sc-if/sc-for scaffolding is reimplemented
- * as React; the simulated transfer is replaced by useWrapTransfer driving an
- * actual peer connection.
+ * Wrap Transfer flow — a real, WebRTC-backed transfer surface.
+ *
+ * Review-before-receive redesign: there are now two pre-connect screens and then
+ * one PERSISTENT session view shared with the LAN flow:
  *
  *   01 Select   — drag-drop + picker, queue, "Open secure channel"
  *   02 Pair     — big room code, copy-link / QR / Web Share, waiting ping
- *   03 Transfer — real per-file progress + aggregate bar
- *   04 Done     — receipt
+ *   --          — SESSION (status "connected"): composer + tray, both directions,
+ *                 with an accept-modal overlay for inbound offers. The channel
+ *                 stays open; either peer can keep sending. No auto-download.
  *
- * Receiver entry (`joinCode` set): skip Select, join the room, show receiving.
+ * Receiver entry (`joinCode` set): skip Select, auto-join, show "connecting" in
+ * the Pair view, then drop into the same session once the channel is open.
  */
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
-
-type Step = "select" | "pair" | "transfer" | "done";
 
 interface QueuedFile {
   id: string;
@@ -34,7 +35,7 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 
 export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWrapTransfer(joinCode);
-  const { mode, code, shareUrl, status, transfers, error } = wrap;
+  const { mode, code, shareUrl, status, items, incoming, error } = wrap;
   const isMobile = useIsMobile();
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
@@ -43,28 +44,21 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // Drive the visible step off the hook status + role.
-  const step: Step = useMemo(() => {
-    if (mode === "receive") {
-      if (status === "done") return "done";
-      if (status === "transferring" || status === "connected") return "transfer";
-      return "pair"; // connecting / waiting -> "receiving" view lives in Pair
-    }
-    if (status === "done") return "done";
-    if (status === "transferring") return "transfer";
-    if (status === "connected") return "transfer";
-    if (status === "connecting" || status === "waiting") return "pair";
-    return "select";
-  }, [mode, status]);
+  const connected = status === "connected";
+
+  // Drive the visible pre-connect step off the hook status + role. Once
+  // "connected", we render the session view instead of a step.
+  const showSession = connected;
+  const showPair = !connected && (status === "connecting" || status === "waiting");
 
   const files = useMemo(() => queue.map((q) => q.file), [queue]);
   const totalBytes = useMemo(() => files.reduce((s, f) => s + f.size, 0), [files]);
   const fileCount = String(files.length).padStart(2, "0");
 
   const addFiles = useCallback((list: FileList | File[]) => {
-    const incoming = Array.from(list);
-    if (!incoming.length) return;
-    setQueue((prev) => [...prev, ...incoming.map((file) => ({ id: crypto.randomUUID(), file }))]);
+    const incomingList = Array.from(list);
+    if (!incomingList.length) return;
+    setQueue((prev) => [...prev, ...incomingList.map((file) => ({ id: crypto.randomUUID(), file }))]);
   }, []);
 
   const removeFile = useCallback((id: string) => {
@@ -73,18 +67,20 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   const browse = () => fileInput.current?.click();
 
+  const inSelect = !showSession && !showPair && !error;
+
   // ---- window-level drag overlay (Select step only) ----
   const onWinDragEnter = (e: DragEvent) => {
-    if (step !== "select") return;
+    if (!inSelect) return;
     e.preventDefault();
     dragDepth.current += 1;
     setDragging(true);
   };
   const onWinDragOver = (e: DragEvent) => {
-    if (step === "select") e.preventDefault();
+    if (inSelect) e.preventDefault();
   };
   const onWinDragLeave = (e: DragEvent) => {
-    if (step !== "select") return;
+    if (!inSelect) return;
     e.preventDefault();
     dragDepth.current = Math.max(0, dragDepth.current - 1);
     if (dragDepth.current === 0) setDragging(false);
@@ -93,7 +89,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     e.preventDefault();
     dragDepth.current = 0;
     setDragging(false);
-    if (step !== "select") return;
+    if (!inSelect) return;
     if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
   };
 
@@ -101,13 +97,14 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     if (!files.length) return;
     wrap.createRoom();
     // Stage the files; the hook flushes them the moment the channel opens.
-    void wrap.startSend(files);
+    void wrap.sendFiles(files);
   };
 
-  const reset = () => {
-    setQueue([]);
-    navigate("/");
-  };
+  const peerLabel = useMemo(() => {
+    const others = wrap.peers;
+    if (others.length) return others[0].slice(0, 8);
+    return mode === "receive" ? "the sender" : "your peer";
+  }, [wrap.peers, mode]);
 
   return (
     <div
@@ -130,18 +127,22 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
         .wrap-drop:hover{border-color:var(--acc) !important;background:rgba(var(--acc-rgb),.05) !important}
         .wrap-remove:hover{color:var(--amb) !important}
         .wrap-exit:hover{color:#efe9da !important}
-        .wrap-ghost:hover{background:rgba(var(--acc-rgb),.14) !important;border-color:var(--acc) !important}
+        .wrap-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
         .wrap-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
         .wrap-cta:hover{filter:brightness(1.08)}
+        .wrap-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
       `}</style>
 
-      <TopBar step={step} isMobile={isMobile} />
+      <TopBar
+        label={showSession ? "Session" : showPair ? "Pair" : error ? "Error" : "Select"}
+        isMobile={isMobile}
+      />
 
       <div
         style={{
           flex: 1,
           display: "flex",
-          alignItems: "center",
+          alignItems: showSession ? "flex-start" : "center",
           justifyContent: "center",
           padding: isMobile ? "28px 16px" : "48px 26px",
         }}
@@ -149,7 +150,29 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
         <div style={{ width: "100%", maxWidth: "720px" }}>
           {error ? (
             <ErrorPanel message={error.message} onRetry={wrap.retry} isMobile={isMobile} />
-          ) : step === "select" ? (
+          ) : showSession ? (
+            <SessionView
+              peerLabel={peerLabel}
+              items={items}
+              onSendFiles={wrap.sendFiles}
+              onSendText={wrap.sendText}
+              onCancel={wrap.cancel}
+              onDownloadOne={wrap.downloadOne}
+              onDownloadAll={wrap.downloadAll}
+              isMobile={isMobile}
+              heading={mode === "receive" ? "Connected to sender" : "Connected"}
+            />
+          ) : showPair ? (
+            <PairStep
+              mode={mode}
+              code={code}
+              shareUrl={shareUrl}
+              fileCount={fileCount}
+              totalBytes={totalBytes}
+              connecting={status === "connecting"}
+              isMobile={isMobile}
+            />
+          ) : (
             <SelectStep
               files={files}
               queue={queue}
@@ -161,20 +184,6 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               onOpenChannel={openChannel}
               isMobile={isMobile}
             />
-          ) : step === "pair" ? (
-            <PairStep
-              mode={mode}
-              code={code}
-              shareUrl={shareUrl}
-              fileCount={fileCount}
-              totalBytes={totalBytes}
-              connecting={status === "connecting"}
-              isMobile={isMobile}
-            />
-          ) : step === "transfer" ? (
-            <TransferStep mode={mode} transfers={transfers} isMobile={isMobile} />
-          ) : (
-            <DoneStep mode={mode} transfers={transfers} onReset={reset} isMobile={isMobile} />
           )}
         </div>
       </div>
@@ -191,21 +200,24 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
       />
 
       {dragging && <DropOverlay />}
+
+      {/* Accept modal overlays the whole page whenever an inbound offer is pending. */}
+      {incoming && (
+        <AcceptModal
+          items={incoming.items}
+          onAccept={wrap.accept}
+          onDecline={wrap.decline}
+          peerName={peerLabel}
+          isMobile={isMobile}
+        />
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ top bar */
 
-const STEP_META: { n: string; label: string; key: Step }[] = [
-  { n: "01", label: "Select", key: "select" },
-  { n: "02", label: "Pair", key: "pair" },
-  { n: "03", label: "Transfer", key: "transfer" },
-  { n: "04", label: "Done", key: "done" },
-];
-
-function TopBar({ step, isMobile }: { step: Step; isMobile: boolean }) {
-  const currentIdx = STEP_META.findIndex((s) => s.key === step);
+function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
   return (
     <div
       style={{
@@ -241,78 +253,27 @@ function TopBar({ step, isMobile }: { step: Step; isMobile: boolean }) {
         </span>
       </a>
 
-      {isMobile ? (
-        <div
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "7px",
+          fontFamily: MONO,
+          fontSize: isMobile ? "10.5px" : "11px",
+          letterSpacing: ".12em",
+          textTransform: "uppercase",
+          color: "#efe9da",
+        }}
+      >
+        <span
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "7px",
-            fontFamily: MONO,
-            fontSize: "10.5px",
-            letterSpacing: ".12em",
-            textTransform: "uppercase",
-            color: "#efe9da",
+            width: "7px",
+            height: "7px",
+            background: "var(--acc)",
           }}
-        >
-          <span
-            style={{
-              width: "18px",
-              height: "18px",
-              border: "1px solid var(--acc)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "9px",
-            }}
-          >
-            {STEP_META[Math.max(0, currentIdx)].n}
-          </span>
-          {STEP_META[Math.max(0, currentIdx)].label}
-          <span style={{ color: "#5a5648" }}>/ 04</span>
-        </div>
-      ) : (
-      <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
-        {STEP_META.map((s, i) => {
-          const color = i === currentIdx ? "#efe9da" : i < currentIdx ? "var(--acc)" : "#5a5648";
-          const ring =
-            i === currentIdx
-              ? "var(--acc)"
-              : i < currentIdx
-                ? "rgba(var(--acc-rgb),.6)"
-                : "rgba(239,233,218,.18)";
-          return (
-            <span
-              key={s.key}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "7px",
-                fontFamily: MONO,
-                fontSize: "11px",
-                letterSpacing: ".12em",
-                textTransform: "uppercase",
-                color,
-              }}
-            >
-              <span
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  border: `1px solid ${ring}`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "9px",
-                }}
-              >
-                {s.n}
-              </span>
-              {s.label}
-            </span>
-          );
-        })}
+        />
+        {label}
       </div>
-      )}
 
       <a
         href="/"
@@ -534,7 +495,7 @@ function SelectStep({
             textAlign: isMobile ? "center" : "left",
           }}
         >
-          Files stay on your device until a peer connects.
+          Files stay on your device until a peer accepts.
         </span>
         <span
           className={files.length ? "wrap-cta" : undefined}
@@ -727,7 +688,7 @@ function PairStep({
       ) : (
         <>
           <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d" }}>
-            {fileCount} files · {formatBytes(totalBytes)} ready to send
+            {fileCount} files · {formatBytes(totalBytes)} ready to offer
           </div>
 
           {/* SHARE ROW */}
@@ -808,452 +769,6 @@ const shareBtn: CSSProperties = {
   cursor: "pointer",
   background: "rgba(239,233,218,.03)",
 };
-
-/* ----------------------------------------------------------------- step 03 */
-
-function TransferStep({
-  mode,
-  transfers,
-  isMobile,
-}: {
-  mode: "send" | "receive";
-  transfers: TransferItem[];
-  isMobile: boolean;
-}) {
-  const rows = transfers;
-  const total = rows.reduce((s, r) => s + r.size, 0);
-  const sent = rows.reduce((s, r) => s + r.transferred, 0);
-  const doneCount = rows.filter((r) => r.status === "done").length;
-  const overallPct = total > 0 ? Math.round((sent / total) * 100) : 0;
-  const verb = mode === "receive" ? "Receiving from" : "Beaming to";
-
-  return (
-    <div style={{ animation: "wrapFade .5s ease both" }}>
-      <div style={{ ...stepLabel, marginBottom: "10px" }}>Step 03 / Transfer</div>
-      <h1
-        style={{
-          fontFamily: DISPLAY,
-          fontWeight: 700,
-          fontSize: "clamp(28px,4vw,40px)",
-          lineHeight: 1,
-          letterSpacing: "-.02em",
-          margin: "0 0 24px",
-        }}
-      >
-        {verb} <span style={{ color: "var(--acc)" }}>peer</span>…
-      </h1>
-
-      <div style={{ border: "1px solid rgba(239,233,218,.2)", background: "#15140f" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "12px 15px",
-            borderBottom: "1px solid rgba(239,233,218,.16)",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              fontFamily: MONO,
-              fontSize: "11px",
-              letterSpacing: ".14em",
-              textTransform: "uppercase",
-              color: "#b6b0a0",
-            }}
-          >
-            <span
-              style={{
-                width: "8px",
-                height: "8px",
-                background: "var(--acc)",
-                animation: "wrapBlink 1.4s steps(1) infinite",
-              }}
-            />
-            Live transfer
-          </div>
-          <div
-            style={{
-              fontFamily: MONO,
-              fontSize: "10.5px",
-              letterSpacing: ".1em",
-              color: "#6f6a5d",
-              textTransform: "uppercase",
-            }}
-          >
-            DIRECT · <span style={{ color: "#efe9da" }}>P2P</span>
-          </div>
-        </div>
-
-        <div>
-          {rows.length === 0 ? (
-            <div
-              style={{
-                padding: "26px 15px",
-                textAlign: "center",
-                fontFamily: MONO,
-                fontSize: "12px",
-                color: "#6f6a5d",
-              }}
-            >
-              Opening stream…
-            </div>
-          ) : (
-            rows.map((row) => {
-              const done = row.status === "done";
-              const active = row.status === "active";
-              const col = done ? "var(--acc)" : active ? "var(--amb)" : "rgba(239,233,218,.18)";
-              const ic = done ? "var(--acc)" : active ? "var(--amb)" : "#6f6a5d";
-              const st = done ? "DONE" : active ? (mode === "receive" ? "RECEIVING" : "SENDING") : "QUEUED";
-              return (
-                <div
-                  key={row.id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: isMobile ? "24px 1fr auto" : "30px 1fr 64px 1.2fr 96px",
-                    gap: isMobile ? "9px" : "10px",
-                    alignItems: "center",
-                    padding: isMobile ? "12px" : "13px 15px",
-                    borderBottom: "1px solid rgba(239,233,218,.07)",
-                  }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span
-                      style={{
-                        width: "16px",
-                        height: "16px",
-                        border: `1px solid ${ic}`,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <span style={{ width: "6px", height: "6px", background: ic }} />
-                    </span>
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {row.name}
-                  </span>
-                  <span style={{ fontFamily: MONO, fontSize: "11px", color: "#908a7b" }}>
-                    {formatBytes(row.size)}
-                  </span>
-                  <span
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "9px",
-                      ...(isMobile ? { gridColumn: "1 / -1" } : null),
-                    }}
-                  >
-                    <span
-                      style={{
-                        flex: 1,
-                        height: "6px",
-                        background: "rgba(239,233,218,.09)",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <span
-                        style={{
-                          display: "block",
-                          height: "100%",
-                          width: `${row.progress}%`,
-                          background: col,
-                          transition: "width .12s linear",
-                        }}
-                      />
-                    </span>
-                    <span
-                      style={{
-                        fontFamily: MONO,
-                        fontSize: "10.5px",
-                        color: "#a8a293",
-                        width: "34px",
-                        textAlign: "right",
-                      }}
-                    >
-                      {row.progress}%
-                    </span>
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: MONO,
-                      fontSize: "10px",
-                      letterSpacing: ".06em",
-                      textAlign: "right",
-                      color: ic,
-                      ...(isMobile ? { gridColumn: "1 / -1" } : null),
-                    }}
-                  >
-                    {st}
-                  </span>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        <div
-          style={{
-            padding: "14px 15px",
-            borderTop: "1px solid rgba(239,233,218,.16)",
-            background: "rgba(239,233,218,.02)",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontFamily: MONO,
-              fontSize: "10.5px",
-              letterSpacing: ".08em",
-              textTransform: "uppercase",
-              color: "#6f6a5d",
-              marginBottom: "9px",
-            }}
-          >
-            <span>
-              <span style={{ color: "#efe9da" }}>{String(doneCount).padStart(2, "0")}</span> /{" "}
-              {String(rows.length).padStart(2, "0")} complete
-            </span>
-            <span>
-              {overallPct}
-              <span style={{ color: "var(--amb)" }}>%</span>
-            </span>
-          </div>
-          <div
-            style={{
-              position: "relative",
-              height: "8px",
-              background: "rgba(239,233,218,.09)",
-              overflow: "hidden",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: `${overallPct}%`,
-                background: "var(--acc)",
-                overflow: "hidden",
-                transition: "width .12s linear",
-              }}
-            >
-              <span
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  bottom: 0,
-                  width: "40px",
-                  background: "linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent)",
-                  animation: "wrapScan 2.2s linear infinite",
-                }}
-              />
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div
-        style={{
-          fontFamily: MONO,
-          fontSize: "11px",
-          letterSpacing: ".06em",
-          color: "#6f6a5d",
-          marginTop: "16px",
-          textAlign: "center",
-        }}
-      >
-        Direct peer-to-peer · chunked 16KB · do not close this tab
-      </div>
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------- step 04 */
-
-function DoneStep({
-  mode,
-  transfers,
-  onReset,
-  isMobile,
-}: {
-  mode: "send" | "receive";
-  transfers: TransferItem[];
-  onReset: () => void;
-  isMobile: boolean;
-}) {
-  const total = transfers.reduce((s, r) => s + r.size, 0);
-  const fileCount = String(transfers.length).padStart(2, "0");
-  const verb = mode === "receive" ? "received" : "sent straight to the peer";
-
-  return (
-    <div style={{ animation: "wrapRise .55s cubic-bezier(.2,.8,.2,1) both", textAlign: "center" }}>
-      <div
-        style={{
-          width: "72px",
-          height: "72px",
-          margin: "0 auto 24px",
-          background: "var(--acc)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: MONO,
-          fontSize: "34px",
-          color: "#fff",
-        }}
-      >
-        ✓
-      </div>
-      <div
-        style={{
-          fontFamily: MONO,
-          fontSize: "11.5px",
-          letterSpacing: ".2em",
-          textTransform: "uppercase",
-          color: "var(--acc)",
-          marginBottom: "12px",
-        }}
-      >
-        Transfer complete
-      </div>
-      <h1
-        style={{
-          fontFamily: DISPLAY,
-          fontWeight: 800,
-          fontSize: "clamp(34px,5vw,54px)",
-          lineHeight: 0.95,
-          letterSpacing: "-.03em",
-          margin: "0 0 8px",
-          textTransform: "uppercase",
-        }}
-      >
-        {mode === "receive" ? "Received." : "Delivered."}
-      </h1>
-      <p style={{ fontSize: "16px", color: "#a8a293", margin: "0 0 30px" }}>
-        {fileCount} files · {formatBytes(total)} {verb}. No copy was left behind.
-      </p>
-
-      <div style={{ border: "1px solid rgba(239,233,218,.16)", textAlign: "left" }}>
-        <div
-          style={{
-            padding: "11px 15px",
-            borderBottom: "1px solid rgba(239,233,218,.12)",
-            fontFamily: MONO,
-            fontSize: "10.5px",
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: "#6f6a5d",
-          }}
-        >
-          Receipt · integrity verified
-        </div>
-        {transfers.map((f) => (
-          <div
-            key={f.id}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "24px 1fr auto",
-              gap: "12px",
-              alignItems: "center",
-              padding: "13px 15px",
-              borderBottom: "1px solid rgba(239,233,218,.07)",
-            }}
-          >
-            <span style={{ color: "var(--acc)", fontFamily: MONO }}>✓</span>
-            <span style={{ minWidth: 0 }}>
-              <span
-                style={{
-                  fontSize: "13.5px",
-                  fontWeight: 500,
-                  display: "block",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {f.name}
-              </span>
-              <span style={{ fontFamily: MONO, fontSize: "10px", color: "#6f6a5d" }}>
-                {f.mime || "application/octet-stream"}
-              </span>
-            </span>
-            <span style={{ fontFamily: MONO, fontSize: "11px", color: "#908a7b" }}>
-              {formatBytes(f.size)}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          flexDirection: isMobile ? "column" : "row",
-          gap: "12px",
-          justifyContent: "center",
-          alignItems: isMobile ? "stretch" : undefined,
-          marginTop: "30px",
-        }}
-      >
-        <span
-          className="wrap-cta"
-          onClick={onReset}
-          style={{
-            display: isMobile ? "block" : "inline-block",
-            padding: "15px 26px",
-            background: "var(--acc)",
-            color: "#fff",
-            fontFamily: MONO,
-            fontSize: "12.5px",
-            fontWeight: 600,
-            letterSpacing: ".07em",
-            textTransform: "uppercase",
-            textAlign: isMobile ? "center" : undefined,
-            cursor: "pointer",
-          }}
-        >
-          {mode === "receive" ? "Done" : "Send more files"}
-        </span>
-        <a
-          href="/"
-          onClick={(e) => {
-            e.preventDefault();
-            navigate("/");
-          }}
-          style={{
-            display: isMobile ? "block" : "inline-block",
-            padding: "15px 24px",
-            border: "1px solid rgba(239,233,218,.22)",
-            color: "#efe9da",
-            fontFamily: MONO,
-            fontSize: "12.5px",
-            fontWeight: 500,
-            letterSpacing: ".07em",
-            textTransform: "uppercase",
-            textAlign: isMobile ? "center" : undefined,
-            textDecoration: "none",
-          }}
-        >
-          Back to Wrap
-        </a>
-      </div>
-    </div>
-  );
-}
 
 /* -------------------------------------------------------------- error panel */
 

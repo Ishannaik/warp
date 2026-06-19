@@ -1,22 +1,22 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect } from "react";
 import type { CSSProperties } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
-import { formatBytes, type TransferItem } from "../lib/wrap/transfer";
+import { AcceptModal, SessionView } from "../transfer/SessionView";
 import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
 
 /**
  * "On your network" — LAN auto-discovery surface for the landing page.
  *
  * Lists other Wrap devices on the same Wi-Fi (no code needed). Tap a device to
- * pick files and beam them straight across; an inbound offer raises an accept
- * prompt that, on accept, streams to disk (File System Access, Blob fallback —
- * both handled inside WrapPeer's receive path).
+ * pick files and offer them across. Review-before-receive redesign: an inbound
+ * FILE offer raises the SAME accept modal as the code-room flow (with the file
+ * manifest, thumbnails, sizes), and on accept the files land in an in-app TRAY
+ * to download on demand — nothing auto-saves. The channel stays OPEN, so the
+ * session panel doubles as a composer to send again or send back.
  *
- * Discovery + transfer live in `useNearbyTransfer` (which consumes the discovery
- * `useNearby` hook / shares its socket). This component is pure presentation +
- * a hidden file input. Design system: bg #121110, ink #efe9da, accent var(--acc),
- * mono name labels, mobile-first.
+ * Discovery + transfer live in `useNearbyTransfer`. This component is pure
+ * presentation + a hidden file input.
  */
 
 const MONO = "'JetBrains Mono',monospace";
@@ -28,19 +28,8 @@ export default function NearbyDevices() {
   const nearby = useNearbyTransfer();
   const { devices, crowded, deviceName, session, incoming } = nearby;
 
-  const fileInput = useRef<HTMLInputElement>(null);
-  /** Device we're about to send to, captured before the picker opens. */
-  const targetRef = useRef<string | null>(null);
-
-  const pickFor = (peerId: string) => {
-    targetRef.current = peerId;
-    fileInput.current?.click();
-  };
-
-  const onFiles = (list: FileList | null) => {
-    const peerId = targetRef.current;
-    targetRef.current = null;
-    if (!peerId || !list || !list.length) return;
+  const sendToDevice = (peerId: string, list: FileList | File[] | null) => {
+    if (!list || !("length" in list) || !list.length) return;
     nearby.sendTo(peerId, Array.from(list));
   };
 
@@ -62,6 +51,10 @@ export default function NearbyDevices() {
         .nearby-link:hover{color:#efe9da !important}
         .nearby-cta:hover{filter:brightness(1.08)}
         .nearby-ghost:hover{border-color:rgba(239,233,218,.45) !important;color:#efe9da !important}
+        .wrap-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
+        .wrap-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
+        .wrap-cta:hover{filter:brightness(1.08)}
+        .wrap-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
       `}</style>
 
       <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
@@ -105,8 +98,7 @@ export default function NearbyDevices() {
               color: "#6f6a5d",
             }}
           >
-            You appear as{" "}
-            <span style={{ color: "#a8a293" }}>{deviceName}</span>
+            You appear as <span style={{ color: "#a8a293" }}>{deviceName}</span>
           </span>
         </div>
 
@@ -131,8 +123,8 @@ export default function NearbyDevices() {
             maxWidth: "560px",
           }}
         >
-          Same Wi-Fi, no code. Tap a device to send files straight across —{" "}
-          the bytes go peer-to-peer and never touch a server.
+          Same Wi-Fi, no code. Tap a device to offer files straight across — they review and accept
+          before anything moves, and the bytes go peer-to-peer, never touching a server.
         </p>
 
         {crowded ? (
@@ -143,51 +135,51 @@ export default function NearbyDevices() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: isMobile
-                ? "1fr"
-                : "repeat(auto-fill,minmax(240px,1fr))",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(240px,1fr))",
               gap: isMobile ? "10px" : "14px",
             }}
           >
             {devices.map((d) => (
-              <DeviceCard key={d.peerId} device={d} onSend={() => pickFor(d.peerId)} />
+              <DeviceCard
+                key={d.peerId}
+                device={d}
+                onPickFiles={(list) => sendToDevice(d.peerId, list)}
+              />
             ))}
           </div>
         )}
       </div>
 
-      <input
-        ref={fileInput}
-        type="file"
-        multiple
-        style={{ display: "none" }}
-        onChange={(e) => {
-          onFiles(e.target.files);
-          e.target.value = "";
-        }}
-      />
-
-      {/* incoming accept prompt */}
+      {/* incoming FILE offer -> shared accept modal (manifest + thumbnails) */}
       {incoming && (
-        <IncomingPrompt
-          name={incoming.peerName}
+        <AcceptModal
+          items={incoming.items}
+          peerName={incoming.peerName}
           onAccept={nearby.acceptIncoming}
           onDecline={nearby.declineIncoming}
           isMobile={isMobile}
         />
       )}
 
-      {/* live transfer panel (send or receive) */}
+      {/* live session (send + receive, stays open) */}
       {session && (
-        <SessionPanel
-          peerName={session.peerName}
-          direction={session.direction}
-          status={session.status}
-          transfers={session.transfers}
-          errorMessage={session.errorMessage}
-          onDismiss={nearby.dismissSession}
-          isMobile={isMobile}
-        />
+        <SessionModal onClose={nearby.dismissSession}>
+          {session.errorMessage ? (
+            <SessionError message={session.errorMessage} onClose={nearby.dismissSession} isMobile={isMobile} />
+          ) : (
+            <SessionView
+              peerLabel={session.peerName}
+              items={session.items}
+              onSendFiles={(files) => nearby.sendTo(session.peerId, files)}
+              onSendText={nearby.sendText}
+              onCancel={nearby.cancel}
+              onDownloadOne={nearby.downloadOne}
+              onDownloadAll={nearby.downloadAll}
+              isMobile={isMobile}
+              heading={session.connected ? "Connected" : "Opening channel"}
+            />
+          )}
+        </SessionModal>
       )}
     </section>
   );
@@ -195,12 +187,16 @@ export default function NearbyDevices() {
 
 /* ----------------------------------------------------------------- device card */
 
-function DeviceCard({ device, onSend }: { device: NearbyDevice; onSend: () => void }) {
+function DeviceCard({
+  device,
+  onPickFiles,
+}: {
+  device: NearbyDevice;
+  onPickFiles: (list: FileList | null) => void;
+}) {
   return (
-    <button
-      type="button"
+    <label
       className="nearby-card"
-      onClick={onSend}
       style={{
         display: "flex",
         alignItems: "center",
@@ -216,6 +212,15 @@ function DeviceCard({ device, onSend }: { device: NearbyDevice; onSend: () => vo
         font: "inherit",
       }}
     >
+      <input
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          onPickFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
       {/* device glyph */}
       <span
         style={{
@@ -230,7 +235,6 @@ function DeviceCard({ device, onSend }: { device: NearbyDevice; onSend: () => vo
         }}
       >
         <span style={{ width: "10px", height: "10px", background: "var(--acc)" }} />
-        {/* presence dot */}
         <span
           style={{
             position: "absolute",
@@ -287,7 +291,7 @@ function DeviceCard({ device, onSend }: { device: NearbyDevice; onSend: () => vo
       >
         →
       </span>
-    </button>
+    </label>
   );
 }
 
@@ -360,14 +364,7 @@ function CrowdedNote({ isMobile }: { isMobile: boolean }) {
         >
           !
         </span>
-        <span
-          style={{
-            fontFamily: MONO,
-            fontSize: "12px",
-            lineHeight: 1.55,
-            color: "#a8a293",
-          }}
-        >
+        <span style={{ fontFamily: MONO, fontSize: "12px", lineHeight: 1.55, color: "#a8a293" }}>
           Too many devices on this network to auto-list — use a code instead.
         </span>
       </div>
@@ -399,391 +396,83 @@ function CrowdedNote({ isMobile }: { isMobile: boolean }) {
   );
 }
 
-/* ----------------------------------------------------------------- incoming prompt */
+/* ----------------------------------------------------------------- session error */
 
-function IncomingPrompt({
-  name,
-  onAccept,
-  onDecline,
+function SessionError({
+  message,
+  onClose,
   isMobile,
 }: {
-  name: string;
-  onAccept: () => void;
-  onDecline: () => void;
+  message: string;
+  onClose: () => void;
   isMobile: boolean;
 }) {
   return (
-    <Modal onBackdrop={onDecline}>
-      <div style={{ textAlign: "center", padding: isMobile ? "26px 20px" : "32px 30px" }}>
-        <div
-          style={{
-            width: "56px",
-            height: "56px",
-            margin: "0 auto 20px",
-            border: "1px solid var(--acc)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <span style={{ width: "16px", height: "16px", background: "var(--acc)" }} />
-        </div>
-        <div
-          style={{
-            fontFamily: MONO,
-            fontSize: "11px",
-            letterSpacing: ".2em",
-            textTransform: "uppercase",
-            color: "var(--acc)",
-            marginBottom: "12px",
-          }}
-        >
-          Incoming transfer
-        </div>
-        <h3
-          style={{
-            fontFamily: DISPLAY,
-            fontWeight: 700,
-            fontSize: isMobile ? "23px" : "27px",
-            letterSpacing: "-.02em",
-            lineHeight: 1.1,
-            margin: "0 0 8px",
-          }}
-        >
-          <span style={{ fontFamily: MONO, color: "var(--acc)" }}>{name}</span> wants to send you files
-        </h3>
-        <p style={{ fontSize: "14px", color: "#a8a293", margin: "0 0 26px", lineHeight: 1.5 }}>
-          Accept to open a direct channel and choose where to save. You'll be asked for a save
-          location per file.
-        </p>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: isMobile ? "column" : "row",
-            gap: "12px",
-            justifyContent: "center",
-          }}
-        >
-          <button
-            type="button"
-            className="nearby-cta"
-            onClick={onAccept}
-            style={{
-              order: isMobile ? 0 : 1,
-              padding: "14px 26px",
-              background: "var(--acc)",
-              color: "#fff",
-              border: "none",
-              fontFamily: MONO,
-              fontSize: "12.5px",
-              fontWeight: 600,
-              letterSpacing: ".07em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-            }}
-          >
-            Accept &amp; receive
-          </button>
-          <button
-            type="button"
-            className="nearby-ghost"
-            onClick={onDecline}
-            style={{
-              padding: "14px 24px",
-              background: "transparent",
-              border: "1px solid rgba(239,233,218,.22)",
-              color: "#a8a293",
-              fontFamily: MONO,
-              fontSize: "12.5px",
-              fontWeight: 500,
-              letterSpacing: ".07em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-              transition: "border-color .15s ease, color .15s ease",
-            }}
-          >
-            Decline
-          </button>
-        </div>
+    <div style={{ padding: isMobile ? "26px 20px" : "32px 28px", textAlign: "center" }}>
+      <div
+        style={{
+          width: "56px",
+          height: "56px",
+          margin: "0 auto 18px",
+          border: "1px solid var(--amb)",
+          background: "rgba(var(--amb-rgb),.12)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: MONO,
+          fontSize: "26px",
+          color: "var(--amb)",
+        }}
+      >
+        !
       </div>
-    </Modal>
-  );
-}
-
-/* ----------------------------------------------------------------- session panel */
-
-function SessionPanel({
-  peerName,
-  direction,
-  status,
-  transfers,
-  errorMessage,
-  onDismiss,
-  isMobile,
-}: {
-  peerName: string;
-  direction: "send" | "receive";
-  status: string;
-  transfers: TransferItem[];
-  errorMessage: string | null;
-  onDismiss: () => void;
-  isMobile: boolean;
-}) {
-  const total = transfers.reduce((s, r) => s + r.size, 0);
-  const moved = transfers.reduce((s, r) => s + r.transferred, 0);
-  const overall = total > 0 ? Math.round((moved / total) * 100) : 0;
-  const verb = direction === "receive" ? "Receiving from" : "Sending to";
-
-  const headline = useMemo(() => {
-    if (status === "error") return "Channel failed";
-    if (status === "done") return direction === "receive" ? "Received" : "Delivered";
-    if (status === "connecting") return "Opening channel";
-    return verb;
-  }, [status, direction, verb]);
-
-  return (
-    <Modal onBackdrop={status === "done" || status === "error" ? onDismiss : undefined}>
-      <div style={{ padding: isMobile ? "22px 18px" : "26px 26px" }}>
-        {/* header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: "18px",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "11px", minWidth: 0 }}>
-            <span
-              style={{
-                flexShrink: 0,
-                width: "8px",
-                height: "8px",
-                background: status === "error" ? "var(--amb)" : "var(--acc)",
-                animation: status === "done" ? undefined : "wrapBlink 1.3s steps(1) infinite",
-              }}
-            />
-            <span style={{ minWidth: 0 }}>
-              <span
-                style={{
-                  display: "block",
-                  fontFamily: MONO,
-                  fontSize: "10.5px",
-                  letterSpacing: ".16em",
-                  textTransform: "uppercase",
-                  color: status === "error" ? "var(--amb)" : "#6f6a5d",
-                }}
-              >
-                {headline}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontFamily: MONO,
-                  fontSize: "13px",
-                  color: "#efe9da",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  marginTop: "2px",
-                }}
-              >
-                {peerName}
-              </span>
-            </span>
-          </div>
-          {(status === "done" || status === "error") && (
-            <button
-              type="button"
-              className="nearby-link"
-              onClick={onDismiss}
-              style={{
-                background: "none",
-                border: "none",
-                fontFamily: MONO,
-                fontSize: "16px",
-                color: "#6f6a5d",
-                cursor: "pointer",
-                padding: 0,
-                lineHeight: 1,
-              }}
-              aria-label="Close"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        {status === "error" ? (
-          <p style={{ fontSize: "14px", color: "#a8a293", margin: "0 0 20px", lineHeight: 1.55 }}>
-            {errorMessage ?? "The transfer failed."} Wrap is STUN-only — some networks can't be
-            bridged directly.
-          </p>
-        ) : transfers.length === 0 ? (
-          <div
-            style={{
-              padding: "24px 0",
-              textAlign: "center",
-              fontFamily: MONO,
-              fontSize: "12px",
-              color: "#6f6a5d",
-            }}
-          >
-            {status === "connecting" ? "Punching through the network…" : "Opening stream…"}
-          </div>
-        ) : (
-          <>
-            <div style={{ border: `1px solid ${HAIRLINE}`, marginBottom: "16px" }}>
-              {transfers.map((row) => {
-                const done = row.status === "done";
-                const col = done ? "var(--acc)" : "var(--amb)";
-                return (
-                  <div
-                    key={row.id}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: isMobile ? "1fr auto" : "1fr 70px 110px 44px",
-                      gap: isMobile ? "6px 10px" : "10px",
-                      alignItems: "center",
-                      padding: isMobile ? "11px 13px" : "12px 14px",
-                      borderBottom: "1px solid rgba(239,233,218,.07)",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "13px",
-                        fontWeight: 500,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {row.name}
-                    </span>
-                    <span
-                      style={{
-                        fontFamily: MONO,
-                        fontSize: "11px",
-                        color: "#908a7b",
-                        textAlign: isMobile ? "right" : "left",
-                      }}
-                    >
-                      {formatBytes(row.size)}
-                    </span>
-                    <span
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        ...(isMobile ? { gridColumn: "1 / -1" } : null),
-                      }}
-                    >
-                      <span
-                        style={{
-                          flex: 1,
-                          height: "5px",
-                          background: "rgba(239,233,218,.09)",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <span
-                          style={{
-                            display: "block",
-                            height: "100%",
-                            width: `${row.progress}%`,
-                            background: col,
-                            transition: "width .12s linear",
-                          }}
-                        />
-                      </span>
-                    </span>
-                    <span
-                      style={{
-                        fontFamily: MONO,
-                        fontSize: "10.5px",
-                        color: "#a8a293",
-                        textAlign: "right",
-                        ...(isMobile ? { gridColumn: "1 / -1" } : null),
-                      }}
-                    >
-                      {row.progress}%
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* aggregate */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                fontFamily: MONO,
-                fontSize: "10.5px",
-                letterSpacing: ".08em",
-                textTransform: "uppercase",
-                color: "#6f6a5d",
-                marginBottom: "8px",
-              }}
-            >
-              <span>Direct · P2P</span>
-              <span>
-                {overall}
-                <span style={{ color: "var(--amb)" }}>%</span>
-              </span>
-            </div>
-            <div style={{ height: "6px", background: "rgba(239,233,218,.09)", overflow: "hidden" }}>
-              <span
-                style={{
-                  display: "block",
-                  height: "100%",
-                  width: `${overall}%`,
-                  background: "var(--acc)",
-                  transition: "width .12s linear",
-                }}
-              />
-            </div>
-          </>
-        )}
-
-        {(status === "done" || status === "error") && (
-          <button
-            type="button"
-            className={status === "error" ? "nearby-ghost" : "nearby-cta"}
-            onClick={onDismiss}
-            style={{
-              marginTop: "22px",
-              width: "100%",
-              padding: "14px",
-              background: status === "error" ? "transparent" : "var(--acc)",
-              border: status === "error" ? "1px solid rgba(239,233,218,.22)" : "none",
-              color: status === "error" ? "#a8a293" : "#fff",
-              fontFamily: MONO,
-              fontSize: "12.5px",
-              fontWeight: 600,
-              letterSpacing: ".07em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-              transition: "border-color .15s ease, color .15s ease",
-            }}
-          >
-            {status === "error" ? "Close" : "Done"}
-          </button>
-        )}
+      <div
+        style={{
+          fontFamily: MONO,
+          fontSize: "11px",
+          letterSpacing: ".2em",
+          textTransform: "uppercase",
+          color: "var(--amb)",
+          marginBottom: "10px",
+        }}
+      >
+        Channel failed
       </div>
-    </Modal>
+      <p style={{ fontSize: "14px", color: "#a8a293", margin: "0 0 22px", lineHeight: 1.55 }}>
+        {message} Wrap is STUN-only — some networks can't be bridged directly.
+      </p>
+      <button
+        type="button"
+        className="nearby-ghost"
+        onClick={onClose}
+        style={{
+          padding: "13px 26px",
+          background: "transparent",
+          border: "1px solid rgba(239,233,218,.22)",
+          color: "#a8a293",
+          fontFamily: MONO,
+          fontSize: "12.5px",
+          fontWeight: 500,
+          letterSpacing: ".07em",
+          textTransform: "uppercase",
+          cursor: "pointer",
+          transition: "border-color .15s ease, color .15s ease",
+        }}
+      >
+        Close
+      </button>
+    </div>
   );
 }
 
 /* ----------------------------------------------------------------- modal shell */
 
-function Modal({
+function SessionModal({
   children,
-  onBackdrop,
+  onClose,
 }: {
   children: React.ReactNode;
-  onBackdrop?: () => void;
+  onClose: () => void;
 }) {
   // Lock background scroll while the modal is open.
   useEffect(() => {
@@ -795,18 +484,22 @@ function Modal({
   }, []);
 
   const card: CSSProperties = {
+    position: "relative",
     width: "100%",
-    maxWidth: "520px",
-    background: "#15140f",
+    maxWidth: "560px",
+    maxHeight: "90vh",
+    overflow: "auto",
+    background: "#121110",
     border: "1px solid rgba(239,233,218,.18)",
     boxShadow: "0 40px 120px -30px rgba(0,0,0,.85)",
     animation: "wrapRise .35s cubic-bezier(.2,.8,.2,1) both",
+    padding: "18px",
   };
 
   return (
     <div
       onClick={(e) => {
-        if (e.target === e.currentTarget) onBackdrop?.();
+        if (e.target === e.currentTarget) onClose();
       }}
       style={{
         position: "fixed",
@@ -824,7 +517,32 @@ function Modal({
         color: "#efe9da",
       }}
     >
-      <div style={card}>{children}</div>
+      <div style={card}>
+        <button
+          type="button"
+          className="nearby-link"
+          onClick={onClose}
+          aria-label="Close session"
+          style={{
+            position: "absolute",
+            top: "12px",
+            right: "12px",
+            zIndex: 1,
+            width: "30px",
+            height: "30px",
+            background: "rgba(18,17,16,.8)",
+            border: `1px solid ${HAIRLINE}`,
+            fontFamily: MONO,
+            fontSize: "14px",
+            color: "#6f6a5d",
+            cursor: "pointer",
+            lineHeight: 1,
+          }}
+        >
+          ✕
+        </button>
+        {children}
+      </div>
     </div>
   );
 }

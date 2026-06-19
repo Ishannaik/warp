@@ -23,7 +23,7 @@
  *
  * Exposes a way to get the `SignalingClient` so the home UI can:
  *   (a) SEND  — `new WrapPeer(sig, targetPeerId, true)`, then `peer.start()` +
- *               `peer.sendFiles(files)`.
+ *               `peer.offerFiles(files)` (gated by the receiver's accept).
  *   (b) RECEIVE — an unsolicited offer from a nearby peer (no peer yet) fires the
  *               `onIncoming` callback with the sender and a ready-to-accept
  *               responder `WrapPeer`; feed it the offer and bind your handlers.
@@ -52,7 +52,7 @@ interface NearbyMessage {
 /**
  * Fired when a nearby peer offers a connection and we have no peer for them yet.
  * The `peer` is a fresh responder already fed the inbound offer — bind your
- * transfer handlers (`peer.on('transfer'|'received'|…)`) to accept the files.
+ * transfer handlers (`peer.on('transfer'|'incoming-offer'|'file-received'|…)`).
  */
 export interface IncomingConnection {
   /** Discovery peerId of the sender. */

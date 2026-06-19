@@ -1,17 +1,24 @@
 /**
  * React hook orchestrating a Wrap transfer: signaling socket, the WebRTC peer,
- * and the file-transfer state machine. Both sender and receiver use this hook —
+ * and the symmetric file-transfer tray. Both sender and receiver use this hook —
  * pass `joinCode` to act as the receiver who joins an existing room.
  *
  * Roles & glare avoidance (see peer.ts): whoever JOINS a room and receives a
  * non-empty `peers` list is the initiator and offers to the first existing
  * peer. The room creator waits for `peer-joined` then for the incoming offer.
+ *
+ * Review-before-receive redesign: the channel STAYS OPEN after a batch. Status
+ * reaches "connected" and stays there — there is no terminal "done". Either peer
+ * can offer files or send text repeatedly. Received files land in `items[]` as
+ * in-memory blobs; the UI downloads them on demand (one file, or a zip of all).
+ * An incoming `offer` is surfaced via `incoming` until the user accepts/declines.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { zipSync, type Zippable } from "fflate";
 import { SignalingClient, type SignalData } from "./signaling";
 import { WrapPeer, type PeerErrorKind } from "./peer";
-import { type TransferItem } from "./transfer";
+import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 
 export type WrapMode = "send" | "receive";
 
@@ -19,10 +26,14 @@ export type WrapStatus =
   | "idle" // nothing started yet
   | "connecting" // socket opening / joining room
   | "waiting" // in a room, waiting for the other side
-  | "connected" // data channel open
-  | "transferring" // bytes in flight
-  | "done" // all transfers finished
+  | "connected" // data channel open — STAYS here; both peers can keep sending
   | "error";
+
+/** A pending inbound batch manifest awaiting the user's accept/decline. */
+export interface IncomingOffer {
+  batchId: string;
+  items: OfferItem[];
+}
 
 export interface WrapError {
   kind: PeerErrorKind | "signaling" | "no-files";
@@ -35,12 +46,27 @@ export interface UseWrapTransfer {
   shareUrl: string | null;
   peers: string[];
   status: WrapStatus;
-  transfers: TransferItem[];
+  /** The session tray: every item we've sent or received, both directions. */
+  items: TransferItem[];
+  /** A pending offer from the peer awaiting accept/decline, or null. */
+  incoming: IncomingOffer | null;
   error: WrapError | null;
   /** Sender: open a fresh room and wait for a peer. */
   createRoom: () => void;
-  /** Sender: stream the given files once a peer is connected. */
-  startSend: (files: File[]) => Promise<void>;
+  /** Offer files to the peer (gated by their accept). Safe to call repeatedly. */
+  sendFiles: (files: File[]) => Promise<void>;
+  /** Send a text snippet — appears directly in the peer's tray (no accept). */
+  sendText: (text: string) => void;
+  /** Accept the pending incoming offer -> bytes flow into the tray. */
+  accept: () => void;
+  /** Decline the pending incoming offer -> nothing is received. */
+  decline: () => void;
+  /** Cancel an in-flight item (either direction) by id. */
+  cancel: (id: string) => void;
+  /** Save one received file's blob to disk via an anchor download. */
+  downloadOne: (id: string) => void;
+  /** Zip all received, done file-items into wrap-files.zip and download it. */
+  downloadAll: () => void;
   /** Re-attempt after a failure (tears down and restarts the same role). */
   retry: () => void;
 }
@@ -53,21 +79,33 @@ const ERROR_MESSAGES: Record<WrapError["kind"], string> = {
   "no-files": "Add at least one file before opening a channel.",
 };
 
+/** Trigger a browser download of a blob via a transient object-URL anchor. */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke on the next tick so the click has time to start the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   const mode: WrapMode = joinCode ? "receive" : "send";
 
   const [code, setCode] = useState<string | null>(joinCode ?? null);
   const [peers, setPeers] = useState<string[]>([]);
   const [status, setStatus] = useState<WrapStatus>("idle");
-  const [transfers, setTransfers] = useState<TransferItem[]>([]);
+  const [items, setItems] = useState<TransferItem[]>([]);
+  const [incoming, setIncoming] = useState<IncomingOffer | null>(null);
   const [error, setError] = useState<WrapError | null>(null);
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const peerRef = useRef<WrapPeer | null>(null);
-  /** Files staged by the sender to push the moment the channel opens. */
+  /** Files staged by the sender to offer the moment the channel opens. */
   const pendingFilesRef = useRef<File[] | null>(null);
-  /** True once we've fired startSend, so we don't double-send. */
-  const sentRef = useRef(false);
 
   const shareUrl = useMemo(
     () => (code ? `${window.location.origin}/r/${code}` : null),
@@ -79,9 +117,9 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     setStatus("error");
   }, []);
 
-  /** Merge a transfer item update into state by id. */
-  const upsertTransfer = useCallback((item: TransferItem) => {
-    setTransfers((prev) => {
+  /** Merge a transfer item update into state by id (preserves order). */
+  const upsertItem = useCallback((item: TransferItem) => {
+    setItems((prev) => {
       const idx = prev.findIndex((t) => t.id === item.id);
       if (idx === -1) return [...prev, item];
       const next = prev.slice();
@@ -94,23 +132,40 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   const bindPeer = useCallback(
     (peer: WrapPeer) => {
       peer.on("connected", () => {
-        setStatus((s) => (s === "transferring" || s === "done" ? s : "connected"));
-        // Sender auto-starts queued files when the channel comes up.
+        setStatus((s) => (s === "error" ? s : "connected"));
+        // Sender auto-offers any staged files when the channel comes up.
         const files = pendingFilesRef.current;
-        if (files && files.length && !sentRef.current) {
-          sentRef.current = true;
-          setStatus("transferring");
-          peer.sendFiles(files).catch(() => fail("channel-error"));
+        if (files && files.length) {
+          pendingFilesRef.current = null;
+          peer.offerFiles(files).catch(() => fail("channel-error"));
         }
       });
-      peer.on("transfer", (item) => {
-        upsertTransfer(item);
-        setStatus((s) => (s === "done" ? s : "transferring"));
-      });
-      peer.on("send-complete", () => setStatus("done"));
+
+      // Both directions: an item was created or its progress changed.
+      peer.on("transfer", (item) => upsertItem(item));
+
+      // A whole manifest arrived — surface the accept modal.
+      peer.on("incoming-offer", (info) => setIncoming(info));
+
+      // A file fully arrived: the engine already attached item.blob and emitted
+      // a `transfer` with status "done", so we don't need to mutate state here.
+      // (Hook keeps the blob in items[] for downloadOne/downloadAll.)
+      peer.on("file-received", () => {});
+
+      // A text snippet arrived: the engine emits a `transfer` with the text, so
+      // upsert via that already covers it; nothing extra to do.
+      peer.on("text-received", () => {});
+
+      // A batch WE offered was declined — items are marked "declined" via
+      // `transfer`, so just clear any stale staged files.
+      peer.on("declined", () => {});
+
+      // A file was cancelled (either side) — `transfer` already updated status.
+      peer.on("cancelled", () => {});
+
       peer.on("error", (kind) => fail(kind));
     },
-    [fail, upsertTransfer],
+    [fail, upsertItem],
   );
 
   /** Establish the signaling socket and the join/role dance. */
@@ -120,8 +175,8 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
       peerRef.current?.close();
       peerRef.current = null;
       signalingRef.current?.close();
-      sentRef.current = false;
-      setTransfers([]);
+      setItems([]);
+      setIncoming(null);
       setError(null);
       setStatus("connecting");
 
@@ -190,30 +245,103 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     connect(undefined);
   }, [connect]);
 
-  const startSend = useCallback(
+  const sendFiles = useCallback(
     async (files: File[]) => {
       if (!files.length) {
         fail("no-files");
         return;
       }
-      pendingFilesRef.current = files;
-      // If the channel is already open, push immediately; else `connected` will.
       const peer = peerRef.current;
-      if (peer && peer.isConnected && !sentRef.current) {
-        sentRef.current = true;
-        setStatus("transferring");
+      if (peer && peer.isConnected) {
+        // Channel already open: offer immediately.
         try {
-          await peer.sendFiles(files);
+          await peer.offerFiles(files);
         } catch {
           fail("channel-error");
         }
+      } else {
+        // Not paired yet: stage for the sender's `connected` handler to offer.
+        pendingFilesRef.current = files;
       }
     },
     [fail],
   );
 
+  const sendText = useCallback(
+    (text: string) => {
+      const peer = peerRef.current;
+      if (!peer || !peer.isConnected || !text) return;
+      try {
+        peer.sendText(text);
+      } catch {
+        fail("channel-error");
+      }
+    },
+    [fail],
+  );
+
+  const accept = useCallback(() => {
+    const off = incoming;
+    if (!off) return;
+    setIncoming(null);
+    peerRef.current?.acceptOffer(off.batchId);
+  }, [incoming]);
+
+  const decline = useCallback(() => {
+    const off = incoming;
+    if (!off) return;
+    setIncoming(null);
+    peerRef.current?.declineOffer(off.batchId);
+  }, [incoming]);
+
+  const cancel = useCallback((id: string) => {
+    peerRef.current?.cancel(id);
+  }, []);
+
+  const downloadOne = useCallback(
+    (id: string) => {
+      const item = items.find((t) => t.id === id);
+      if (!item || !item.blob) return;
+      saveBlob(item.blob, item.name);
+    },
+    [items],
+  );
+
+  const downloadAll = useCallback(() => {
+    // Zip every received, done file-item that still has its blob in memory.
+    const received = items.filter(
+      (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && t.blob,
+    );
+    if (!received.length) return;
+
+    const zippable: Zippable = {};
+    const used = new Set<string>();
+    Promise.all(
+      received.map(async (t) => {
+        // De-dupe identical filenames so the zip doesn't clobber entries.
+        let name = t.name || "file";
+        if (used.has(name)) {
+          const dot = name.lastIndexOf(".");
+          const base = dot > 0 ? name.slice(0, dot) : name;
+          const ext = dot > 0 ? name.slice(dot) : "";
+          let n = 2;
+          while (used.has(`${base} (${n})${ext}`)) n += 1;
+          name = `${base} (${n})${ext}`;
+        }
+        used.add(name);
+        const buf = new Uint8Array(await t.blob!.arrayBuffer());
+        zippable[name] = buf;
+      }),
+    )
+      .then(() => {
+        const zipped = zipSync(zippable, { level: 0 }); // level 0: files are usually already compressed
+        saveBlob(new Blob([zipped], { type: "application/zip" }), "wrap-files.zip");
+      })
+      .catch(() => fail("channel-error"));
+  }, [items, fail]);
+
   const retry = useCallback(() => {
-    sentRef.current = false;
+    pendingFilesRef.current = null;
     if (mode === "receive" && joinCode) {
       setCode(joinCode);
       connect(joinCode);
@@ -240,10 +368,21 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     shareUrl,
     peers,
     status,
-    transfers,
+    items,
+    incoming,
     error,
     createRoom,
-    startSend,
+    sendFiles,
+    sendText,
+    accept,
+    decline,
+    cancel,
+    downloadOne,
+    downloadAll,
     retry,
   };
 }
+
+// ponytail: `formatBytes` is re-exported for the UI's convenience so it doesn't
+// re-derive the size formatter; if unused by the UI this line can be dropped.
+export { formatBytes };

@@ -1608,19 +1608,24 @@ export default function Theory() {
             alignItems: "start",
           }}
         >
-          {/* sticky DepthGauge rail (desktop only) */}
+          {/* sticky DepthGauge rail (desktop only) — a compact, vertically
+              centered progress spine pinned in the viewport, not a full-height
+              sparse rail. The active dot glides as you scroll the descent. */}
           {!isMobile && (
             <div
               style={{
                 position: "sticky",
-                top: "96px",
-                height: "calc(100vh - 160px)",
-                paddingTop: "60px",
+                top: 0,
+                height: "100vh",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
               }}
             >
               <DepthGauge
                 layers={LAYERS}
                 activeIndex={activeLayer}
+                style={{ height: "min(440px, 72vh)" }}
                 onSelect={(i) => {
                   const el = document.getElementById(LAYERS[i].id);
                   el?.scrollIntoView({ behavior: "smooth", block: "center" });

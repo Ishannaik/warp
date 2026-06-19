@@ -260,6 +260,12 @@ export default function Hero() {
           gap: isMobile ? "36px" : "54px",
           alignItems: "center",
           padding: isMobile ? "24px 16px 32px" : "30px 26px 40px",
+          // Cap + center on wide/ultrawide screens so the copy and the transfer
+          // window don't sprawl to opposite edges with a dead void between them.
+          width: "100%",
+          maxWidth: "1320px",
+          marginInline: "auto",
+          boxSizing: "border-box",
           zIndex: 4,
         }}
       >
