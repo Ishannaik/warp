@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { navigate } from "../router";
 import { useWrapTransfer } from "../lib/wrap/useWrapTransfer";
 import { formatBytes, type TransferItem } from "../lib/wrap/transfer";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Wrap Transfer flow — a real, WebRTC-backed port of the 4-step design
@@ -34,6 +35,7 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWrapTransfer(joinCode);
   const { mode, code, shareUrl, status, transfers, error } = wrap;
+  const isMobile = useIsMobile();
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
@@ -133,7 +135,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
         .wrap-cta:hover{filter:brightness(1.08)}
       `}</style>
 
-      <TopBar step={step} />
+      <TopBar step={step} isMobile={isMobile} />
 
       <div
         style={{
@@ -141,12 +143,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: "48px 26px",
+          padding: isMobile ? "28px 16px" : "48px 26px",
         }}
       >
         <div style={{ width: "100%", maxWidth: "720px" }}>
           {error ? (
-            <ErrorPanel message={error.message} onRetry={wrap.retry} />
+            <ErrorPanel message={error.message} onRetry={wrap.retry} isMobile={isMobile} />
           ) : step === "select" ? (
             <SelectStep
               files={files}
@@ -157,6 +159,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               onDropFiles={addFiles}
               onRemove={removeFile}
               onOpenChannel={openChannel}
+              isMobile={isMobile}
             />
           ) : step === "pair" ? (
             <PairStep
@@ -166,11 +169,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               fileCount={fileCount}
               totalBytes={totalBytes}
               connecting={status === "connecting"}
+              isMobile={isMobile}
             />
           ) : step === "transfer" ? (
-            <TransferStep mode={mode} transfers={transfers} />
+            <TransferStep mode={mode} transfers={transfers} isMobile={isMobile} />
           ) : (
-            <DoneStep mode={mode} transfers={transfers} onReset={reset} />
+            <DoneStep mode={mode} transfers={transfers} onReset={reset} isMobile={isMobile} />
           )}
         </div>
       </div>
@@ -200,7 +204,7 @@ const STEP_META: { n: string; label: string; key: Step }[] = [
   { n: "04", label: "Done", key: "done" },
 ];
 
-function TopBar({ step }: { step: Step }) {
+function TopBar({ step, isMobile }: { step: Step; isMobile: boolean }) {
   const currentIdx = STEP_META.findIndex((s) => s.key === step);
   return (
     <div
@@ -208,7 +212,7 @@ function TopBar({ step }: { step: Step }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "18px 26px",
+        padding: isMobile ? "14px 16px" : "18px 26px",
         borderBottom: `1px solid ${HAIRLINE}`,
       }}
     >
@@ -237,6 +241,36 @@ function TopBar({ step }: { step: Step }) {
         </span>
       </a>
 
+      {isMobile ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "7px",
+            fontFamily: MONO,
+            fontSize: "10.5px",
+            letterSpacing: ".12em",
+            textTransform: "uppercase",
+            color: "#efe9da",
+          }}
+        >
+          <span
+            style={{
+              width: "18px",
+              height: "18px",
+              border: "1px solid var(--acc)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "9px",
+            }}
+          >
+            {STEP_META[Math.max(0, currentIdx)].n}
+          </span>
+          {STEP_META[Math.max(0, currentIdx)].label}
+          <span style={{ color: "#5a5648" }}>/ 04</span>
+        </div>
+      ) : (
       <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
         {STEP_META.map((s, i) => {
           const color = i === currentIdx ? "#efe9da" : i < currentIdx ? "var(--acc)" : "#5a5648";
@@ -278,6 +312,7 @@ function TopBar({ step }: { step: Step }) {
           );
         })}
       </div>
+      )}
 
       <a
         href="/"
@@ -319,6 +354,7 @@ function SelectStep({
   onDropFiles,
   onRemove,
   onOpenChannel,
+  isMobile,
 }: {
   files: File[];
   queue: QueuedFile[];
@@ -328,6 +364,7 @@ function SelectStep({
   onDropFiles: (l: FileList) => void;
   onRemove: (id: string) => void;
   onOpenChannel: () => void;
+  isMobile: boolean;
 }) {
   return (
     <div style={{ animation: "wrapFade .5s ease both" }}>
@@ -356,7 +393,7 @@ function SelectStep({
         style={{
           border: "1.5px dashed rgba(239,233,218,.28)",
           background: "rgba(239,233,218,.02)",
-          padding: "48px 26px",
+          padding: isMobile ? "36px 16px" : "48px 26px",
           textAlign: "center",
           cursor: "pointer",
         }}
@@ -425,10 +462,10 @@ function SelectStep({
               key={q.id}
               style={{
                 display: "grid",
-                gridTemplateColumns: "34px 1fr auto 30px",
-                gap: "12px",
+                gridTemplateColumns: isMobile ? "28px 1fr auto 26px" : "34px 1fr auto 30px",
+                gap: isMobile ? "8px" : "12px",
                 alignItems: "center",
-                padding: "13px 15px",
+                padding: isMobile ? "12px" : "13px 15px",
                 borderBottom: "1px solid rgba(239,233,218,.07)",
               }}
             >
@@ -482,19 +519,28 @@ function SelectStep({
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center",
           justifyContent: "space-between",
+          gap: isMobile ? "16px" : undefined,
           marginTop: "26px",
         }}
       >
-        <span style={{ fontFamily: MONO, fontSize: "11.5px", color: "#6f6a5d" }}>
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: "11.5px",
+            color: "#6f6a5d",
+            textAlign: isMobile ? "center" : "left",
+          }}
+        >
           Files stay on your device until a peer connects.
         </span>
         <span
           className={files.length ? "wrap-cta" : undefined}
           onClick={onOpenChannel}
           style={{
-            display: "inline-block",
+            display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
             background: files.length ? "var(--acc)" : "rgba(239,233,218,.12)",
             color: "#fff",
@@ -503,6 +549,7 @@ function SelectStep({
             fontWeight: 600,
             letterSpacing: ".07em",
             textTransform: "uppercase",
+            textAlign: isMobile ? "center" : undefined,
             cursor: files.length ? "pointer" : "not-allowed",
           }}
         >
@@ -522,6 +569,7 @@ function PairStep({
   fileCount,
   totalBytes,
   connecting,
+  isMobile,
 }: {
   mode: "send" | "receive";
   code: string | null;
@@ -529,6 +577,7 @@ function PairStep({
   fileCount: string;
   totalBytes: number;
   connecting: boolean;
+  isMobile: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSvg, setQrSvg] = useState<string>("");
@@ -577,7 +626,14 @@ function PairStep({
     <div style={{ animation: "wrapFade .5s ease both", textAlign: "center" }}>
       <div style={{ ...stepLabel, marginBottom: "30px" }}>Step 02 / Pair</div>
 
-      <div style={{ position: "relative", width: "180px", height: "180px", margin: "0 auto 18px" }}>
+      <div
+        style={{
+          position: "relative",
+          width: isMobile ? "140px" : "180px",
+          height: isMobile ? "140px" : "180px",
+          margin: "0 auto 18px",
+        }}
+      >
         <div
           style={{
             position: "absolute",
@@ -678,22 +734,27 @@ function PairStep({
           <div
             style={{
               display: "flex",
+              flexDirection: isMobile ? "column" : "row",
               flexWrap: "wrap",
               gap: "12px",
               justifyContent: "center",
-              alignItems: "center",
+              alignItems: isMobile ? "stretch" : "center",
               marginTop: "26px",
             }}
           >
             <span
               className="wrap-share"
               onClick={copy}
-              style={shareBtn}
+              style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
             >
               {copied ? "✓ copied!" : "⧉ Copy link"}
             </span>
             {canShare && (
-              <span className="wrap-share" onClick={share} style={shareBtn}>
+              <span
+                className="wrap-share"
+                onClick={share}
+                style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
+              >
                 ↗ Share
               </span>
             )}
@@ -753,9 +814,11 @@ const shareBtn: CSSProperties = {
 function TransferStep({
   mode,
   transfers,
+  isMobile,
 }: {
   mode: "send" | "receive";
   transfers: TransferItem[];
+  isMobile: boolean;
 }) {
   const rows = transfers;
   const total = rows.reduce((s, r) => s + r.size, 0);
@@ -850,10 +913,10 @@ function TransferStep({
                   key={row.id}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "30px 1fr 64px 1.2fr 96px",
-                    gap: "10px",
+                    gridTemplateColumns: isMobile ? "24px 1fr auto" : "30px 1fr 64px 1.2fr 96px",
+                    gap: isMobile ? "9px" : "10px",
                     alignItems: "center",
-                    padding: "13px 15px",
+                    padding: isMobile ? "12px" : "13px 15px",
                     borderBottom: "1px solid rgba(239,233,218,.07)",
                   }}
                 >
@@ -885,7 +948,14 @@ function TransferStep({
                   <span style={{ fontFamily: MONO, fontSize: "11px", color: "#908a7b" }}>
                     {formatBytes(row.size)}
                   </span>
-                  <span style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "9px",
+                      ...(isMobile ? { gridColumn: "1 / -1" } : null),
+                    }}
+                  >
                     <span
                       style={{
                         flex: 1,
@@ -923,6 +993,7 @@ function TransferStep({
                       letterSpacing: ".06em",
                       textAlign: "right",
                       color: ic,
+                      ...(isMobile ? { gridColumn: "1 / -1" } : null),
                     }}
                   >
                     {st}
@@ -1019,10 +1090,12 @@ function DoneStep({
   mode,
   transfers,
   onReset,
+  isMobile,
 }: {
   mode: "send" | "receive";
   transfers: TransferItem[];
   onReset: () => void;
+  isMobile: boolean;
 }) {
   const total = transfers.reduce((s, r) => s + r.size, 0);
   const fileCount = String(transfers.length).padStart(2, "0");
@@ -1126,12 +1199,21 @@ function DoneStep({
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginTop: "30px" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          gap: "12px",
+          justifyContent: "center",
+          alignItems: isMobile ? "stretch" : undefined,
+          marginTop: "30px",
+        }}
+      >
         <span
           className="wrap-cta"
           onClick={onReset}
           style={{
-            display: "inline-block",
+            display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
             background: "var(--acc)",
             color: "#fff",
@@ -1140,6 +1222,7 @@ function DoneStep({
             fontWeight: 600,
             letterSpacing: ".07em",
             textTransform: "uppercase",
+            textAlign: isMobile ? "center" : undefined,
             cursor: "pointer",
           }}
         >
@@ -1152,7 +1235,7 @@ function DoneStep({
             navigate("/");
           }}
           style={{
-            display: "inline-block",
+            display: isMobile ? "block" : "inline-block",
             padding: "15px 24px",
             border: "1px solid rgba(239,233,218,.22)",
             color: "#efe9da",
@@ -1161,6 +1244,7 @@ function DoneStep({
             fontWeight: 500,
             letterSpacing: ".07em",
             textTransform: "uppercase",
+            textAlign: isMobile ? "center" : undefined,
             textDecoration: "none",
           }}
         >
@@ -1173,7 +1257,15 @@ function DoneStep({
 
 /* -------------------------------------------------------------- error panel */
 
-function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorPanel({
+  message,
+  onRetry,
+  isMobile,
+}: {
+  message: string;
+  onRetry: () => void;
+  isMobile: boolean;
+}) {
   return (
     <div style={{ animation: "wrapFade .5s ease both", textAlign: "center" }}>
       <div
@@ -1221,12 +1313,20 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
         {message} Wrap is STUN-only — there's no relay fallback, so some networks simply can't be
         bridged.
       </p>
-      <div style={{ display: "flex", gap: "12px", justifyContent: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          gap: "12px",
+          justifyContent: "center",
+          alignItems: isMobile ? "stretch" : undefined,
+        }}
+      >
         <span
           className="wrap-cta"
           onClick={onRetry}
           style={{
-            display: "inline-block",
+            display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
             background: "var(--acc)",
             color: "#fff",
@@ -1235,6 +1335,7 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
             fontWeight: 600,
             letterSpacing: ".07em",
             textTransform: "uppercase",
+            textAlign: isMobile ? "center" : undefined,
             cursor: "pointer",
           }}
         >
@@ -1247,7 +1348,7 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
             navigate("/");
           }}
           style={{
-            display: "inline-block",
+            display: isMobile ? "block" : "inline-block",
             padding: "15px 24px",
             border: "1px solid rgba(239,233,218,.22)",
             color: "#efe9da",
@@ -1256,6 +1357,7 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
             fontWeight: 500,
             letterSpacing: ".07em",
             textTransform: "uppercase",
+            textAlign: isMobile ? "center" : undefined,
             textDecoration: "none",
           }}
         >

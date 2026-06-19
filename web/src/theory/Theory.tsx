@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { navigate } from "../router";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Theory — the "/how" deep-dive. A genuinely educational, editorial page that
@@ -24,6 +25,7 @@ const HAIR_STRONG = "1px solid rgba(239,233,218,.16)";
 const navLink: CSSProperties = { color: "#b6b0a0", textDecoration: "none" };
 
 function Chrome() {
+  const isMobile = useIsMobile();
   return (
     <>
       <style>{`
@@ -39,7 +41,7 @@ function Chrome() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "11px 22px",
+          padding: isMobile ? "10px 16px" : "11px 22px",
           borderBottom: HAIR,
           fontFamily: MONO,
           fontSize: "11px",
@@ -53,11 +55,13 @@ function Chrome() {
         <span>
           WRAP&nbsp;&nbsp;/&nbsp;&nbsp;how it works &mdash; the theory
         </span>
-        <span style={{ display: "flex", gap: "26px" }}>
-          <span style={{ color: "var(--acc)" }}>&#9679; PEER-TO-PEER</span>
-          <span>WEBRTC</span>
-          <span>NO SERVER TOUCHES FILES</span>
-        </span>
+        {!isMobile && (
+          <span style={{ display: "flex", gap: "26px" }}>
+            <span style={{ color: "var(--acc)" }}>&#9679; PEER-TO-PEER</span>
+            <span>WEBRTC</span>
+            <span>NO SERVER TOUCHES FILES</span>
+          </span>
+        )}
       </div>
 
       {/* nav */}
@@ -66,7 +70,7 @@ function Chrome() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "20px 26px",
+          padding: isMobile ? "16px 16px" : "20px 26px",
           position: "relative",
           zIndex: 5,
         }}
@@ -114,23 +118,25 @@ function Chrome() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "30px",
+            gap: isMobile ? "0" : "30px",
             fontFamily: MONO,
             fontSize: "12px",
             letterSpacing: ".05em",
           }}
         >
-          <a
-            href="/"
-            className="thy-nav-link"
-            style={navLink}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate("/");
-            }}
-          >
-            &larr; HOME
-          </a>
+          {!isMobile && (
+            <a
+              href="/"
+              className="thy-nav-link"
+              style={navLink}
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/");
+              }}
+            >
+              &larr; HOME
+            </a>
+          )}
           <a
             href="/send"
             className="thy-launch"
@@ -183,6 +189,7 @@ function Section({
   dark?: boolean;
   children?: ReactNode;
 }) {
+  const isMobile = useIsMobile();
   return (
     <section
       id={id}
@@ -190,7 +197,7 @@ function Section({
         position: "relative",
         zIndex: 4,
         borderTop: HAIR,
-        padding: "92px 26px",
+        padding: isMobile ? "56px 18px" : "92px 26px",
         background: dark ? "#0e0d0a" : "transparent",
       }}
     >
@@ -359,6 +366,7 @@ const nodeName: CSSProperties = {
  */
 function FlowDiagram() {
   const [direct, setDirect] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const t = setInterval(() => setDirect((d) => !d), 3200);
@@ -381,7 +389,8 @@ function FlowDiagram() {
         border: `1px solid ${accent}`,
         background: "#15140f",
         padding: "18px 20px",
-        minWidth: "130px",
+        minWidth: isMobile ? "0" : "130px",
+        width: isMobile ? "100%" : undefined,
         textAlign: "center",
       }}
     >
@@ -415,7 +424,7 @@ function FlowDiagram() {
         position: "relative",
         border: HAIR_STRONG,
         background: "#0e0d0a",
-        padding: "30px 28px 34px",
+        padding: isMobile ? "24px 16px 28px" : "30px 28px 34px",
         overflow: "hidden",
       }}
     >
@@ -478,7 +487,7 @@ function FlowDiagram() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "auto 1fr auto",
+          gridTemplateColumns: isMobile ? "1fr" : "auto 1fr auto",
           alignItems: "center",
           gap: "16px",
           maxWidth: "640px",
@@ -527,6 +536,7 @@ function FlowDiagram() {
 /* ------------------------------------------------ section-04: NAT lattice */
 /** A small CSS lattice illustrating NAT: who can reach whom, and the wall. */
 function NatDiagram() {
+  const isMobile = useIsMobile();
   const row = (
     label: string,
     ok: boolean,
@@ -536,7 +546,7 @@ function NatDiagram() {
     <div
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: isMobile ? "flex-start" : "center",
         gap: "14px",
         padding: "14px 0",
         borderTop: HAIR_STRONG,
@@ -547,24 +557,35 @@ function NatDiagram() {
           width: "10px",
           height: "10px",
           flex: "none",
+          marginTop: isMobile ? "5px" : 0,
           background: tone,
           borderRadius: ok ? "50%" : 0,
         }}
       />
-      <span
+      <div
         style={{
-          fontFamily: MONO,
-          fontSize: "12px",
-          letterSpacing: ".05em",
-          color: "#efe9da",
-          minWidth: "210px",
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "flex-start" : "center",
+          gap: isMobile ? "6px" : "14px",
+          minWidth: 0,
         }}
       >
-        {label}
-      </span>
-      <span style={{ fontSize: "14.5px", color: "#a8a293", lineHeight: 1.5 }}>
-        {note}
-      </span>
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: "12px",
+            letterSpacing: ".05em",
+            color: "#efe9da",
+            minWidth: isMobile ? 0 : "210px",
+          }}
+        >
+          {label}
+        </span>
+        <span style={{ fontSize: "14.5px", color: "#a8a293", lineHeight: 1.5 }}>
+          {note}
+        </span>
+      </div>
     </div>
   );
 
@@ -575,7 +596,7 @@ function NatDiagram() {
         marginTop: "30px",
         border: HAIR_STRONG,
         background: "#15140f",
-        padding: "6px 24px 18px",
+        padding: isMobile ? "6px 16px 16px" : "6px 24px 18px",
       }}
     >
       {row(
@@ -603,6 +624,8 @@ function NatDiagram() {
 /* ------------------------------------------------ section-06: chunk pipe -- */
 /** Visualizes a large file sliced into 16KB chunks streamed under backpressure. */
 function ChunkDiagram() {
+  const isMobile = useIsMobile();
+  const arrow = isMobile ? "↓" : "→";
   return (
     <div
       style={{
@@ -610,26 +633,35 @@ function ChunkDiagram() {
         marginTop: "30px",
         border: HAIR_STRONG,
         background: "#15140f",
-        padding: "24px",
+        padding: isMobile ? "20px 16px" : "24px",
       }}
     >
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center",
           gap: "16px",
           flexWrap: "wrap",
         }}
       >
-        <div style={{ ...nodeBox, minWidth: "96px" }}>
+        <div
+          style={{
+            ...nodeBox,
+            minWidth: isMobile ? "0" : "96px",
+            width: isMobile ? "100%" : undefined,
+          }}
+        >
           <div style={nodeLabel}>FILE</div>
           <div style={{ ...nodeName, fontSize: "15px" }}>4.2 GB</div>
         </div>
 
-        <span style={{ color: "#4a463c", fontFamily: MONO }}>&rarr;</span>
+        <span style={{ color: "#4a463c", fontFamily: MONO, textAlign: "center" }}>
+          {arrow}
+        </span>
 
         {/* the chunk train */}
-        <div style={{ flex: 1, minWidth: "200px" }}>
+        <div style={{ flex: 1, minWidth: isMobile ? "0" : "200px" }}>
           <div
             style={{
               display: "flex",
@@ -668,9 +700,17 @@ function ChunkDiagram() {
           </div>
         </div>
 
-        <span style={{ color: "#4a463c", fontFamily: MONO }}>&rarr;</span>
+        <span style={{ color: "#4a463c", fontFamily: MONO, textAlign: "center" }}>
+          {arrow}
+        </span>
 
-        <div style={{ ...nodeBox, minWidth: "96px" }}>
+        <div
+          style={{
+            ...nodeBox,
+            minWidth: isMobile ? "0" : "96px",
+            width: isMobile ? "100%" : undefined,
+          }}
+        >
           <div style={nodeLabel}>PEER B</div>
           <div style={{ ...nodeName, fontSize: "15px" }}>reassembles</div>
         </div>
@@ -682,13 +722,14 @@ function ChunkDiagram() {
 /* --------------------------------------------------------------- footer -- */
 
 function FooterCta() {
+  const isMobile = useIsMobile();
   return (
     <section
       style={{
         position: "relative",
         zIndex: 4,
         borderTop: HAIR,
-        padding: "112px 26px 0",
+        padding: isMobile ? "72px 18px 0" : "112px 26px 0",
         overflow: "hidden",
       }}
     >
@@ -798,7 +839,7 @@ function FooterCta() {
       <div
         style={{
           maxWidth: WIDE_MAX,
-          margin: "96px auto 0",
+          margin: isMobile ? "64px auto 0" : "96px auto 0",
           borderTop: HAIR,
           padding: "30px 0",
           display: "flex",
@@ -846,6 +887,7 @@ function FooterCta() {
 /* =============================================================== page === */
 
 export default function Theory() {
+  const isMobile = useIsMobile();
   return (
     <div
       style={{
@@ -863,7 +905,7 @@ export default function Theory() {
         style={{
           position: "relative",
           zIndex: 4,
-          padding: "60px 26px 84px",
+          padding: isMobile ? "40px 18px 56px" : "60px 26px 84px",
         }}
       >
         <div style={{ maxWidth: WIDE_MAX, margin: "0 auto" }}>
@@ -928,7 +970,7 @@ export default function Theory() {
             &mdash; and why a server never gets to read a single byte.
           </p>
 
-          <div style={{ marginTop: "52px", animation: "wrapFade .8s ease .65s both" }}>
+          <div style={{ marginTop: isMobile ? "36px" : "52px", animation: "wrapFade .8s ease .65s both" }}>
             <FlowDiagram />
           </div>
         </div>

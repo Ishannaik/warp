@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { navigate } from "../router";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * FooterCta — closing call-to-action + footer bar.
@@ -34,13 +35,14 @@ function FooterLink({ label, href }: { label: string; href: string }) {
 }
 
 export default function FooterCta() {
+  const isMobile = useIsMobile();
   return (
     <section
       style={{
         position: "relative",
         zIndex: 4,
         borderTop: "1px solid rgba(239,233,218,.13)",
-        padding: "120px 26px 0",
+        padding: isMobile ? "72px 18px 0" : "120px 26px 0",
         overflow: "hidden",
       }}
     >
@@ -49,12 +51,13 @@ export default function FooterCta() {
           style={{
             fontFamily: "'Bricolage Grotesque',sans-serif",
             fontWeight: 800,
-            fontSize: "clamp(48px,9vw,140px)",
+            fontSize: isMobile ? "clamp(34px,11vw,56px)" : "clamp(48px,9vw,140px)",
             lineHeight: 0.88,
             letterSpacing: "-.04em",
             textTransform: "uppercase",
             margin: 0,
             color: "#efe9da",
+            overflowWrap: "break-word",
           }}
         >
           Send it
@@ -107,14 +110,16 @@ export default function FooterCta() {
       <div
         style={{
           maxWidth: 1320,
-          margin: "96px auto 0",
+          margin: isMobile ? "56px auto 0" : "96px auto 0",
           borderTop: "1px solid rgba(239,233,218,.13)",
           padding: "30px 0",
           display: "flex",
+          flexDirection: isMobile ? "column" : "row",
           alignItems: "center",
           justifyContent: "space-between",
           flexWrap: "wrap",
-          gap: 16,
+          gap: isMobile ? 22 : 16,
+          textAlign: "center",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
@@ -143,7 +148,9 @@ export default function FooterCta() {
         <div
           style={{
             display: "flex",
-            gap: 28,
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: isMobile ? 18 : 28,
             fontFamily: "'JetBrains Mono',monospace",
             fontSize: 12,
             color: "#6f6a5d",

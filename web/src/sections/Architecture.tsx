@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useIsMobile } from "../lib/useIsMobile";
 
 const labelMono: CSSProperties = {
   fontFamily: "'JetBrains Mono', monospace",
@@ -25,6 +26,7 @@ const cardBody: CSSProperties = {
 };
 
 export default function Architecture() {
+  const isMobile = useIsMobile();
   return (
     <section
       id="trust"
@@ -32,7 +34,7 @@ export default function Architecture() {
         position: "relative",
         zIndex: 4,
         borderTop: "1px solid rgba(239,233,218,.13)",
-        padding: "96px 26px",
+        padding: isMobile ? "64px 18px" : "96px 26px",
         background: "#0e0d0a",
       }}
     >
@@ -81,8 +83,8 @@ export default function Architecture() {
             position: "relative",
             border: "1px solid rgba(239,233,218,.18)",
             background: "#121110",
-            padding: "44px 40px 48px",
-            marginTop: "48px",
+            padding: isMobile ? "28px 18px 32px" : "44px 40px 48px",
+            marginTop: isMobile ? "32px" : "48px",
           }}
         >
           <div
@@ -120,7 +122,7 @@ export default function Architecture() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1.6fr 1fr",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr 1.6fr 1fr",
               alignItems: "center",
               gap: "18px",
             }}
@@ -204,15 +206,20 @@ export default function Architecture() {
               </div>
               <div
                 style={{
-                  height: "18px",
-                  background:
-                    "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 20px)",
-                  backgroundSize: "32px 100%",
+                  height: isMobile ? "40px" : "18px",
+                  width: isMobile ? "18px" : undefined,
+                  margin: isMobile ? "0 auto" : undefined,
+                  background: isMobile
+                    ? "repeating-linear-gradient(180deg,var(--acc) 0 7px,transparent 7px 20px)"
+                    : "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 20px)",
+                  backgroundSize: isMobile ? "100% 32px" : "32px 100%",
                   animation: "wrapFlow .9s linear infinite",
-                  WebkitMaskImage:
-                    "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
-                  maskImage:
-                    "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
+                  WebkitMaskImage: isMobile
+                    ? "linear-gradient(180deg,transparent,#000 12%,#000 88%,transparent)"
+                    : "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
+                  maskImage: isMobile
+                    ? "linear-gradient(180deg,transparent,#000 12%,#000 88%,transparent)"
+                    : "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
                 }}
               />
               <div
@@ -296,7 +303,7 @@ export default function Architecture() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3,1fr)",
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)",
             gap: "18px",
             marginTop: "18px",
           }}

@@ -1,3 +1,5 @@
+import { useIsMobile } from "../lib/useIsMobile";
+
 const FEATURES: { label: string; body: React.ReactNode }[] = [
   {
     label: "NO SIZE LIMIT",
@@ -44,6 +46,7 @@ const FEATURES: { label: string; body: React.ReactNode }[] = [
 ];
 
 export default function Features() {
+  const isMobile = useIsMobile();
   return (
     <section
       id="features"
@@ -51,7 +54,7 @@ export default function Features() {
         position: "relative",
         zIndex: 4,
         borderTop: "1px solid rgba(239,233,218,.13)",
-        padding: "96px 26px",
+        padding: isMobile ? "64px 18px" : "96px 26px",
       }}
     >
       <div style={{ maxWidth: "1320px", margin: "0 auto" }}>
@@ -83,14 +86,17 @@ export default function Features() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3,1fr)",
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)",
             gap: "1px",
             background: "rgba(239,233,218,.14)",
             border: "1px solid rgba(239,233,218,.14)",
           }}
         >
           {FEATURES.map((f) => (
-            <div key={f.label} style={{ background: "#121110", padding: "30px" }}>
+            <div
+              key={f.label}
+              style={{ background: "#121110", padding: isMobile ? "24px 22px" : "30px" }}
+            >
               <div
                 style={{
                   fontFamily: "'JetBrains Mono',monospace",

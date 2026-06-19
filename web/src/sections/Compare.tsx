@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Section 04 — "How it compares".
@@ -159,43 +160,63 @@ function otherCellStyle(ok: boolean): CSSProperties {
 }
 
 export default function Compare() {
+  const isMobile = useIsMobile();
+
+  // On mobile, scale down the section padding so nothing crushes against the edges.
+  const sectionStyleResolved: CSSProperties = isMobile
+    ? { ...sectionStyle, padding: "64px 18px" }
+    : sectionStyle;
+
+  // On mobile, give the table a sensible min-width so its 5 columns stay readable;
+  // the wrapper below scrolls horizontally instead of overflowing the page.
+  const tableStyleResolved: CSSProperties = isMobile
+    ? { ...tableStyle, minWidth: "640px" }
+    : tableStyle;
+
+  // Horizontal-scroll wrapper, only needed on mobile.
+  const tableWrapStyle: CSSProperties = isMobile
+    ? { overflowX: "auto", WebkitOverflowScrolling: "touch" }
+    : {};
+
   return (
-    <section id="compare" style={sectionStyle}>
+    <section id="compare" style={sectionStyleResolved}>
       <div style={{ maxWidth: "1320px", margin: "0 auto" }}>
         <div style={eyebrowStyle}>04 / How it compares</div>
         <h2 style={headingStyle}>Pick the one that gives up nothing.</h2>
 
-        <div style={tableStyle}>
-          {/* header */}
-          <div style={headerRowStyle}>
-            <div style={headCapStyle}>CAPABILITY</div>
-            <div style={headWrapStyle}>WRAP</div>
-            <div style={headOtherStyle}>AIRDROP</div>
-            <div style={headOtherStyle}>WETRANSFER</div>
-            <div style={headOtherStyle}>WORMHOLE</div>
-          </div>
+        <div style={tableWrapStyle}>
+          <div style={tableStyleResolved}>
+            {/* header */}
+            <div style={headerRowStyle}>
+              <div style={headCapStyle}>CAPABILITY</div>
+              <div style={headWrapStyle}>WRAP</div>
+              <div style={headOtherStyle}>AIRDROP</div>
+              <div style={headOtherStyle}>WETRANSFER</div>
+              <div style={headOtherStyle}>WORMHOLE</div>
+            </div>
 
-          {/* rows */}
-          {ROWS.map((row, i) => {
-            const isLast = i === ROWS.length - 1;
-            const rowStyle: CSSProperties = {
-              display: "grid",
-              gridTemplateColumns: gridTemplate,
-              ...(isLast ? {} : { borderBottom: "1px solid rgba(239,233,218,.08)" }),
-            };
-            const wrapStyle: CSSProperties = isLast
-              ? { ...wrapCellStyle, borderBottom: "1px solid var(--acc)" }
-              : wrapCellStyle;
-            return (
-              <div key={row.label} style={rowStyle}>
-                <div style={labelCellStyle}>{row.label}</div>
-                <div style={wrapStyle}>{row.wrap}</div>
-                <div style={otherCellStyle(row.airdrop.ok)}>{row.airdrop.value}</div>
-                <div style={otherCellStyle(row.wetransfer.ok)}>{row.wetransfer.value}</div>
-                <div style={otherCellStyle(row.wormhole.ok)}>{row.wormhole.value}</div>
-              </div>
-            );
-          })}
+            {/* rows */}
+            {ROWS.map((row, i) => {
+              const isLast = i === ROWS.length - 1;
+              const rowStyle: CSSProperties = {
+                display: "grid",
+                gridTemplateColumns: gridTemplate,
+                ...(isLast ? {} : { borderBottom: "1px solid rgba(239,233,218,.08)" }),
+              };
+              const wrapStyle: CSSProperties = isLast
+                ? { ...wrapCellStyle, borderBottom: "1px solid var(--acc)" }
+                : wrapCellStyle;
+              return (
+                <div key={row.label} style={rowStyle}>
+                  <div style={labelCellStyle}>{row.label}</div>
+                  <div style={wrapStyle}>{row.wrap}</div>
+                  <div style={otherCellStyle(row.airdrop.ok)}>{row.airdrop.value}</div>
+                  <div style={otherCellStyle(row.wetransfer.ok)}>{row.wetransfer.value}</div>
+                  <div style={otherCellStyle(row.wormhole.ok)}>{row.wormhole.value}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>

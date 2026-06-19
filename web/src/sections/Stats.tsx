@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Stats — the "03 / speed" stats band.
@@ -73,10 +74,16 @@ const label: React.CSSProperties = {
 
 export default function Stats() {
   const { ref, inView } = useInView<HTMLDivElement>();
+  const isMobile = useIsMobile();
 
   const servers = useCountUp(0, 0, inView); // 0 — stays 0
   const bits = useCountUp(256, 0, inView); // 256
   const peak = useCountUp(2.4, 1, inView); // 2.4 GB/s
+
+  // On mobile, reduce cell padding so big numbers + labels fit without overflow.
+  const mobileCell: React.CSSProperties = isMobile
+    ? { ...cell, padding: "28px 18px" }
+    : cell;
 
   return (
     <section
@@ -85,7 +92,7 @@ export default function Stats() {
         position: "relative",
         zIndex: 4,
         borderTop: "1px solid rgba(239,233,218,.13)",
-        padding: "90px 26px",
+        padding: isMobile ? "56px 18px" : "90px 26px",
       }}
     >
       <div style={{ maxWidth: 1320, margin: "0 auto" }}>
@@ -94,28 +101,28 @@ export default function Stats() {
           id="wrap-stats"
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4,1fr)",
+            gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)",
             gap: 1,
             background: "rgba(239,233,218,.14)",
             border: "1px solid rgba(239,233,218,.14)",
           }}
         >
-          <div style={cell}>
+          <div style={mobileCell}>
             <div style={{ ...num, color: "#efe9da" }}>{servers}</div>
             <div style={label}>Servers in the middle</div>
           </div>
 
-          <div style={cell}>
+          <div style={mobileCell}>
             <div style={{ ...num, color: "var(--acc)" }}>&#8734;</div>
             <div style={label}>Max file size</div>
           </div>
 
-          <div style={cell}>
+          <div style={mobileCell}>
             <div style={{ ...num, color: "#efe9da" }}>{bits}</div>
             <div style={label}>Bit encryption</div>
           </div>
 
-          <div style={cell}>
+          <div style={mobileCell}>
             <div style={{ ...num, color: "#efe9da" }}>
               {peak}
               <span style={{ fontSize: ".4em", color: "#6f6a5d", letterSpacing: 0 }}>

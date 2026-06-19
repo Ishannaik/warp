@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useIsMobile } from "../lib/useIsMobile";
 
 const cardBase: CSSProperties = {
   border: "1px solid rgba(239,233,218,.16)",
@@ -29,6 +30,7 @@ const cardBody: CSSProperties = {
 };
 
 export default function HowItWorks() {
+  const isMobile = useIsMobile();
   return (
     <section
       id="work"
@@ -36,7 +38,7 @@ export default function HowItWorks() {
         position: "relative",
         zIndex: 4,
         borderTop: "1px solid rgba(239,233,218,.13)",
-        padding: "96px 26px",
+        padding: isMobile ? "56px 18px" : "96px 26px",
       }}
     >
       <div style={{ maxWidth: "1320px", margin: "0 auto" }}>
@@ -68,9 +70,9 @@ export default function HowItWorks() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3,1fr)",
-            gap: "18px",
-            marginTop: "52px",
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)",
+            gap: isMobile ? "14px" : "18px",
+            marginTop: isMobile ? "36px" : "52px",
           }}
         >
           {/* STEP 01 */}

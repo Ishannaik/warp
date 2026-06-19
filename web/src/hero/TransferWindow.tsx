@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { CSSProperties } from "react";
 import { useTransferSim } from "./useTransferSim";
 import type { RowStatus } from "./useTransferSim";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * ShareX-style transfer-queue window for the hero (right column).
@@ -34,6 +35,11 @@ function statusLabel(s: RowStatus) {
 const ROW_GRID = "26px 1fr 64px 1.3fr 92px";
 const HIST_GRID = "28px 1fr 70px 92px";
 
+// Tighter column tracks for narrow phones so the queue/history rows fit ~360px
+// without horizontal scroll: drop the SIZE column min, shrink # / STATUS / WHEN.
+const ROW_GRID_M = "20px 1fr 1.1fr 64px";
+const HIST_GRID_M = "20px 1fr 56px 64px";
+
 const colHeadCell: CSSProperties = {
   fontFamily: MONO,
   fontSize: "9.5px",
@@ -52,6 +58,14 @@ type Tab = "queue" | "history" | "peers";
 
 export default function TransferWindow() {
   const [tab, setTab] = useState<Tab>("queue");
+  const isMobile = useIsMobile();
+
+  // Mobile column tracks (SIZE column dropped from the queue rows to fit ~360px).
+  const rowGrid = isMobile ? ROW_GRID_M : ROW_GRID;
+  const histGrid = isMobile ? HIST_GRID_M : HIST_GRID;
+  const cellPad = isMobile ? "11px 12px" : "13px 15px";
+  const headPad = isMobile ? "9px 12px" : "9px 15px";
+  const cellGap = isMobile ? "8px" : "10px";
 
   // Live-mode queue simulation (tick 130ms · multiplier 1). The hook holds the
   // row + throughput state; rows carry no entrance animation, so the per-tick
@@ -70,7 +84,13 @@ export default function TransferWindow() {
   });
 
   return (
-    <div style={{ position: "relative", animation: "wrapFade .9s ease .35s both" }}>
+    <div
+      style={{
+        position: "relative",
+        animation: "wrapFade .9s ease .35s both",
+        ...(isMobile ? { width: "100%", maxWidth: "100%" } : null),
+      }}
+    >
       {/* magic-ui border beam */}
       <div
         aria-hidden="true"
@@ -105,6 +125,7 @@ export default function TransferWindow() {
           border: "1px solid rgba(239,233,218,.22)",
           background: "#15140f",
           boxShadow: "0 40px 90px -30px rgba(0,0,0,.8)",
+          ...(isMobile ? { overflowX: "hidden" } : null),
         }}
       >
         {/* title bar */}
@@ -113,7 +134,9 @@ export default function TransferWindow() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "12px 15px",
+            flexWrap: isMobile ? "wrap" : "nowrap",
+            gap: isMobile ? "4px 10px" : 0,
+            padding: isMobile ? "11px 12px" : "12px 15px",
             borderBottom: "1px solid rgba(239,233,218,.16)",
             background: "rgba(239,233,218,.025)",
           }}
@@ -124,7 +147,7 @@ export default function TransferWindow() {
               alignItems: "center",
               gap: "10px",
               fontFamily: MONO,
-              fontSize: "11px",
+              fontSize: isMobile ? "10px" : "11px",
               letterSpacing: ".16em",
               textTransform: "uppercase",
               color: "#b6b0a0",
@@ -136,7 +159,7 @@ export default function TransferWindow() {
           <div
             style={{
               fontFamily: MONO,
-              fontSize: "10.5px",
+              fontSize: isMobile ? "9.5px" : "10.5px",
               letterSpacing: ".1em",
               color: "#6f6a5d",
               textTransform: "uppercase",
@@ -176,16 +199,16 @@ export default function TransferWindow() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: ROW_GRID,
-                gap: "10px",
-                padding: "9px 15px",
+                gridTemplateColumns: rowGrid,
+                gap: cellGap,
+                padding: headPad,
                 borderBottom: "1px solid rgba(239,233,218,.1)",
                 ...colHeadCell,
               }}
             >
               <span>#</span>
               <span>NAME</span>
-              <span>SIZE</span>
+              {!isMobile && <span>SIZE</span>}
               <span>PROGRESS</span>
               <span style={{ textAlign: "right" }}>STATUS</span>
             </div>
@@ -200,10 +223,10 @@ export default function TransferWindow() {
                     key={r.name}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: ROW_GRID,
-                      gap: "10px",
+                      gridTemplateColumns: rowGrid,
+                      gap: cellGap,
                       alignItems: "center",
-                      padding: "13px 15px",
+                      padding: cellPad,
                       borderBottom: "1px solid rgba(239,233,218,.07)",
                     }}
                   >
@@ -243,10 +266,12 @@ export default function TransferWindow() {
                         {r.name}
                       </span>
                     </span>
-                    <span style={{ fontFamily: MONO, fontSize: "11px", color: "#a8a293" }}>
-                      {r.size}
-                    </span>
-                    <span style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+                    {!isMobile && (
+                      <span style={{ fontFamily: MONO, fontSize: "11px", color: "#a8a293" }}>
+                        {r.size}
+                      </span>
+                    )}
+                    <span style={{ display: "flex", alignItems: "center", gap: isMobile ? "6px" : "9px" }}>
                       <span
                         style={{
                           flex: 1,
@@ -293,15 +318,17 @@ export default function TransferWindow() {
             </div>
 
             {/* footer totals */}
-            <div style={footerBar}>
+            <div style={isMobile ? { ...footerBar, padding: "12px 12px" } : footerBar}>
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
+                  flexWrap: isMobile ? "wrap" : "nowrap",
+                  gap: isMobile ? "2px 10px" : 0,
                   fontFamily: MONO,
-                  fontSize: "10.5px",
-                  letterSpacing: ".08em",
+                  fontSize: isMobile ? "9.5px" : "10.5px",
+                  letterSpacing: isMobile ? ".04em" : ".08em",
                   textTransform: "uppercase",
                   color: "#6f6a5d",
                   marginBottom: "9px",
@@ -359,9 +386,9 @@ export default function TransferWindow() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: HIST_GRID,
-                gap: "10px",
-                padding: "9px 15px",
+                gridTemplateColumns: histGrid,
+                gap: cellGap,
+                padding: headPad,
                 borderBottom: "1px solid rgba(239,233,218,.1)",
                 ...colHeadCell,
               }}
@@ -383,10 +410,10 @@ export default function TransferWindow() {
                 key={name}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: HIST_GRID,
-                  gap: "10px",
+                  gridTemplateColumns: histGrid,
+                  gap: cellGap,
                   alignItems: "center",
-                  padding: "13px 15px",
+                  padding: cellPad,
                   borderBottom: "1px solid rgba(239,233,218,.07)",
                 }}
               >
@@ -420,9 +447,10 @@ export default function TransferWindow() {
             <div
               style={{
                 ...footerBar,
+                ...(isMobile ? { padding: "12px 12px" } : null),
                 fontFamily: MONO,
-                fontSize: "10.5px",
-                letterSpacing: ".08em",
+                fontSize: isMobile ? "9.5px" : "10.5px",
+                letterSpacing: isMobile ? ".04em" : ".08em",
                 textTransform: "uppercase",
                 color: "#6f6a5d",
               }}
@@ -463,9 +491,10 @@ export default function TransferWindow() {
             <div
               style={{
                 ...footerBar,
+                ...(isMobile ? { padding: "12px 12px" } : null),
                 fontFamily: MONO,
-                fontSize: "10.5px",
-                letterSpacing: ".08em",
+                fontSize: isMobile ? "9.5px" : "10.5px",
+                letterSpacing: isMobile ? ".04em" : ".08em",
                 textTransform: "uppercase",
                 color: "#6f6a5d",
               }}
@@ -490,14 +519,15 @@ interface PeerRowProps {
 }
 
 function PeerRow({ name, meta, tag, tagColor, dotBorder, dotBg, dotBlink }: PeerRowProps) {
+  const isMobile = useIsMobile();
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "36px 1fr auto",
-        gap: "12px",
+        gridTemplateColumns: isMobile ? "30px 1fr auto" : "36px 1fr auto",
+        gap: isMobile ? "10px" : "12px",
         alignItems: "center",
-        padding: "14px 15px",
+        padding: isMobile ? "12px 12px" : "14px 15px",
         borderBottom: "1px solid rgba(239,233,218,.07)",
       }}
     >
@@ -521,10 +551,40 @@ function PeerRow({ name, meta, tag, tagColor, dotBorder, dotBg, dotBlink }: Peer
         />
       </div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "13px", fontWeight: 600, fontFamily: DISPLAY }}>{name}</div>
-        <div style={{ fontFamily: MONO, fontSize: "10.5px", color: "#6f6a5d" }}>{meta}</div>
+        <div
+          style={{
+            fontSize: "13px",
+            fontWeight: 600,
+            fontFamily: DISPLAY,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {name}
+        </div>
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: "10.5px",
+            color: "#6f6a5d",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {meta}
+        </div>
       </div>
-      <span style={{ fontFamily: MONO, fontSize: "10px", letterSpacing: ".08em", color: tagColor }}>
+      <span
+        style={{
+          fontFamily: MONO,
+          fontSize: "10px",
+          letterSpacing: ".08em",
+          color: tagColor,
+          whiteSpace: "nowrap",
+        }}
+      >
         {tag}
       </span>
     </div>

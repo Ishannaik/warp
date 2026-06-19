@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Atmosphere from "./Atmosphere";
 import TransferWindow from "./TransferWindow";
 import { navigate } from "../router";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Hero composition for the Wrap landing page. Ported verbatim from the design
@@ -64,6 +65,7 @@ const tickerTrack: CSSProperties = {
 const navLink: CSSProperties = { color: "#b6b0a0", textDecoration: "none" };
 
 export default function Hero() {
+  const isMobile = useIsMobile();
   return (
     <div
       style={{
@@ -104,10 +106,12 @@ export default function Hero() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "11px 22px",
+          flexWrap: isMobile ? "wrap" : "nowrap",
+          rowGap: isMobile ? "6px" : undefined,
+          padding: isMobile ? "10px 16px" : "11px 22px",
           borderBottom: "1px solid rgba(239,233,218,.13)",
           fontFamily: MONO,
-          fontSize: "11px",
+          fontSize: isMobile ? "10px" : "11px",
           letterSpacing: ".13em",
           color: "#908a7b",
           textTransform: "uppercase",
@@ -115,7 +119,7 @@ export default function Hero() {
         }}
       >
         <span>WRAP&nbsp;&nbsp;/&nbsp;&nbsp;free &amp; open&#8209;source file transfer</span>
-        <span style={{ display: "flex", gap: "26px" }}>
+        <span style={{ display: "flex", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? "14px" : "26px" }}>
           <span style={{ color: "var(--acc)" }}>● MIT LICENSE</span>
           <span>NO ACCOUNT</span>
           <span>v1.0</span>
@@ -128,7 +132,7 @@ export default function Hero() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "20px 26px",
+          padding: isMobile ? "16px 16px" : "20px 26px",
           zIndex: 5,
         }}
       >
@@ -156,37 +160,39 @@ export default function Hero() {
             WRAP
           </span>
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "34px",
-            fontFamily: MONO,
-            fontSize: "12px",
-            letterSpacing: ".05em",
-          }}
-        >
-          <a
-            href="/how"
-            className="wrap-nav-link"
-            style={navLink}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate("/how");
+        {!isMobile && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "34px",
+              fontFamily: MONO,
+              fontSize: "12px",
+              letterSpacing: ".05em",
             }}
           >
-            HOW IT WORKS
-          </a>
-          <a href="#trust" className="wrap-nav-link" style={navLink}>
-            SECURITY
-          </a>
-          <a href="#compare" className="wrap-nav-link" style={navLink}>
-            COMPARE
-          </a>
-          <a href="#faq" className="wrap-nav-link" style={navLink}>
-            FAQ
-          </a>
-        </div>
+            <a
+              href="/how"
+              className="wrap-nav-link"
+              style={navLink}
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/how");
+              }}
+            >
+              HOW IT WORKS
+            </a>
+            <a href="#trust" className="wrap-nav-link" style={navLink}>
+              SECURITY
+            </a>
+            <a href="#compare" className="wrap-nav-link" style={navLink}>
+              COMPARE
+            </a>
+            <a href="#faq" className="wrap-nav-link" style={navLink}>
+              FAQ
+            </a>
+          </div>
+        )}
         <a
           href="/send"
           className="wrap-launch"
@@ -217,15 +223,15 @@ export default function Hero() {
         style={{
           flex: 1,
           display: "grid",
-          gridTemplateColumns: "1fr 1.08fr",
-          gap: "54px",
+          gridTemplateColumns: isMobile ? "1fr" : "1fr 1.08fr",
+          gap: isMobile ? "36px" : "54px",
           alignItems: "center",
-          padding: "30px 26px 40px",
+          padding: isMobile ? "24px 16px 32px" : "30px 26px 40px",
           zIndex: 4,
         }}
       >
         {/* left copy */}
-        <div style={{ maxWidth: "560px" }}>
+        <div style={{ maxWidth: isMobile ? "100%" : "560px" }}>
           <div
             style={{
               animation: "wrapFade .8s ease both",
@@ -254,7 +260,7 @@ export default function Hero() {
             style={{
               fontFamily: DISPLAY,
               fontWeight: 800,
-              fontSize: "clamp(50px,6.6vw,98px)",
+              fontSize: isMobile ? "clamp(40px,13vw,64px)" : "clamp(50px,6.6vw,98px)",
               lineHeight: 0.88,
               letterSpacing: "-.03em",
               textTransform: "uppercase",
@@ -296,10 +302,10 @@ export default function Hero() {
           <p
             style={{
               animation: "wrapFade .8s ease .5s both",
-              fontSize: "18.5px",
+              fontSize: isMobile ? "16px" : "18.5px",
               lineHeight: 1.55,
               color: "#a8a293",
-              maxWidth: "430px",
+              maxWidth: isMobile ? "100%" : "430px",
               margin: "28px 0 34px",
             }}
           >
@@ -310,6 +316,7 @@ export default function Hero() {
             style={{
               animation: "wrapFade .8s ease .65s both",
               display: "flex",
+              flexDirection: isMobile ? "column" : "row",
               gap: "14px",
               marginBottom: "26px",
             }}
@@ -331,7 +338,8 @@ export default function Hero() {
                 letterSpacing: ".07em",
                 textTransform: "uppercase",
                 cursor: "pointer",
-                display: "inline-block",
+                display: isMobile ? "block" : "inline-block",
+                textAlign: isMobile ? "center" : undefined,
                 textDecoration: "none",
               }}
             >
@@ -355,7 +363,8 @@ export default function Hero() {
                 letterSpacing: ".07em",
                 textTransform: "uppercase",
                 cursor: "pointer",
-                display: "inline-block",
+                display: isMobile ? "block" : "inline-block",
+                textAlign: isMobile ? "center" : undefined,
                 textDecoration: "none",
               }}
             >

@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from "react";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Section 05 — "Questions".
@@ -106,12 +107,27 @@ const ITEMS: Item[] = [
 
 export default function Faq() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const isMobile = useIsMobile();
 
   return (
-    <section id="faq" style={sectionStyle}>
-      <div style={{ maxWidth: "880px", margin: "0 auto" }}>
+    <section
+      id="faq"
+      style={{
+        ...sectionStyle,
+        padding: isMobile ? "64px 18px" : sectionStyle.padding,
+      }}
+    >
+      <div style={{ maxWidth: "880px", margin: "0 auto", width: "100%" }}>
         <div style={eyebrowStyle}>05 / Questions</div>
-        <h2 style={headingStyle}>The honest answers.</h2>
+        <h2
+          style={{
+            ...headingStyle,
+            fontSize: isMobile ? "clamp(28px,8vw,40px)" : headingStyle.fontSize,
+            margin: isMobile ? "12px 0 28px" : headingStyle.margin,
+          }}
+        >
+          The honest answers.
+        </h2>
 
         <div style={{ borderTop: "1px solid rgba(239,233,218,.16)" }}>
           {ITEMS.map((item, i) => {
@@ -121,14 +137,26 @@ export default function Faq() {
                 <button
                   type="button"
                   aria-expanded={open}
-                  style={triggerStyle}
+                  style={{
+                    ...triggerStyle,
+                    gap: isMobile ? "12px" : triggerStyle.gap,
+                    padding: isMobile ? "18px 2px" : triggerStyle.padding,
+                  }}
                   onClick={() => setOpenIndex(open ? null : i)}
                 >
-                  <span style={questionStyle}>{item.q}</span>
+                  <span
+                    style={{
+                      ...questionStyle,
+                      fontSize: isMobile ? "16px" : questionStyle.fontSize,
+                    }}
+                  >
+                    {item.q}
+                  </span>
                   <span
                     aria-hidden="true"
                     style={{
                       ...baseSignStyle,
+                      fontSize: isMobile ? "24px" : baseSignStyle.fontSize,
                       transform: open ? "rotate(45deg)" : "rotate(0deg)",
                     }}
                   >
@@ -143,7 +171,14 @@ export default function Faq() {
                   }}
                 >
                   <div style={{ overflow: "hidden" }}>
-                    <p style={answerStyle}>{item.a}</p>
+                    <p
+                      style={{
+                        ...answerStyle,
+                        fontSize: isMobile ? "14.5px" : answerStyle.fontSize,
+                      }}
+                    >
+                      {item.a}
+                    </p>
                   </div>
                 </div>
               </div>
