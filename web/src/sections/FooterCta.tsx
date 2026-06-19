@@ -144,7 +144,7 @@ export default function FooterCta() {
               fontWeight: 800,
             }}
           >
-            WRAP
+            WARP
           </span>
         </div>
         <div

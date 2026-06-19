@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://wrap.ishannaik.com/sitemap.xml
+Sitemap: https://warp.ishannaik.com/sitemap.xml

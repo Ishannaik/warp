@@ -105,7 +105,7 @@ export default function Architecture() {
                 textTransform: "uppercase",
               }}
             >
-              WRAP RELAY &nbsp;
+              WARP RELAY &nbsp;
               <span style={{ color: "#6f6a5d" }}>
                 &middot; handshake only, sees no content
               </span>

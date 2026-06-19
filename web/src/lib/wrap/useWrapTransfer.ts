@@ -29,8 +29,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zipSync, type Zippable } from "fflate";
 import { SignalingClient, type SignalData } from "./signaling";
-import { WrapPeer, type PeerErrorKind } from "./peer";
+import {
+  WrapPeer,
+  type AcceptTarget,
+  type FsDirHandle,
+  type FsFileHandle,
+  type PeerErrorKind,
+} from "./peer";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
+
+/**
+ * At/above this many bytes (256 MiB) — total batch OR any single file — we stream
+ * accepted files STRAIGHT TO DISK via the File System Access API instead of
+ * accumulating an in-memory Blob (which would crash the tab on a multi-GB game).
+ * Below it we keep the small-file in-memory tray (so we never reintroduce the
+ * "1000 save prompts" problem). See `accept()`.
+ */
+const LARGE_THRESHOLD = 256 * 1024 * 1024;
+
+/**
+ * Minimal File System Access API surface the hook calls. `lib.dom` here doesn't
+ * include these (they're experimental), so we declare just the two pickers we
+ * use. Their return types are structurally compatible with peer.ts's FsFileHandle
+ * / FsDirHandle, so the handles pass straight through as an AcceptTarget.
+ */
+interface ShowSaveFilePickerOptions {
+  suggestedName?: string;
+}
+interface WindowWithFsPickers {
+  showSaveFilePicker?: (opts?: ShowSaveFilePickerOptions) => Promise<FsFileHandle>;
+  showDirectoryPicker?: () => Promise<FsDirHandle>;
+}
 
 export type WrapMode = "send" | "receive";
 
@@ -87,15 +116,22 @@ export interface UseWrapTransfer {
   sendFiles: (files: File[]) => Promise<void>;
   /** Send a text snippet to every connected device (appears in their tray). */
   sendText: (text: string) => void;
-  /** Accept the pending incoming offer -> bytes flow from that device. */
-  accept: () => void;
+  /**
+   * Accept the pending incoming offer -> bytes flow from that device. For a LARGE
+   * batch (total or any single file >= 256 MiB) on a browser with the File System
+   * Access API, this prompts a save-location picker FROM THE ACCEPT GESTURE and
+   * streams straight to disk (those items land as `savedToDisk`, no in-memory
+   * blob). Small batches — or a cancelled picker / unsupported browser — accept
+   * in-memory as before. Async because the picker is awaited.
+   */
+  accept: () => Promise<void>;
   /** Decline the pending incoming offer -> nothing is received from that device. */
   decline: () => void;
   /** Cancel an in-flight item (either direction) by id — routed to its peer. */
   cancel: (id: string) => void;
   /** Save one received file's blob to disk via an anchor download. */
   downloadOne: (id: string) => void;
-  /** Zip all received, done file-items into wrap-files.zip and download it. */
+  /** Zip all received, done file-items into warp-files.zip and download it. */
   downloadAll: () => void;
   /** Re-attempt after a failure (tears down and restarts the same role). */
   retry: () => void;
@@ -352,11 +388,46 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     [fail, connectedPeers],
   );
 
-  const accept = useCallback(() => {
+  const accept = useCallback(async () => {
     const off = incoming;
     if (!off) return;
+    const peer = peersRef.current.get(off.peerId);
+    if (!peer) {
+      setIncoming(null);
+      return;
+    }
+
+    // Decide the strategy from the offer manifest: a batch is "large" if its
+    // total OR any single file is >= 256 MiB. Large + FS Access API => stream to
+    // disk (prompt a folder for many files, else a single save target); anything
+    // else stays in the in-memory tray.
+    const total = off.items.reduce((s, it) => s + it.size, 0);
+    const biggest = off.items.reduce((m, it) => Math.max(m, it.size), 0);
+    const large = total >= LARGE_THRESHOLD || biggest >= LARGE_THRESHOLD;
+    const fs = window as unknown as WindowWithFsPickers;
+    const canStream = large && (off.items.length > 1 ? !!fs.showDirectoryPicker : !!fs.showSaveFilePicker);
+
+    let target: AcceptTarget | undefined;
+    if (canStream) {
+      // Prompt FROM the accept user-gesture (we haven't awaited anything yet).
+      // If the user dismisses the picker (AbortError) we fall back to in-memory.
+      try {
+        if (off.items.length > 1) {
+          const dirHandle = await fs.showDirectoryPicker!();
+          target = { dirHandle };
+        } else {
+          const fileHandle = await fs.showSaveFilePicker!({ suggestedName: off.items[0]?.name });
+          target = { fileHandle };
+        }
+      } catch {
+        target = undefined; // picker cancelled -> in-memory fallback
+      }
+    }
+
+    // Clear the modal only after the picker settles, so a cancelled picker can
+    // still fall through to an in-memory accept of the same offer.
     setIncoming(null);
-    peersRef.current.get(off.peerId)?.acceptOffer(off.batchId);
+    peer.acceptOffer(off.batchId, target);
   }, [incoming]);
 
   const decline = useCallback(() => {
@@ -385,7 +456,8 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   const downloadOne = useCallback(
     (id: string) => {
       const item = items.find((t) => t.id === id);
-      if (!item || !item.blob) return;
+      // savedToDisk items are already on disk (no blob) -> nothing to download.
+      if (!item || item.savedToDisk || !item.blob) return;
       saveBlob(item.blob, item.name);
     },
     [items],
@@ -393,8 +465,14 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
   const downloadAll = useCallback(() => {
     // Zip every received, done file-item that still has its blob in memory.
+    // savedToDisk items are already on disk (no blob) and are skipped here.
     const received = items.filter(
-      (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && t.blob,
+      (t) =>
+        t.direction === "receive" &&
+        t.kind === "file" &&
+        t.status === "done" &&
+        !t.savedToDisk &&
+        t.blob,
     );
     if (!received.length) return;
 
@@ -419,7 +497,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     )
       .then(() => {
         const zipped = zipSync(zippable, { level: 0 }); // level 0: files are usually already compressed
-        saveBlob(new Blob([zipped], { type: "application/zip" }), "wrap-files.zip");
+        saveBlob(new Blob([zipped], { type: "application/zip" }), "warp-files.zip");
       })
       .catch(() => fail("channel-error"));
   }, [items, fail]);

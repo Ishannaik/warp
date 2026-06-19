@@ -68,6 +68,32 @@ const MIN_SEND_CHUNK = 16 * 1024;
 const READ_BLOCK = 4 * 1024 * 1024;
 const SEND_HIGH_WATER = 16 * 1024 * 1024;
 
+/**
+ * Minimal File System Access API surface we use to stream large files straight
+ * to disk (avoids accumulating a multi-GB Blob in memory). Only the members we
+ * touch are declared; the hook obtains the handles from showSaveFilePicker /
+ * showDirectoryPicker and passes them in as an accept target.
+ */
+export interface FsWritable {
+  write(chunk: ArrayBuffer | Blob | Uint8Array): Promise<void>;
+  close(): Promise<void>;
+  abort?(reason?: unknown): Promise<void>;
+}
+export interface FsFileHandle {
+  readonly name: string;
+  createWritable(): Promise<FsWritable>;
+}
+export interface FsDirHandle {
+  getFileHandle(name: string, opts?: { create?: boolean }): Promise<FsFileHandle>;
+}
+
+/**
+ * Where a receiver wants accepted files to land. Omitted => in-memory Blob tray
+ * (today's behaviour). `dirHandle` => a multi-file batch into one folder;
+ * `fileHandle` => a single file. The hook chooses (and prompts) based on size.
+ */
+export type AcceptTarget = { dirHandle: FsDirHandle } | { fileHandle: FsFileHandle };
+
 export type PeerErrorKind = "nat-failed" | "disconnected" | "channel-error";
 
 export interface PeerEvents {
@@ -78,9 +104,15 @@ export interface PeerEvents {
   /** A batch manifest arrived; the receiver shows an accept modal. The peer
    *  holds the pending manifest until accept/decline. */
   "incoming-offer": (info: { batchId: string; items: OfferItem[] }) => void;
-  /** A file fully arrived. The blob is held in memory for manual download — NO
-   *  auto-download happens here. */
-  "file-received": (info: { id: string; name: string; mime: string; blob: Blob }) => void;
+  /** A file fully arrived. For an in-memory transfer `blob` holds the bytes for
+   *  manual download (no auto-download). For a large transfer streamed straight
+   *  to disk there is NO blob and `savedToDisk` is true (the file is already on
+   *  disk under `name`). */
+  "file-received": (
+    info:
+      | { id: string; name: string; mime: string; blob: Blob; savedToDisk?: false }
+      | { id: string; name: string; mime: string; blob?: undefined; savedToDisk: true },
+  ) => void;
   /** A text snippet arrived (shown directly in the tray). */
   "text-received": (info: { id: string; text: string }) => void;
   /** A batch we offered was declined by the receiver. */
@@ -106,8 +138,14 @@ interface OutgoingBatch {
 /** In-flight receive bookkeeping for the single active incoming file. */
 interface IncomingState {
   item: TransferItem;
-  /** In-memory accumulator for the current file's chunks. */
+  /** In-memory accumulator (in-memory mode). Empty when streaming to disk. */
   chunks: ArrayBuffer[];
+  /** Open writable when streaming straight to disk; undefined for in-memory. */
+  writable?: FsWritable;
+  /** Chain of pending disk writes so chunks land in order; resolves before close. */
+  writeChain: Promise<void>;
+  /** The on-disk name actually used (after de-duping within a folder). */
+  savedName?: string;
 }
 
 export class WrapPeer {
@@ -143,6 +181,12 @@ export class WrapPeer {
 
   /** Files the receiver has accepted, keyed by batchId, so incoming chunks land. */
   private acceptedBatches = new Set<string>();
+
+  /** Disk target per accepted batch (when streaming to disk). Absent => in-memory. */
+  private acceptTargets = new Map<string, AcceptTarget>();
+
+  /** Names already used within a dir target, to de-dupe across the batch. */
+  private usedNames = new Map<string, Set<string>>();
 
   /** File ids the local side asked to cancel, so we drop their remaining chunks. */
   private cancelledIds = new Set<string>();
@@ -205,10 +249,18 @@ export class WrapPeer {
     this.signaling.signal(this.remoteId, { kind: "offer", sdp: offer.sdp ?? "" });
   }
 
-  /** Feed an inbound signal frame (offer / answer / ice) from the server. */
+  /** Feed an inbound signal frame (offer / answer / ice / cancel) from the server. */
   async handleSignal(from: string, data: SignalData): Promise<void> {
     if (this.remoteId && from !== this.remoteId) return; // ignore other peers (v1)
     this.remoteId = from;
+
+    if (data.kind === "cancel") {
+      // Out-of-band cancel: the other side aborted a file. Apply it immediately —
+      // this beats the in-band {t:"cancel"} that's stuck behind the byte backlog.
+      // Idempotent, so the later in-band dup is a harmless no-op.
+      this.applyCancel(data.id);
+      return;
+    }
 
     if (data.kind === "offer") {
       await this.pc.setRemoteDescription({ type: "offer", sdp: data.sdp });
@@ -358,12 +410,26 @@ export class WrapPeer {
     this.send(ch, { t: "text", id, text });
   }
 
-  /** Receiver: accept a pending offered batch -> the sender starts streaming. */
-  acceptOffer(batchId: string): void {
+  /**
+   * Receiver: accept a pending offered batch -> the sender starts streaming.
+   *
+   * `target` is OPTIONAL. When omitted (the default / small-batch path) accepted
+   * files accumulate in an in-memory Blob exactly as before. When provided, each
+   * received file is streamed STRAIGHT TO DISK via the File System Access API —
+   * no Blob accumulation — and emitted with `savedToDisk:true` and no blob:
+   *   - { dirHandle }  : a multi-file batch, each file written into that folder
+   *                      (names de-duped within the folder).
+   *   - { fileHandle } : a single file written to that handle.
+   */
+  acceptOffer(batchId: string, target?: AcceptTarget): void {
     const items = this.pendingOffers.get(batchId);
     if (!items) return;
     this.pendingOffers.delete(batchId);
     this.acceptedBatches.add(batchId);
+    if (target) {
+      this.acceptTargets.set(batchId, target);
+      this.usedNames.set(batchId, new Set());
+    }
 
     // Create receive-items in the tray (offered -> they'll go transferring/done).
     for (const oi of items) {
@@ -397,23 +463,53 @@ export class WrapPeer {
   }
 
   /**
-   * Cancel a file in flight from either side. The sender stops pumping and tells
-   * the receiver; the receiver discards the partial and tells the sender. The
-   * local item is marked "cancelled" immediately.
+   * Cancel a file in flight from either side. The sender stops pumping and the
+   * receiver discards the partial; the local item is marked "cancelled" at once.
+   *
+   * The cancel is announced TWO ways for speed and resilience:
+   *   1. OUT-OF-BAND over the always-open signaling socket — bypasses the up-to-
+   *      16 MiB in-flight data-channel backlog, so the other side reacts within a
+   *      network RTT instead of after the byte buffer drains.
+   *   2. IN-BAND over the data channel (legacy path) — survives a dropped socket.
+   * Both are idempotent (see applyCancel), so the duplicate is a harmless no-op.
    */
   cancel(id: string): void {
-    const item = this.items.get(id);
-    if (!item || item.status === "done" || item.status === "cancelled") return;
+    if (!this.applyCancel(id)) return; // already done/cancelled -> no-op
 
-    this.cancelledIds.add(id);
-    this.markStatus(id, "cancelled");
-
-    // If we're the receiver and this is the active incoming file, drop it.
-    if (this.incoming && this.incoming.item.id === id) this.incoming = null;
-
+    // (1) Instant path: out-of-band over signaling.
+    if (this.remoteId) this.signaling.signal(this.remoteId, { kind: "cancel", id });
+    // (2) Legacy path: in-band over the data channel.
     const ch = this.channel;
     if (ch && ch.readyState === "open") this.send(ch, { t: "cancel", id });
+  }
+
+  /**
+   * Idempotently mark a file cancelled and abort any in-flight send/receive for
+   * it. Returns false (a no-op) if the item is unknown or already done/cancelled,
+   * so a redundant in-band + out-of-band cancel is safe. Emits "cancelled" exactly
+   * once (on the transition).
+   */
+  private applyCancel(id: string): boolean {
+    const item = this.items.get(id);
+    if (!item || item.status === "done" || item.status === "cancelled") return false;
+
+    this.cancelledIds.add(id); // streamFile checks this per chunk to abort sends
+    this.markStatus(id, "cancelled");
+
+    // If we're the receiver and this is the active incoming file, drop it and
+    // abort/close any open disk writable so a partial file isn't left dangling.
+    if (this.incoming && this.incoming.item.id === id) {
+      const inc = this.incoming;
+      this.incoming = null;
+      if (inc.writable) {
+        void inc.writeChain
+          .then(() => (inc.writable?.abort ? inc.writable.abort() : inc.writable?.close()))
+          .catch(() => {});
+      }
+    }
+
     this.emit("cancelled", { id });
+    return true;
   }
 
   /**
@@ -558,11 +654,10 @@ export class WrapPeer {
         break;
       }
       case "cancel": {
-        // Remote cancelled this file: drop the partial, mark cancelled.
-        if (this.incoming && this.incoming.item.id === msg.id) this.incoming = null;
-        this.cancelledIds.add(msg.id);
-        this.markStatus(msg.id, "cancelled");
-        this.emit("cancelled", { id: msg.id });
+        // Remote cancelled this file (in-band path): drop the partial, mark
+        // cancelled. Idempotent — a no-op if the out-of-band signaling cancel
+        // already landed (or vice-versa).
+        this.applyCancel(msg.id);
         break;
       }
       case "text": {
@@ -588,20 +683,54 @@ export class WrapPeer {
     }
   }
 
-  /** A file's chunks are about to arrive. The receive-item was created on accept. */
+  /**
+   * A file's chunks are about to arrive. The receive-item was created on accept.
+   * If this file's batch was accepted with a disk target, open a writable now and
+   * write chunks straight through (no Blob accumulation); otherwise accumulate in
+   * memory exactly as before.
+   */
   private startIncoming(id: string): void {
     if (this.cancelledIds.has(id)) return; // cancelled before bytes flowed
     const item = this.items.get(id);
     if (!item || item.direction !== "receive") return; // unaccepted / unknown -> ignore
     item.status = "transferring";
     this.emit("transfer", { ...item });
-    this.incoming = { item, chunks: [] };
+
+    const inc: IncomingState = { item, chunks: [], writeChain: Promise.resolve() };
+    this.incoming = inc;
+
+    const target = this.acceptTargets.get(item.batchId);
+    if (target) {
+      // Open the writable as the head of the write chain so every subsequent
+      // onChunk write is ordered behind it. uniqueName de-dupes within a folder.
+      const savedName =
+        "dirHandle" in target
+          ? this.uniqueName(item.batchId, item.name)
+          : target.fileHandle.name || item.name;
+      inc.savedName = savedName;
+      inc.writeChain = (async () => {
+        inc.writable =
+          "dirHandle" in target
+            ? await (await target.dirHandle.getFileHandle(savedName, { create: true })).createWritable()
+            : await target.fileHandle.createWritable();
+      })().catch(() => {
+        // If opening fails, fall back to in-memory accumulation for this file.
+        inc.writable = undefined;
+      });
+    }
   }
 
   private onChunk(buf: ArrayBuffer): void {
     const inc = this.incoming;
     if (!inc) return; // no active incoming file (cancelled / not accepted)
-    inc.chunks.push(buf);
+
+    if (this.acceptTargets.has(inc.item.batchId)) {
+      // Disk path: queue the write behind the open + prior writes (ordered).
+      inc.writeChain = inc.writeChain.then(() => inc.writable?.write(buf)).catch(() => {});
+    } else {
+      inc.chunks.push(buf);
+    }
+
     inc.item.transferred += buf.byteLength;
     inc.item.progress = Math.min(
       100,
@@ -611,19 +740,38 @@ export class WrapPeer {
   }
 
   /**
-   * The active incoming file finished. Build ONE in-memory Blob, attach it to the
-   * item, and emit "file-received". NOTHING is auto-saved — the UI downloads on
-   * demand.
+   * The active incoming file finished.
+   *   - In-memory mode: build ONE Blob, attach it (item.blob), emit "file-received"
+   *     with the blob. NOTHING auto-saves — the UI downloads on demand.
+   *   - Disk mode: flush + close the writable (bytes already on disk), emit
+   *     "file-received" with savedToDisk:true and NO blob.
    *
-   * ponytail: every received file's bytes live in memory (item.blob) until the
-   * user downloads or the session ends. RAM ceiling = sum of all received,
-   * not-yet-discarded file sizes. Acceptable for a P2P tray; very large multi-GB
-   * batches on a low-RAM device can still OOM.
+   * ponytail: in-memory received files live in RAM (item.blob) until the user
+   * downloads or the session ends — RAM ceiling = sum of in-memory file sizes.
+   * Large transfers use the disk path and never touch that ceiling.
    */
   private finishIncoming(id: string): void {
     const inc = this.incoming;
     if (!inc || inc.item.id !== id) return;
     this.incoming = null;
+
+    if (this.acceptTargets.has(inc.item.batchId)) {
+      const name = inc.savedName ?? inc.item.name;
+      // Close after all queued writes land, then mark done + emit.
+      void inc.writeChain
+        .then(() => inc.writable?.close())
+        .catch(() => {})
+        .then(() => {
+          inc.item.savedToDisk = true;
+          inc.item.name = name;
+          inc.item.status = "done";
+          inc.item.transferred = inc.item.size;
+          inc.item.progress = 100;
+          this.emit("transfer", { ...inc.item });
+          this.emit("file-received", { id, name, mime: inc.item.mime, savedToDisk: true });
+        });
+      return;
+    }
 
     const blob = new Blob(inc.chunks, { type: inc.item.mime });
     inc.item.blob = blob;
@@ -632,6 +780,31 @@ export class WrapPeer {
     inc.item.progress = 100;
     this.emit("transfer", { ...inc.item });
     this.emit("file-received", { id, name: inc.item.name, mime: inc.item.mime, blob });
+  }
+
+  /**
+   * De-dupe a filename within a dir target for a batch: "a.txt", "a (1).txt", …
+   * Reused per accepted batch via the usedNames set seeded in acceptOffer.
+   */
+  private uniqueName(batchId: string, name: string): string {
+    const used = this.usedNames.get(batchId) ?? new Set<string>();
+    if (!used.has(name)) {
+      used.add(name);
+      this.usedNames.set(batchId, used);
+      return name;
+    }
+    const dot = name.lastIndexOf(".");
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    let n = 1;
+    let candidate = `${stem} (${n})${ext}`;
+    while (used.has(candidate)) {
+      n += 1;
+      candidate = `${stem} (${n})${ext}`;
+    }
+    used.add(candidate);
+    this.usedNames.set(batchId, used);
+    return candidate;
   }
 
   // ---- teardown ------------------------------------------------------------

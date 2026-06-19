@@ -277,7 +277,7 @@ function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
           <div style={{ width: "8px", height: "8px", background: "#121110" }} />
         </div>
         <span style={{ fontFamily: DISPLAY, fontSize: "19px", fontWeight: 800, letterSpacing: "-.02em" }}>
-          WRAP
+          WARP
         </span>
       </a>
 
@@ -641,7 +641,7 @@ function PairStep({
 
   const share = () => {
     if (shareUrl && canShare) {
-      navigator.share({ title: "Wrap", url: shareUrl }).catch(() => {});
+      navigator.share({ title: "Warp", url: shareUrl }).catch(() => {});
     }
   };
 
@@ -982,7 +982,7 @@ function ErrorPanel({
         No direct route.
       </h1>
       <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>
-        {message} Wrap is STUN-only — there's no relay fallback, so some networks simply can't be
+        {message} Warp is STUN-only — there's no relay fallback, so some networks simply can't be
         bridged.
       </p>
       <div
@@ -1033,7 +1033,7 @@ function ErrorPanel({
             textDecoration: "none",
           }}
         >
-          Back to Wrap
+          Back to Warp
         </a>
       </div>
     </div>

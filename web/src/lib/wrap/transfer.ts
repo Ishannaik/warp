@@ -92,8 +92,17 @@ export interface TransferItem {
   thumb?: string;
   /** Text payload for `kind:"text"` items. */
   text?: string;
-  /** Received file bytes, held in memory until the user downloads. */
+  /**
+   * Received file bytes, held in memory until the user downloads. Absent when the
+   * file was streamed straight to disk (`savedToDisk`) — there's no in-memory copy.
+   */
   blob?: Blob;
+  /**
+   * The received file was streamed directly to disk via the File System Access
+   * API (large transfers), so there is NO in-memory `blob`. The UI shows a
+   * "saved to disk" state and skips it in download-one / download-all.
+   */
+  savedToDisk?: boolean;
   /**
    * Which remote device this item is to/from, in a multi-device (mesh) room.
    * Stamped by the hook from the emitting WrapPeer's remoteId. Omitted in the

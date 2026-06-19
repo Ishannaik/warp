@@ -1,6 +1,6 @@
-# CLAUDE.md — Wrap
+# CLAUDE.md — Warp
 
-Peer-to-peer WebRTC file transfer. Brand is **Wrap** (user-facing); infra is named **warp** (repo `Ishannaik/warp`, Cloudflare project `wrap`). Live at https://wrap.ishannaik.com and https://wrap.pixalabs.net.
+Peer-to-peer WebRTC file transfer. Brand is **Warp** (user-facing), matching the repo `Ishannaik/warp`. The Cloudflare **Pages project is still named `wrap`** internally — deploy uses `--project-name=wrap` and its Pages host is `wrap-3qq.pages.dev` (do not rename it). Live at https://warp.ishannaik.com and https://warp.pixalabs.net.
 
 ## Golden rules
 
@@ -41,4 +41,4 @@ cd web && wrangler pages deploy dist --project-name=wrap --branch=main --commit-
 pnpm --filter @warp/server run deploy  # `run` avoids pnpm's `deploy` builtin
 ```
 
-Custom domains are on Namecheap (CNAME `wrap` → `wrap-3qq.pages.dev`); `pixalabs.net` also carries live Zoho email — when touching its DNS, preserve every existing record (Namecheap `setHosts` replaces all).
+Custom domains are on Namecheap (CNAME `warp` → `wrap-3qq.pages.dev`); `pixalabs.net` also carries live Zoho email — when touching its DNS, preserve every existing record (Namecheap `setHosts` replaces all).

@@ -189,7 +189,7 @@ export default function Compare() {
             {/* header */}
             <div style={headerRowStyle}>
               <div style={headCapStyle}>CAPABILITY</div>
-              <div style={headWrapStyle}>WRAP</div>
+              <div style={headWrapStyle}>WARP</div>
               <div style={headOtherStyle}>AIRDROP</div>
               <div style={headOtherStyle}>WETRANSFER</div>
               <div style={headOtherStyle}>WORMHOLE</div>

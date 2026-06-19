@@ -12,27 +12,27 @@ const CHANNEL_DESC =
 
 function seoForRoute(path: string): { title: string; description: string } {
   if (path === "/send") {
-    return { title: "Send a file · Wrap", description: CHANNEL_DESC };
+    return { title: "Send a file · Warp", description: CHANNEL_DESC };
   }
   if (path.startsWith("/r/")) {
-    return { title: "Receiving a file · Wrap", description: CHANNEL_DESC };
+    return { title: "Receiving a file · Warp", description: CHANNEL_DESC };
   }
   if (path === "/receive") {
     return {
-      title: "Receive a file · Wrap",
+      title: "Receive a file · Warp",
       description:
         "Enter a code to receive files peer-to-peer, straight to your device.",
     };
   }
   if (path === "/how") {
     return {
-      title: "How Wrap works · Wrap",
+      title: "How Warp works · Warp",
       description:
-        "How Wrap moves files directly between devices over an encrypted peer-to-peer channel — no server ever sees them.",
+        "How Warp moves files directly between devices over an encrypted peer-to-peer channel — no server ever sees them.",
     };
   }
   return {
-    title: "Wrap — Send files directly between devices",
+    title: "Warp — Send files directly between devices",
     description:
       "Send files directly between devices — peer-to-peer, end-to-end encrypted. No uploads, no size limits, no account. Free & open-source.",
   };

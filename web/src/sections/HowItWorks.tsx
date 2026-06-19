@@ -145,7 +145,7 @@ export default function HowItWorks() {
             </div>
             <div style={cardTitle}>A channel opens</div>
             <p style={cardBody}>
-              Share a short code. Wrap pairs the two devices directly &mdash;
+              Share a short code. Warp pairs the two devices directly &mdash;
               the relay only brokers the handshake, then steps aside.
             </p>
           </div>

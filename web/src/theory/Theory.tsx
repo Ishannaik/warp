@@ -88,7 +88,7 @@ function Chrome() {
           zIndex: 5,
         }}
       >
-        <span>WRAP&nbsp;&nbsp;/&nbsp;&nbsp;how it works &mdash; the theory</span>
+        <span>WARP&nbsp;&nbsp;/&nbsp;&nbsp;how it works &mdash; the theory</span>
         {!isMobile && (
           <span style={{ display: "flex", gap: "26px" }}>
             <span style={{ color: "var(--acc)" }}>&#9679; PEER-TO-PEER</span>
@@ -144,7 +144,7 @@ function Chrome() {
               letterSpacing: "-.02em",
             }}
           >
-            WRAP
+            WARP
           </span>
         </a>
 
@@ -879,7 +879,7 @@ function ClosingCta() {
             <div style={{ width: "8px", height: "8px", background: "#121110" }} />
           </div>
           <span style={{ fontFamily: DISPLAY, fontSize: "17px", fontWeight: 800 }}>
-            WRAP
+            WARP
           </span>
         </div>
         <a
@@ -936,8 +936,8 @@ export default function Theory() {
       prose: (
         <>
           <P>
-            When Wrap connects two peers directly, your bytes ride existing
-            broadband on both ends &mdash; sunk costs, already paid. Wrap adds a
+            When Warp connects two peers directly, your bytes ride existing
+            broadband on both ends &mdash; sunk costs, already paid. Warp adds a
             few seconds of tiny, content-free signaling on top, cheap enough to
             give away. <Term>Free</Term> isn&rsquo;t magic; it&rsquo;s the absence
             of a relay.
@@ -1231,7 +1231,7 @@ export default function Theory() {
               animation: "wrapFade .8s ease .5s both",
             }}
           >
-            Wrap moves a file straight from one device to another over an
+            Warp moves a file straight from one device to another over an
             encrypted, peer-to-peer channel. Here is exactly how that works
             &mdash; and, at the end, the honest reason a relay-based service can
             never be truly free.
@@ -1271,7 +1271,7 @@ export default function Theory() {
             </P>
             <P>
               The uncomfortable part: the server didn&rsquo;t need to see the file
-              at all. It was only ever a middleman. Wrap removes the middleman.
+              at all. It was only ever a middleman. Warp removes the middleman.
             </P>
           </>
         }
@@ -1311,7 +1311,7 @@ export default function Theory() {
           <>
             <P>
               WebRTC was built for live video, where routing every frame through a
-              server would be slow and costly. Wrap uses that same capability
+              server would be slow and costly. Warp uses that same capability
               &mdash; not for video, but for your files, over a{" "}
               <Term>DataChannel</Term> wrapped in <Term>DTLS</Term> by the standard
               itself. Encryption isn&rsquo;t a toggle; it&rsquo;s the only mode.
@@ -1387,7 +1387,7 @@ export default function Theory() {
               A <Term>STUN</Term> server answers one question &mdash; &ldquo;from out
               here, what address and port do I look like?&rdquo; Behind ordinary
               routers, two peers can then <em>hole-punch</em> a direct path. STUN is
-              tiny and cheap, so Wrap uses it freely.
+              tiny and cheap, so Warp uses it freely.
             </P>
             <P>
               But <Term>symmetric NATs</Term> and <Term>CGNAT</Term> rewrite the port
@@ -1400,7 +1400,7 @@ export default function Theory() {
         diagram={<NatStun />}
         callout={
           <Callout kicker="The $0 tradeoff" tone="amb">
-            Wrap runs no TURN relay. On the rare network where a direct path
+            Warp runs no TURN relay. On the rare network where a direct path
             can&rsquo;t form, it tells you plainly &mdash; never a middleman by
             stealth.
           </Callout>
@@ -1415,7 +1415,7 @@ export default function Theory() {
         lede={
           <>
             You can&rsquo;t hand a multi-gigabyte file to the channel in one piece.
-            Wrap slices it into small <Term>16 KB chunks</Term> and feeds them
+            Warp slices it into small <Term>16 KB chunks</Term> and feeds them
             through one after another.
           </>
         }
@@ -1427,7 +1427,7 @@ export default function Theory() {
               &mdash; the real limit is free space on the receiving device.
             </P>
             <P>
-              The other half is <Term>backpressure</Term>. Wrap watches the
+              The other half is <Term>backpressure</Term>. Warp watches the
               channel&rsquo;s outgoing buffer: when it fills past a threshold the
               sender pauses; when it drains, it resumes. The file moves at exactly
               the speed the link can sustain &mdash; never overflowing.
@@ -1450,7 +1450,7 @@ export default function Theory() {
         heading="Devices on the same network find each other automatically."
         lede={
           <>
-            When two devices share a network, Wrap can let them discover each other
+            When two devices share a network, Warp can let them discover each other
             with no code at all &mdash; grouped by the public address they share.
           </>
         }
@@ -1458,14 +1458,14 @@ export default function Theory() {
           <>
             <P>
               Two devices on one home or office network almost always egress from
-              the same public <Term>IPv4</Term> address. Wrap groups connections by
+              the same public <Term>IPv4</Term> address. Warp groups connections by
               that address and shows you the devices sitting right next to you
               &mdash; no room code to type.
             </P>
             <P>
               IPv6 needs a gentler match: a subscriber line gets a whole{" "}
               <Term>/64 prefix</Term>, and devices take different addresses within
-              it. So Wrap groups by the /64 prefix &mdash; the part that identifies
+              it. So Warp groups by the /64 prefix &mdash; the part that identifies
               the network, not the device.
             </P>
           </>
@@ -1486,7 +1486,7 @@ export default function Theory() {
         heading="A Cloudflare Durable Object that wakes to introduce two peers, then sleeps."
         lede={
           <>
-            The one piece of server Wrap needs is the signaling switchboard. It runs
+            The one piece of server Warp needs is the signaling switchboard. It runs
             as a Cloudflare <Term>Durable Object</Term> &mdash; a tiny coordinator
             that hibernates the instant it goes idle.
           </>
@@ -1563,7 +1563,7 @@ export default function Theory() {
               margin: "26px 0 0",
             }}
           >
-            Wrap is free because, in the common case, it relays nothing &mdash; it
+            Warp is free because, in the common case, it relays nothing &mdash; it
             reuses pipes you&rsquo;ve <em>already</em> paid for. The moment a service
             relays your bytes, it inherits a cost that doesn&rsquo;t disappear no
             matter how deep you push it. Follow it down.

@@ -93,15 +93,15 @@ const ITEMS: Item[] = [
   },
   {
     q: "Do I need an account or an app?",
-    a: "Neither. No sign-up, no email, no install. Open Wrap in any browser, drop a file, and share the code.",
+    a: "Neither. No sign-up, no email, no install. Open Warp in any browser, drop a file, and share the code.",
   },
   {
     q: "What if the direct connection fails?",
-    a: "Wrap falls back to an encrypted relay so the transfer still completes. The bytes stay encrypted end-to-end the whole way — the relay only forwards ciphertext.",
+    a: "Warp falls back to an encrypted relay so the transfer still completes. The bytes stay encrypted end-to-end the whole way — the relay only forwards ciphertext.",
   },
   {
     q: "Is it actually free?",
-    a: "Completely. Wrap is free and open-source under the MIT license. No tiers, no “pro” upsell, no ads.",
+    a: "Completely. Warp is free and open-source under the MIT license. No tiers, no “pro” upsell, no ads.",
   },
 ];
 

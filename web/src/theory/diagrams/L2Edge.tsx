@@ -194,7 +194,7 @@ export default function L2Edge() {
             }}
           >
             <div style={{ marginBottom: 8 }}>
-              <Label tone="amb">WRAP-STYLE · PRIVATE TRANSFER</Label>
+              <Label tone="amb">WARP-STYLE · PRIVATE TRANSFER</Label>
             </div>
             <div
               style={{

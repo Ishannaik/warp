@@ -119,8 +119,16 @@ function ItemRow({
   const col = statusColor(item.status);
   const transferring = item.status === "transferring";
   const isText = item.kind === "text";
+  // Items streamed straight to disk have no in-memory blob — they're already
+  // saved, so they show a "saved to disk" badge instead of a Download button.
+  const savedToDisk =
+    item.direction === "receive" && item.kind === "file" && item.status === "done" && !!item.savedToDisk;
   const canDownload =
-    item.direction === "receive" && item.kind === "file" && item.status === "done" && !!item.blob;
+    item.direction === "receive" &&
+    item.kind === "file" &&
+    item.status === "done" &&
+    !item.savedToDisk &&
+    !!item.blob;
 
   const copyText = async () => {
     if (!item.text) return;
@@ -219,6 +227,27 @@ function ItemRow({
             >
               Download
             </button>
+          )}
+          {savedToDisk && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                padding: "8px 12px",
+                border: "1px solid rgba(var(--acc-rgb),.4)",
+                background: "rgba(var(--acc-rgb),.08)",
+                color: "var(--acc)",
+                fontFamily: MONO,
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: ".06em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              ✓ Saved to disk
+            </span>
           )}
         </span>
       </div>
@@ -641,8 +670,10 @@ function Tray({
   /** Resolve a row's peer label; returns undefined to hide the tag (1-to-1). */
   labelForPeer?: (peerId?: string) => string | undefined;
 }) {
+  // "Download all (.zip)" only zips in-memory items — disk-streamed items are
+  // already on disk and carry no blob, so they're excluded here.
   const receivedFiles = items.filter(
-    (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && t.blob,
+    (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && !t.savedToDisk && t.blob,
   ).length;
 
   return (
@@ -720,6 +751,10 @@ function Tray({
 
 /* --------------------------------------------------------------- accept modal */
 
+// Mirrors LARGE_THRESHOLD in useWrapTransfer: large batches stream straight to
+// disk via a folder/file picker instead of accumulating in memory.
+const LARGE_THRESHOLD = 256 * 1024 * 1024;
+
 export function AcceptModal({
   items,
   onAccept,
@@ -734,6 +769,13 @@ export function AcceptModal({
   isMobile: boolean;
 }) {
   const total = totalBytes(items);
+  // A large batch will surface a native folder/file picker on Accept (the hook
+  // streams it to disk), so we tell the user to expect that and to choose a spot.
+  const large =
+    typeof window !== "undefined" &&
+    ("showSaveFilePicker" in window || "showDirectoryPicker" in window) &&
+    (total >= LARGE_THRESHOLD || items.some((it) => it.size >= LARGE_THRESHOLD));
+  const pickTarget = items.length > 1 ? "folder" : "file";
 
   return (
     <div
@@ -802,8 +844,18 @@ export function AcceptModal({
             )}
           </h3>
           <p style={{ fontSize: "13.5px", color: "#a8a293", margin: "8px 0 0", lineHeight: 1.5 }}>
-            {formatBytes(total)} total. Nothing is saved to disk — accepted files land in your tray to
-            download when you're ready.
+            {large ? (
+              <>
+                {formatBytes(total)} total —{" "}
+                <span style={{ color: "var(--acc)" }}>large transfer</span>. On Accept you'll choose a{" "}
+                {pickTarget} to save to, and it streams straight to disk.
+              </>
+            ) : (
+              <>
+                {formatBytes(total)} total. Nothing is saved to disk — accepted files land in your tray to
+                download when you're ready.
+              </>
+            )}
           </p>
         </div>
 
@@ -889,7 +941,7 @@ export function AcceptModal({
               cursor: "pointer",
             }}
           >
-            Accept &amp; receive
+            {large ? <>Accept &amp; choose {pickTarget}</> : <>Accept &amp; receive</>}
           </button>
         </div>
       </div>

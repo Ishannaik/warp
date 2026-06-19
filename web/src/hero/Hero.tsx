@@ -118,7 +118,7 @@ export default function Hero() {
           zIndex: 5,
         }}
       >
-        <span>WRAP&nbsp;&nbsp;/&nbsp;&nbsp;free &amp; open&#8209;source file transfer</span>
+        <span>WARP&nbsp;&nbsp;/&nbsp;&nbsp;free &amp; open&#8209;source file transfer</span>
         <span style={{ display: "flex", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? "14px" : "26px" }}>
           <span style={{ color: "var(--acc)" }}>● MIT LICENSE</span>
           <span>NO ACCOUNT</span>
@@ -157,7 +157,7 @@ export default function Hero() {
               letterSpacing: "-.02em",
             }}
           >
-            WRAP
+            WARP
           </span>
         </div>
         {!isMobile && (
@@ -247,7 +247,7 @@ export default function Hero() {
             textDecoration: "none",
           }}
         >
-          Launch Wrap <span style={{ color: "var(--acc)" }}>↗</span>
+          Launch Warp <span style={{ color: "var(--acc)" }}>↗</span>
         </a>
       </div>
 

@@ -1,6 +1,6 @@
-# Wrap — Deploy Runbook (Cloudflare Pages + Namecheap DNS)
+# Warp — Deploy Runbook (Cloudflare Pages + Namecheap DNS)
 
-Deploy target: **Cloudflare Pages** project `wrap`, custom domain `wrap.ishannaik.com`.
+Deploy target: **Cloudflare Pages** project `wrap` (project name stays `wrap`), custom domain `warp.ishannaik.com`.
 App: Vite + React SPA in `web/` (pnpm workspace). Build output: `web/dist`.
 Wrangler is authenticated as **ishannaik7@gmail.com** (`wrangler whoami` to confirm).
 
@@ -76,7 +76,7 @@ Re-deploys: just re-run steps 1 + 3.
 
 ---
 
-## 4. Attach the custom domain `wrap.ishannaik.com`
+## 4. Attach the custom domain `warp.ishannaik.com`
 
 There is **no wrangler subcommand** to add a Pages custom domain (as of 2026 the
 `wrangler pages` group has no `domain add`). It must be done in the dashboard, and the
@@ -86,22 +86,22 @@ external CNAME must be created **only after** the domain is registered in the da
 ### 4a. Register the domain in Cloudflare Pages (do this FIRST)
 
 Dashboard → **Workers & Pages** → select project **wrap** → **Custom domains** tab →
-**Set up a custom domain** → enter `wrap.ishannaik.com` → **Continue / Activate domain**.
+**Set up a custom domain** → enter `warp.ishannaik.com` → **Continue / Activate domain**.
 
 Cloudflare will show the exact DNS target to create. For a domain whose DNS is hosted
 externally (Namecheap, not on Cloudflare nameservers), the target is the project's
 Pages subdomain:
 
 ```
-wrap.ishannaik.com  CNAME  wrap.pages.dev
+warp.ishannaik.com  CNAME  wrap.pages.dev
 ```
 
 Leave this tab open; the domain shows **"pending"** until the CNAME resolves.
 
 ### 4b. Create the CNAME at Namecheap
 
-`wrap.ishannaik.com` is a subdomain (host `wrap` on zone `ishannaik.com`). Add **one**
-CNAME host record: host `wrap` → `wrap.pages.dev`. Two ways:
+`warp.ishannaik.com` is a subdomain (host `warp` on zone `ishannaik.com`). Add **one**
+CNAME host record: host `warp` → `wrap.pages.dev`. Two ways:
 
 #### Option A — Namecheap dashboard (manual)
 
@@ -162,12 +162,12 @@ zone. You must first read the existing records and replay them, then append the 
 
 ### 4c. Finish + verify
 
-1. Back in the Pages **Custom domains** tab, wait for `wrap.ishannaik.com` to flip from
+1. Back in the Pages **Custom domains** tab, wait for `warp.ishannaik.com` to flip from
    **pending** to **active** (DNS propagation + cert issuance; usually minutes).
 2. Verify resolution:
    ```sh
-   nslookup wrap.ishannaik.com        # -> CNAME wrap.pages.dev
-   curl -I https://wrap.ishannaik.com # -> HTTP/2 200, served by Cloudflare
+   nslookup warp.ishannaik.com        # -> CNAME wrap.pages.dev
+   curl -I https://warp.ishannaik.com # -> HTTP/2 200, served by Cloudflare
    ```
 3. If you see **522** or a cert error: the CNAME was created before the dashboard step,
    or the domain is still pending. Confirm the dashboard shows the domain as added,
@@ -182,6 +182,6 @@ cd web
 pnpm build
 wrangler pages project create wrap --production-branch main   # one-time
 wrangler pages deploy dist --project-name=wrap
-# then: dashboard -> add custom domain wrap.ishannaik.com,
-#       Namecheap -> CNAME  wrap -> wrap.pages.dev
+# then: dashboard -> add custom domain warp.ishannaik.com,
+#       Namecheap -> CNAME  warp -> wrap.pages.dev
 ```

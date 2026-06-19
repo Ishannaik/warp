@@ -21,11 +21,19 @@
 
 const SIGNALING_URL = "wss://warp-signaling.ishannaik7.workers.dev";
 
-/** Opaque WebRTC handshake payload (SDP offer/answer or ICE candidate). */
+/**
+ * Opaque WebRTC handshake payload (SDP offer/answer or ICE candidate), PLUS an
+ * out-of-band `cancel`. Cancel rides the always-open signaling socket instead of
+ * the data channel so it bypasses the up-to-16 MiB in-flight byte backlog and
+ * reaches the other side within a network RTT (the in-band cancel still goes too;
+ * both are idempotent). The server relays all of these opaquely — it never reads
+ * `data`.
+ */
 export type SignalData =
   | { kind: "offer"; sdp: string }
   | { kind: "answer"; sdp: string }
-  | { kind: "ice"; candidate: RTCIceCandidateInit };
+  | { kind: "ice"; candidate: RTCIceCandidateInit }
+  | { kind: "cancel"; id: string };
 
 /** Messages we receive from the server, discriminated on `type`. */
 export type ServerMessage =

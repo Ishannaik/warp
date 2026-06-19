@@ -92,7 +92,7 @@ export default function ReceiveEntry() {
             <div style={{ width: "8px", height: "8px", background: "#121110" }} />
           </div>
           <span style={{ fontFamily: DISPLAY, fontSize: "19px", fontWeight: 800, letterSpacing: "-.02em" }}>
-            WRAP
+            WARP
           </span>
         </a>
 

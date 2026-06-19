@@ -154,7 +154,7 @@ export default function TransferWindow() {
             }}
           >
             <span style={{ width: "8px", height: "8px", background: "var(--acc)" }} />
-            WRAP — TRANSFER QUEUE
+            WARP — TRANSFER QUEUE
           </div>
           <div
             style={{

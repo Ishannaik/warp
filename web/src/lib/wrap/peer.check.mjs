@@ -87,7 +87,13 @@ try {
 }
 
 // --- wire two peers through fake channels ---------------------------------
-const sig = { signal() {} };
+// Record out-of-band signaling sends so we can assert the instant-cancel path.
+const sigSent = [];
+const sig = {
+  signal(to, data) {
+    sigSent.push({ to, data });
+  },
+};
 const sender = new WrapPeer(sig, "B", true); // initiator owns localChannel
 const receiver = new WrapPeer(sig, "A", false);
 
@@ -137,4 +143,67 @@ receiver.declineOffer(offer2.batchId);
 await declined;
 await send2; // resolves (does not throw) after a decline
 
-console.log("OK: offer/accept stream + decline gating round-trip passed");
+// --- accept-to-disk: a target streams straight to a writable (no blob) -----
+// A fake File System Access writable + dir handle that records what's written.
+const diskChunks = [];
+let writableClosed = false;
+const fakeWritable = {
+  async write(chunk) {
+    const buf = chunk instanceof ArrayBuffer ? chunk : await chunk.arrayBuffer();
+    diskChunks.push(Buffer.from(buf));
+  },
+  async close() {
+    writableClosed = true;
+  },
+};
+const usedDirNames = [];
+const dirHandle = {
+  async getFileHandle(name, opts) {
+    usedDirNames.push(name);
+    assert.ok(opts && opts.create, "disk target opens file handles with create:true");
+    return { name, async createWritable() { return fakeWritable; } };
+  },
+};
+
+const offer3Seen = waitFor(receiver, "incoming-offer");
+const send3 = sender.offerFiles([file]);
+const offer3 = await offer3Seen;
+const got3 = waitFor(receiver, "file-received");
+receiver.acceptOffer(offer3.batchId, { dirHandle }); // <-- stream to disk
+const received3 = await got3;
+assert.equal(received3.savedToDisk, true, "disk transfer reports savedToDisk:true");
+assert.equal(received3.blob, undefined, "disk transfer carries NO in-memory blob");
+assert.equal(received3.name, "hi.txt", "disk transfer keeps the file name");
+assert.equal(Buffer.concat(diskChunks).toString(), "hello wrap world", "bytes were written straight to the writable");
+assert.equal(writableClosed, true, "the writable is closed on file-end");
+await send3;
+
+// --- instant cancel via signaling: out-of-band + idempotent ----------------
+// Sender cancels a known item: it must emit out-of-band over signaling AND be
+// idempotent (a second cancel — or a redundant in-band one — is a no-op).
+const someId = offer.items[0].id; // an item that already reached "done"
+sigSent.length = 0;
+sender.cancel(someId); // already done -> no-op, no signaling emit
+assert.equal(sigSent.length, 0, "cancel() is a no-op for an already-done item (idempotent)");
+
+// Drive a fresh, still-offered item to exercise the live-cancel path on the receiver.
+const offer4Seen = waitFor(receiver, "incoming-offer");
+const send4 = sender.offerFiles([file]);
+const offer4 = await offer4Seen;
+receiver.acceptOffer(offer4.batchId); // in-memory accept
+const liveId = offer4.items[0].id;
+
+// Receiver cancels: must push an out-of-band signaling cancel to the sender.
+sigSent.length = 0;
+let cancelledCount = 0;
+receiver.on("cancelled", () => { cancelledCount += 1; });
+receiver.cancel(liveId);
+assert.equal(sigSent.length, 1, "cancel() emits exactly one out-of-band signaling cancel");
+assert.deepEqual(sigSent[0].data, { kind: "cancel", id: liveId }, "signaling cancel carries kind:'cancel' + id");
+
+// Idempotency: a redundant out-of-band cancel for the same id does nothing.
+await receiver.handleSignal("A", { kind: "cancel", id: liveId });
+assert.equal(cancelledCount, 1, "a redundant cancel (in-band/out-of-band dup) is a no-op");
+await send4; // sender resolves even though the item was cancelled
+
+console.log("OK: offer/accept stream + decline gating + disk-stream + instant-cancel round-trip passed");

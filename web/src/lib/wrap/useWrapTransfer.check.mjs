@@ -8,6 +8,10 @@
  *   2. stamping: every emitted item/offer is tagged with the peer it came from.
  *   3. routing: accept/decline/cancel reach the one peer that owns the work.
  *   4. lifecycle: peer-left closes + removes that peer and clears its offer.
+ *   5. accept-strategy: a LARGE offer (>=256 MiB total or any single file) picks
+ *      the disk-stream path (picker prompted, AcceptTarget passed to the peer); a
+ *      SMALL offer stays in-memory (no picker, no target). A cancelled picker on
+ *      a large offer falls back to in-memory.
  *
  * Run:  node src/lib/wrap/useWrapTransfer.check.mjs
  */
@@ -31,6 +35,7 @@ class FakePeer {
     this.offered = [];
     this.texts = [];
     this.accepted = [];
+    this.acceptTargets = [];
     this.declined = [];
     this.cancelled = [];
     this.closed = false;
@@ -49,8 +54,9 @@ class FakePeer {
   sendText(t) {
     this.texts.push(t);
   }
-  acceptOffer(b) {
+  acceptOffer(b, target) {
     this.accepted.push(b);
+    this.acceptTargets.push(target); // undefined => in-memory; object => disk-stream
   }
   declineOffer(b) {
     this.declined.push(b);
@@ -99,6 +105,66 @@ function accept() {
   const off = incoming;
   incoming = null;
   peersMap.get(off.peerId)?.acceptOffer(off.batchId);
+}
+
+// ---- accept-strategy (large -> disk, small -> memory), reproduced 1:1 ---------
+
+const LARGE_THRESHOLD = 256 * 1024 * 1024;
+
+/**
+ * Stubbable File System Access pickers. `fsPickers.mode` drives them:
+ *   "ok"     -> resolve a fake dir/file handle (user chose a location)
+ *   "cancel" -> reject like a dismissed picker (AbortError)
+ *   "none"   -> the picker is absent (unsupported browser)
+ */
+const fsPickers = { mode: "ok", dirCalls: 0, fileCalls: 0, lastSuggested: undefined };
+function fsWindow() {
+  const w = {};
+  if (fsPickers.mode !== "none") {
+    w.showDirectoryPicker = async () => {
+      fsPickers.dirCalls += 1;
+      if (fsPickers.mode === "cancel") throw new Error("AbortError");
+      return { getFileHandle: async () => ({ name: "x", createWritable: async () => ({}) }) };
+    };
+    w.showSaveFilePicker = async (opts) => {
+      fsPickers.fileCalls += 1;
+      fsPickers.lastSuggested = opts?.suggestedName;
+      if (fsPickers.mode === "cancel") throw new Error("AbortError");
+      return { name: opts?.suggestedName ?? "x", createWritable: async () => ({}) };
+    };
+  }
+  return w;
+}
+
+/** The hook's accept() strategy logic, mirrored exactly against the stub picker. */
+async function acceptWithStrategy() {
+  if (!incoming) return;
+  const off = incoming;
+  const peer = peersMap.get(off.peerId);
+  if (!peer) {
+    incoming = null;
+    return;
+  }
+  const total = off.items.reduce((s, it) => s + it.size, 0);
+  const biggest = off.items.reduce((m, it) => Math.max(m, it.size), 0);
+  const large = total >= LARGE_THRESHOLD || biggest >= LARGE_THRESHOLD;
+  const fs = fsWindow();
+  const canStream = large && (off.items.length > 1 ? !!fs.showDirectoryPicker : !!fs.showSaveFilePicker);
+
+  let target;
+  if (canStream) {
+    try {
+      if (off.items.length > 1) {
+        target = { dirHandle: await fs.showDirectoryPicker() };
+      } else {
+        target = { fileHandle: await fs.showSaveFilePicker({ suggestedName: off.items[0]?.name }) };
+      }
+    } catch {
+      target = undefined;
+    }
+  }
+  incoming = null;
+  peer.acceptOffer(off.batchId, target);
 }
 
 function cancel(id) {
@@ -172,6 +238,62 @@ peerLeft(a.remoteId);
 assert(incoming === null, "peer-left clears a pending offer from that peer");
 assert(a.closed === true, "peer-left closes the departing peer");
 assert(!peersMap.has(a.remoteId), "peer-left removes the departing peer from the map");
+
+// 5. Accept-strategy: large vs small offers choose disk vs memory. ---------------
+const MB = 1024 * 1024;
+
+/** Drive acceptWithStrategy() for one offer and return the target the peer got. */
+async function runAccept(peerId, offerItems, pickerMode) {
+  fsPickers.mode = pickerMode;
+  fsPickers.dirCalls = 0;
+  fsPickers.fileCalls = 0;
+  incoming = { batchId: `b-${peerId}`, peerId, items: offerItems };
+  await acceptWithStrategy();
+  const peer = peersMap.get(peerId);
+  return peer.acceptTargets[peer.acceptTargets.length - 1];
+}
+
+// A fresh peer per sub-scenario so accept arrays don't bleed together.
+const d = new FakePeer("dddddddd44", false);
+const e = new FakePeer("eeeeeeee55", false);
+const f = new FakePeer("ffffffff66", false);
+const g = new FakePeer("gggggggg77", false);
+const h = new FakePeer("hhhhhhhh88", false);
+for (const p of [d, e, f, g, h]) peersMap.set(p.remoteId, p);
+
+// 5a. Small single file -> in-memory (no target, no picker).
+const tSmall = await runAccept(d.remoteId, [{ id: "s1", name: "a.txt", size: 10 * MB, mime: "text/plain" }], "ok");
+assert(tSmall === undefined, "small single-file offer accepts in-memory (no AcceptTarget)");
+assert(fsPickers.fileCalls === 0 && fsPickers.dirCalls === 0, "small offer does NOT prompt a save picker");
+
+// 5b. Large SINGLE file -> disk via showSaveFilePicker -> { fileHandle }.
+const tBigOne = await runAccept(e.remoteId, [{ id: "b1", name: "game.bin", size: 600 * MB, mime: "application/octet-stream" }], "ok");
+assert(tBigOne && "fileHandle" in tBigOne, "large single file streams to disk via a file handle");
+assert(fsPickers.fileCalls === 1 && fsPickers.dirCalls === 0, "large single file prompts showSaveFilePicker (not the dir picker)");
+assert(fsPickers.lastSuggested === "game.bin", "save picker is seeded with the file's suggested name");
+
+// 5c. Large MULTI-file batch (total >= threshold) -> disk via showDirectoryPicker -> { dirHandle }.
+const tBigMany = await runAccept(
+  f.remoteId,
+  [
+    { id: "m1", name: "p1.bin", size: 200 * MB, mime: "application/octet-stream" },
+    { id: "m2", name: "p2.bin", size: 100 * MB, mime: "application/octet-stream" },
+  ],
+  "ok",
+);
+assert(tBigMany && "dirHandle" in tBigMany, "large multi-file batch streams to disk via a directory handle");
+assert(fsPickers.dirCalls === 1 && fsPickers.fileCalls === 0, "large multi-file batch prompts showDirectoryPicker");
+
+// 5d. Cancelled picker on a large offer -> in-memory fallback (no target).
+const tCancel = await runAccept(g.remoteId, [{ id: "c1", name: "big.iso", size: 900 * MB, mime: "application/octet-stream" }], "cancel");
+assert(tCancel === undefined, "a cancelled picker falls back to in-memory accept (no AcceptTarget)");
+// The same offer was still accepted (one entry recorded), just without a target.
+assert(g.accepted.length === 1, "cancelled picker still accepts the batch (in-memory)");
+
+// 5e. Large offer but NO File System Access API -> in-memory fallback (no prompt).
+const tNoApi = await runAccept(h.remoteId, [{ id: "n1", name: "huge.zip", size: 800 * MB, mime: "application/zip" }], "none");
+assert(tNoApi === undefined, "large offer on a browser without the FS Access API accepts in-memory");
+assert(fsPickers.fileCalls === 0 && fsPickers.dirCalls === 0, "no picker is prompted when the FS Access API is absent");
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

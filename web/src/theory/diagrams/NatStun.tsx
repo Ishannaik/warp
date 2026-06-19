@@ -490,7 +490,7 @@ function RelayBar() {
         }}
       >
         only a TURN relay could bridge the amber case — a server that forwards
-        every byte. Wrap won&rsquo;t. → continues in Part B.
+        every byte. Warp won&rsquo;t. → continues in Part B.
       </div>
     </div>
   );

@@ -326,7 +326,7 @@ function EmptyState({ isMobile }: { isMobile: boolean }) {
         No other devices yet
       </div>
       <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", lineHeight: 1.6 }}>
-        Open Wrap on another device on the same Wi-Fi.
+        Open Warp on another device on the same Wi-Fi.
       </div>
     </div>
   );
@@ -439,7 +439,7 @@ function SessionError({
         Channel failed
       </div>
       <p style={{ fontSize: "14px", color: "#a8a293", margin: "0 0 22px", lineHeight: 1.55 }}>
-        {message} Wrap is STUN-only — some networks can't be bridged directly.
+        {message} Warp is STUN-only — some networks can't be bridged directly.
       </p>
       <button
         type="button"
