@@ -218,6 +218,13 @@ export function ScaleToFit({
       ref={containerRef}
       style={{
         width: "100%",
+        // minWidth:0 + overflow:hidden make THIS wrapper's intrinsic (min-content)
+        // width 0, so its max-content child can't inflate a parent grid/flex track.
+        // (Without this, the diagram's full width became the section column's
+        // min-content, dragging the prose to that width and overflowing on mobile.)
+        // The child is still scaled to fit, so nothing is actually clipped.
+        minWidth: 0,
+        overflow: "hidden",
         // Reserve only the visible (scaled) height so nothing below overlaps.
         height:
           scaled && contentHeight != null
