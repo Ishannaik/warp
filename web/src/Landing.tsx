@@ -1,4 +1,5 @@
 import Hero from "./hero/Hero";
+import NearbyDevices from "./nearby/NearbyDevices";
 import HowItWorks from "./sections/HowItWorks";
 import Architecture from "./sections/Architecture";
 import Stats from "./sections/Stats";
@@ -11,6 +12,7 @@ export default function Landing() {
   return (
     <div>
       <Hero />
+      <NearbyDevices />
       <HowItWorks />
       <Architecture />
       <Stats />
