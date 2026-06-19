@@ -97,22 +97,32 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  /* Disable purely decorative loops. */
-  [style*="wrapMeteor"],
-  [style*="wrapLamp"],
-  [style*="wrapScan"],
-  [style*="wrapMarquee"],
-  [style*="wrapSpin"],
-  [style*="wrapFlow"],
-  [style*="wrapBlink"] {
-    animation: none !important;
+/* Pairing ping (Transfer flow, Step 02). Added by the Build phase. */
+@keyframes wrapPing {
+  0% {
+    transform: scale(0.35);
+    opacity: 0.65;
   }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
 
-  /* Make entrance fades / rises instant. */
-  [style*="wrapRise"],
-  [style*="wrapFade"] {
-    animation-duration: 0.001ms !important;
-    animation-delay: 0ms !important;
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * a11y-safe pattern: never remove entrance animations (that would strand
+   * elements at their opacity:0 / translateY start frame and blank the page).
+   * Instead, collapse all animations/transitions to ~instant and force them to
+   * hold their final frame, so wrapRise/wrapFade settle at opacity:1 immediately.
+   */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-fill-mode: forwards !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

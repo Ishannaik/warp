@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import Atmosphere from "./Atmosphere";
 import TransferWindow from "./TransferWindow";
+import { navigate } from "../router";
 
 /**
  * Hero composition for the Wrap landing page. Ported verbatim from the design
@@ -165,7 +166,15 @@ export default function Hero() {
             letterSpacing: ".05em",
           }}
         >
-          <a href="#work" className="wrap-nav-link" style={navLink}>
+          <a
+            href="/how"
+            className="wrap-nav-link"
+            style={navLink}
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/how");
+            }}
+          >
             HOW IT WORKS
           </a>
           <a href="#trust" className="wrap-nav-link" style={navLink}>
@@ -179,8 +188,12 @@ export default function Hero() {
           </a>
         </div>
         <a
-          href="#"
+          href="/send"
           className="wrap-launch"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate("/send");
+          }}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -302,8 +315,12 @@ export default function Hero() {
             }}
           >
             <a
-              href="#"
+              href="/send"
               className="wrap-cta-primary"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/send");
+              }}
               style={{
                 padding: "16px 26px",
                 background: "var(--acc)",
@@ -321,8 +338,12 @@ export default function Hero() {
               Start a transfer &nbsp;→
             </a>
             <a
-              href="#work"
+              href="/how"
               className="wrap-cta-secondary"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/how");
+              }}
               style={{
                 padding: "16px 24px",
                 background: "transparent",

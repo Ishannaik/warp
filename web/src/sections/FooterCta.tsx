@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { navigate } from "../router";
 
 /**
  * FooterCta — closing call-to-action + footer bar.
@@ -68,7 +69,11 @@ export default function FooterCta() {
           </span>
         </h2>
         <a
-          href="#"
+          href="/send"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate("/send");
+          }}
           style={{
             display: "inline-block",
             marginTop: 40,

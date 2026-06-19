@@ -1,25 +1,16 @@
 import "./index.css";
 
-import Hero from "./hero/Hero";
-import HowItWorks from "./sections/HowItWorks";
-import Architecture from "./sections/Architecture";
-import Stats from "./sections/Stats";
-import Features from "./sections/Features";
-import Compare from "./sections/Compare";
-import Faq from "./sections/Faq";
-import FooterCta from "./sections/FooterCta";
+import Landing from "./Landing";
+import TransferFlow from "./transfer/TransferFlow";
+import Theory from "./theory/Theory";
+import { useRoute } from "./router";
 
 export default function App() {
-  return (
-    <div>
-      <Hero />
-      <HowItWorks />
-      <Architecture />
-      <Stats />
-      <Features />
-      <Compare />
-      <Faq />
-      <FooterCta />
-    </div>
-  );
+  const { path, code } = useRoute();
+
+  if (path === "/send") return <TransferFlow />;
+  if (path.startsWith("/r/") && code) return <TransferFlow joinCode={code} />;
+  if (path === "/how") return <Theory />;
+
+  return <Landing />;
 }
