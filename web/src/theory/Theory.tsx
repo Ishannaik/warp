@@ -567,7 +567,7 @@ function FlowDiagram() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)",
           maxWidth: "520px",
           margin: "0 auto",
         }}
@@ -579,7 +579,7 @@ function FlowDiagram() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "auto 1fr auto",
+          gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "auto 1fr auto",
           alignItems: "center",
           gap: "16px",
           maxWidth: "640px",
@@ -1603,7 +1603,7 @@ export default function Theory() {
             maxWidth: WIDE_MAX,
             margin: "0 auto",
             display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "220px minmax(0,1fr)",
+            gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "220px minmax(0,1fr)",
             gap: isMobile ? 0 : "clamp(32px,4vw,64px)",
             alignItems: "start",
           }}
