@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "warp-signaling",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SIGNALING", "class_name": "SignalingRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SignalingRoom"] }
+  ]
+}

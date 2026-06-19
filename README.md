@@ -38,11 +38,11 @@ Multiple people can join one room (mesh) — up to `MAX_PEERS`.
 ```bash
 pnpm install
 
-# terminal 1 — signaling server on :8080
+# terminal 1 — signaling server (wrangler dev) on :8787
 pnpm dev:server
 
 # terminal 2 — web app on :5173
-cp web/.env.example web/.env   # points at ws://localhost:8080
+cp web/.env.example web/.env   # points at ws://localhost:8787
 pnpm dev
 ```
 
@@ -55,7 +55,8 @@ pnpm --filter @warp/server test
 ## Self-hosting
 
 - **Frontend** → any static host. We deploy `web/` to Vercel (Root Directory `web`, Vite preset).
-- **Signaling** → any host with persistent WebSocket support. We use Koyeb's free tier via `server/Dockerfile` (port `8080`, health check `/health`). Render / Railway / Fly / Cloudflare Durable Objects also work.
+- **Signaling** → a **Cloudflare Worker + Durable Object** (`pnpm --filter @warp/server run deploy`).
+  Genuinely free on the Workers Free plan — no credit card, no cold starts.
 
 Set `VITE_SIGNALING_URL` in the frontend to your signaling server's `wss://` URL.
 

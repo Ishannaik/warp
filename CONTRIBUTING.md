@@ -28,7 +28,7 @@ CI runs the same checks per-package (only the package you touched is built/teste
   database, no paid relay). If a change needs a paid service, open an issue to discuss first.
 - **The signaling server stays a dumb relay.** It must never read, store, or
   understand file contents — only introduce peers and forward opaque handshake blobs.
-- Match the surrounding style. The server is plain Node + `ws`; the web app is React + Vite.
+- Match the surrounding style. The server is a Cloudflare Worker + Durable Object; the web app is React + Vite.
 
 ## Reporting bugs
 

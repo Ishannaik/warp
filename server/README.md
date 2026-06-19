@@ -1,34 +1,39 @@
-# beam-signaling
+# @warp/server
 
-Stateless WebRTC **signaling server** for Beam. It puts peers in a room, tells
-them about each other, and relays opaque SDP/ICE blobs between them. It never
-sees a file byte — all transfers go peer-to-peer over the browsers' encrypted
-data channels.
+WebRTC **signaling server** for Warp, as a **Cloudflare Worker + Durable Object**.
+It puts peers in a room, tells them about each other, and relays opaque SDP/ICE
+blobs between them. It never sees a file byte — transfers go peer-to-peer over the
+browsers' encrypted data channels.
 
-Single file, one dependency (`ws`), no database, no TURN. In-memory room state.
+Genuinely free to run: the Workers Free plan includes SQLite-backed Durable Objects
+(no credit card), and the WebSocket **Hibernation API** means idle connections cost
+nothing.
 
 ## Run
 
 ```bash
-npm install
-npm start        # listens on :8080 (PORT env to change)
-npm test         # spawns the server and runs the e2e check
-npm run dev      # auto-restart on change
+pnpm install
+pnpm --filter @warp/server dev          # wrangler dev — local workerd on :8787
+pnpm --filter @warp/server test         # boots wrangler dev and runs the e2e check
+pnpm --filter @warp/server run deploy   # wrangler deploy (needs `wrangler login`; `run` avoids pnpm's deploy builtin)
 ```
 
 Health check: `GET /health` -> `200 ok`.
 
-## Environment
+## Design (hibernation-safe state)
 
-| Var         | Default | Meaning                          |
-|-------------|---------|----------------------------------|
-| `PORT`      | `8080`  | Listen port                      |
-| `MAX_PEERS` | `8`     | Max peers per room (mesh cap)    |
+There is **no `rooms` map**. A Durable Object can be evicted from memory between
+messages, so the live WebSockets *are* the room state: each socket carries
+`{ peerId, room }` via `serializeAttachment()`, and "who's in room X" is just
+`state.getWebSockets().filter(...)`. Nothing to desync.
+
+One Durable Object instance (`idFromName('global')`) holds all rooms — plenty for a
+hobby signaling server. Shard by room code later if you ever outgrow a single DO.
 
 ## Protocol
 
-JSON over WebSocket. The **new peer initiates** WebRTC offers to every existing
-peer (glare-free mesh); existing peers wait for an offer.
+JSON over WebSocket. The **new peer initiates** WebRTC offers to every existing peer
+(glare-free mesh); existing peers wait for an offer.
 
 **Client → server**
 
@@ -49,15 +54,18 @@ peer (glare-free mesh); existing peers wait for an offer.
 
 ## Deploy
 
-Needs a host with **persistent WebSocket** support — Vercel serverless does
-**not** qualify. Use Fly.io / Render / Railway, or Cloudflare Workers + Durable
-Objects. Set `PORT` from the platform; expose `/health` as the health check.
+```bash
+wrangler login          # once, interactive
+pnpm --filter @warp/server run deploy
+```
+
+Gives a `wss://warp-signaling.<your-subdomain>.workers.dev` URL — set it as
+`VITE_SIGNALING_URL` in the web app.
 
 ## Deliberate limits
 
 - **No TURN, no relay** — STUN-only on the client. Restrictive NATs get an honest
-  error instead of a bandwidth bill. Add coturn if you ever want to pay for it.
-- **Single instance** — in-memory rooms. Add Redis pub/sub to scale horizontally.
+  error instead of a bandwidth bill.
+- **One Durable Object** — single instance holds all rooms. Shard by room to scale.
 - **No auth** — room codes are the only secret (6 chars, unguessable enough for
-  ephemeral transfers). Add an origin allowlist if you want to stop other sites
-  reusing your signaling server.
+  ephemeral transfers).

@@ -1,29 +1,36 @@
-// End-to-end check of the signaling server: spawns it, drives real ws clients,
-// asserts room creation, mesh notifications, relay, cross-room isolation, and leave.
+// End-to-end check of the signaling Worker: boots `wrangler dev` (local workerd),
+// drives real WebSocket clients, and asserts room creation, mesh notifications,
+// relay, cross-room isolation, leave, and error cases.
+// Uses Node's built-in global WebSocket + fetch (Node 22) — no client deps.
 // Run: node test.js   (exits non-zero on failure)
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { WebSocket } from 'ws';
 
-const PORT = 18080;
-const URL = `ws://localhost:${PORT}`;
+const PORT = 18787;
+const REMOTE = process.env.TEST_WS_URL;        // set to test against a deployed wss:// URL
+const HTTP = `http://localhost:${PORT}`;
+const WS = REMOTE ?? `ws://localhost:${PORT}`;
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function connect() {
-  const ws = new WebSocket(URL);
+  const ws = new WebSocket(WS);
   ws.queue = [];
   ws.waiters = [];
-  ws.on('message', (raw) => {
-    const msg = JSON.parse(raw);
+  ws.addEventListener('message', (ev) => {
+    const msg = JSON.parse(ev.data);
     const i = ws.waiters.findIndex((w) => w.pred(msg));
     if (i >= 0) ws.waiters.splice(i, 1)[0].resolve(msg);
     else ws.queue.push(msg);
   });
-  return new Promise((res) => ws.on('open', () => res(ws)));
+  return new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error('ws open timeout')), 8000);
+    ws.addEventListener('open', () => { clearTimeout(t); res(ws); });
+    ws.addEventListener('error', () => { clearTimeout(t); rej(new Error('ws connect failed')); });
+  });
 }
 
-function next(ws, pred = () => true, ms = 1500) {
+function next(ws, pred = () => true, ms = 2000) {
   const i = ws.queue.findIndex(pred);
   if (i >= 0) return Promise.resolve(ws.queue.splice(i, 1)[0]);
   return new Promise((resolve, reject) => {
@@ -35,11 +42,11 @@ function next(ws, pred = () => true, ms = 1500) {
 const sendj = (ws, o) => ws.send(JSON.stringify(o));
 
 async function waitHealthy() {
-  for (let i = 0; i < 50; i++) {
-    try { if ((await fetch(`http://localhost:${PORT}/health`)).ok) return; } catch {}
-    await delay(100);
+  for (let i = 0; i < 120; i++) {              // wrangler dev can take a while to boot workerd
+    try { if ((await fetch(`${HTTP}/health`)).ok) return; } catch { /* not up yet */ }
+    await delay(500);
   }
-  throw new Error('server never became healthy');
+  throw new Error('wrangler dev never became healthy');
 }
 
 async function run() {
@@ -90,13 +97,15 @@ async function run() {
   for (const ws of [a, c, d]) ws.close();
 }
 
-const srv = spawn(process.execPath, ['signaling.js'], {
-  env: { ...process.env, PORT: String(PORT) },
+// Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.
+// `pnpm exec` resolves the workspace's wrangler; shell:true lets Windows find it.
+const srv = REMOTE ? null : spawn('pnpm', ['exec', 'wrangler', 'dev', '--port', String(PORT)], {
+  shell: true,
   stdio: 'inherit',
 });
 
 try {
-  await waitHealthy();
+  if (!REMOTE) await waitHealthy();
   await run();
   console.log('\n✓ all signaling tests passed');
   process.exitCode = 0;
@@ -104,5 +113,8 @@ try {
   console.error('\n✗ test failed:', err.message);
   process.exitCode = 1;
 } finally {
-  srv.kill();
+  srv?.kill();
+  // wrangler spawns a workerd child; give kill a moment, then force-exit so the
+  // test process doesn't hang on a lingering handle.
+  setTimeout(() => process.exit(process.exitCode ?? 0), 1500);
 }

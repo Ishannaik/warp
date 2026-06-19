@@ -1,4 +1,4 @@
-const SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL ?? 'ws://localhost:8080'
+const SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL ?? 'ws://localhost:8787'
 
 export default function App() {
   return (

@@ -7,6 +7,9 @@
   "license": "MIT",
   "engines": { "node": ">=22" },
   "packageManager": "pnpm@10.27.0",
+  "pnpm": {
+    "onlyBuiltDependencies": ["workerd", "esbuild"]
+  },
   "scripts": {
     "dev": "pnpm --filter @warp/web dev",
     "dev:server": "pnpm --filter @warp/server dev",

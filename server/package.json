@@ -3,15 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Stateless WebRTC signaling server for Warp.",
+  "description": "Cloudflare Workers + Durable Objects signaling server for Warp.",
   "license": "MIT",
-  "engines": { "node": ">=20" },
   "scripts": {
-    "start": "node signaling.js",
-    "dev": "node --watch signaling.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
     "test": "node test.js"
   },
-  "dependencies": {
-    "ws": "^8.18.0"
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }
