@@ -180,12 +180,14 @@ export function ScaleToFit({
     const measure = () => {
       const available = container.clientWidth;
       if (!available) return;
-      // The content's real occupied width at this container size. The box is
-      // `width: 100%`, so when content fits this equals `available`; when
-      // min-px content overflows, scrollWidth reports the true wider extent.
-      // Transforms don't affect scrollWidth and the box width is the fixed
-      // container width, so this never feeds back into the scale.
-      const natural = content.scrollWidth;
+      // The content box is `max-content` + `min-width:100%`, so its offsetWidth
+      // == available when the diagram fits (desktop unchanged) and == the TRUE
+      // intrinsic width when min-px/nowrap content overflows. Intrinsic sizing
+      // is NOT clamped by inner `overflow:hidden` the way scrollWidth is — that
+      // clamping was making wide topology rows (L0/L1/NAT) read as fitting and
+      // never scale, so they got clipped. Transforms don't affect offsetWidth,
+      // so this never feeds back into the scale.
+      const natural = content.offsetWidth;
       if (!natural) return;
       // Never enlarge: cap at 1 so desktop stays exactly as authored.
       const next = Math.min(1, available / natural);
@@ -227,10 +229,12 @@ export function ScaleToFit({
       <div
         ref={contentRef}
         style={{
-          // Lay out at the container width; scrollWidth then reports the true
-          // occupied width (== width when it fits, larger when min-px content
-          // overflows). We scale that down, never reflowing the authored layout.
-          width: "100%",
+          // max-content + minWidth:100%: the box is exactly the container width
+          // when the diagram fits (desktop pixel-identical, fills the frame), but
+          // grows to the content's true intrinsic width when min-px/nowrap content
+          // overflows — which offsetWidth then reports so we scale it to fit.
+          width: "max-content",
+          minWidth: "100%",
           transform: scaled ? `scale(${scale})` : undefined,
           transformOrigin: "top left",
         }}
