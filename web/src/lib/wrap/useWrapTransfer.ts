@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignalingClient, type SignalData } from "./signaling";
 import { WrapPeer, type PeerErrorKind } from "./peer";
-import { generateCode, type TransferItem } from "./transfer";
+import { type TransferItem } from "./transfer";
 
 export type WrapMode = "send" | "receive";
 
@@ -74,8 +74,8 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     [code],
   );
 
-  const fail = useCallback((kind: WrapError["kind"]) => {
-    setError({ kind, message: ERROR_MESSAGES[kind] });
+  const fail = useCallback((kind: WrapError["kind"], message?: string) => {
+    setError({ kind, message: message ?? ERROR_MESSAGES[kind] });
     setStatus("error");
   }, []);
 
@@ -128,7 +128,8 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
       const sig = new SignalingClient();
       signalingRef.current = sig;
 
-      sig.on("joined", ({ peers: existing }) => {
+      sig.on("joined", ({ room, peers: existing }) => {
+        setCode(room); // the server's real, joinable code — not a locally-minted one
         setPeers(existing);
         if (existing.length > 0) {
           // We're the new peer -> initiator. Offer to the first existing peer.
@@ -167,7 +168,14 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
         peerRef.current.handleSignal(from, data).catch(() => fail("channel-error"));
       });
 
-      sig.on("error", () => fail("signaling"));
+      sig.on("error", (err: string) => {
+        const map: Record<string, string> = {
+          "room-not-found": "That room is no longer open — ask the sender for a fresh link.",
+          "room-full": "That room is full (up to 8 devices).",
+          "bad-room": "That room code looks invalid.",
+        };
+        fail("signaling", map[err]);
+      });
 
       sig.connect(roomCode);
     },
@@ -175,9 +183,11 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   );
 
   const createRoom = useCallback(() => {
-    const newCode = generateCode();
-    setCode(newCode);
-    connect(newCode);
+    // The server owns room codes. Connect with NO room so it creates one and
+    // returns the real, joinable code in `joined`. (Locally-minted "WRAP-…"
+    // codes were rejected by the server's validator — that broke every transfer.)
+    setCode(null);
+    connect(undefined);
   }, [connect]);
 
   const startSend = useCallback(
