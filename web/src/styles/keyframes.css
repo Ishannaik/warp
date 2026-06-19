@@ -1,0 +1,118 @@
+/* All @keyframes ported verbatim from the Wrap design source. Do not redefine elsewhere. */
+
+@keyframes wrapRise {
+  from {
+    opacity: 0;
+    transform: translateY(46px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes wrapFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes wrapBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes wrapScan {
+  0% {
+    left: -18%;
+  }
+  100% {
+    left: 118%;
+  }
+}
+
+@keyframes wrapSpin {
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes wrapShimmer {
+  0% {
+    transform: translateX(-130%);
+  }
+  60%,
+  100% {
+    transform: translateX(240%);
+  }
+}
+
+@keyframes wrapMarquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes wrapMeteor {
+  0% {
+    transform: rotate(24deg) translateY(-180px);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.75;
+  }
+  88% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: rotate(24deg) translateY(560px);
+    opacity: 0;
+  }
+}
+
+@keyframes wrapLamp {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@keyframes wrapFlow {
+  to {
+    background-position: 32px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Disable purely decorative loops. */
+  [style*="wrapMeteor"],
+  [style*="wrapLamp"],
+  [style*="wrapScan"],
+  [style*="wrapMarquee"],
+  [style*="wrapSpin"],
+  [style*="wrapFlow"],
+  [style*="wrapBlink"] {
+    animation: none !important;
+  }
+
+  /* Make entrance fades / rises instant. */
+  [style*="wrapRise"],
+  [style*="wrapFade"] {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+  }
+}

@@ -1,1 +1,67 @@
 @import "tailwindcss";
+@import "./styles/keyframes.css";
+
+/* Tailwind v4 CSS-first theme tokens (design system). */
+@theme {
+  --color-bg: #121110;
+  --color-darker: #0e0d0a;
+  --color-card: #15140f;
+  --color-ink: #efe9da;
+  --color-body: #a8a293;
+  --color-secondary: #cdc8ba;
+  --color-muted: #6f6a5d;
+  --color-dim: #4a463c;
+
+  --color-acc: #5360ff;
+  --color-amb: #ef6a3d;
+
+  --font-display: "Bricolage Grotesque", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-body: "Archivo", system-ui, sans-serif;
+}
+
+/* Runtime CSS vars — Ultramarine accent + Live channel mode (default variant). */
+:root {
+  --acc: #5360ff;
+  --acc-rgb: 83, 96, 255;
+  --amb: #ef6a3d;
+  --amb-rgb: 239, 106, 61;
+  --beam-dur: 6s;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+}
+
+body {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 31px,
+      rgba(239, 233, 218, 0.035) 31px,
+      rgba(239, 233, 218, 0.035) 32px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 31px,
+      rgba(239, 233, 218, 0.035) 31px,
+      rgba(239, 233, 218, 0.035) 32px
+    ),
+    #121110;
+  color: #efe9da;
+  font-family: "Archivo", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--acc);
+  color: #fff;
+}
