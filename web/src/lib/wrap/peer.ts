@@ -32,8 +32,6 @@
 
 import type { SignalData, SignalingClient } from "./signaling";
 import {
-  CHUNK_SIZE,
-  HIGH_WATER_MARK,
   LOW_WATER_MARK,
   fileId,
   type ControlMessage,
@@ -45,6 +43,30 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
+
+/**
+ * Send-pump tuning (speed). These intentionally diverge from the 16 KiB design
+ * constant in transfer.ts: the wire is chunk-size-agnostic (the receiver just
+ * concatenates ArrayBuffers into a Blob), so we send far fewer, much larger
+ * SCTP messages to push a Chrome<->Chrome channel toward the WiFi link rate
+ * instead of stalling on ~16x more micro-reads/messages.
+ *
+ *  - TARGET_SEND_CHUNK: preferred per-message size. usrsctp (Chrome & Firefox)
+ *    accepts up to 256 KiB; we cap to the negotiated pc.sctp.maxMessageSize at
+ *    runtime and never exceed it (a too-big message closes the channel).
+ *  - MIN_SEND_CHUNK: safe floor if maxMessageSize reports something tiny/0
+ *    (e.g. the legacy 16 KiB / 64 KiB default on an old/odd stack).
+ *  - READ_BLOCK: how much of the file we pull into memory per blob.arrayBuffer()
+ *    read, then slice into TARGET_SEND_CHUNK sends — one await per ~4 MiB instead
+ *    of one per 16 KiB.
+ *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. Raised to 16 MiB so
+ *    the pump keeps the SCTP send buffer full between drains without ballooning
+ *    memory. Resume happens on `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
+ */
+const TARGET_SEND_CHUNK = 256 * 1024;
+const MIN_SEND_CHUNK = 16 * 1024;
+const READ_BLOCK = 4 * 1024 * 1024;
+const SEND_HIGH_WATER = 16 * 1024 * 1024;
 
 export type PeerErrorKind = "nat-failed" | "disconnected" | "channel-error";
 
@@ -394,25 +416,62 @@ export class WrapPeer {
     this.emit("cancelled", { id });
   }
 
-  /** Pump one file's bytes through the channel. Returns false if cancelled mid-flight. */
+  /**
+   * The per-message send size for this connection: as large as the negotiated
+   * SCTP limit allows, capped at our 256 KiB target and floored at 16 KiB.
+   * pc.sctp / maxMessageSize is undefined until the transport is up (and absent
+   * in the offline check stub) — we fall back to the target in that case.
+   */
+  private sendChunkSize(): number {
+    const max = this.pc.sctp?.maxMessageSize;
+    // maxMessageSize can be 0 / Infinity / undefined depending on the stack.
+    const negotiated = typeof max === "number" && max > 0 && Number.isFinite(max) ? max : TARGET_SEND_CHUNK;
+    return Math.max(MIN_SEND_CHUNK, Math.min(TARGET_SEND_CHUNK, negotiated));
+  }
+
+  /**
+   * Pump one file's bytes through the channel. Returns false if cancelled
+   * mid-flight.
+   *
+   * Speed: read the file in large READ_BLOCK (~4 MiB) gulps via
+   * blob.arrayBuffer(), then ship each block as a run of sendChunk-sized
+   * messages (capped to the negotiated SCTP maxMessageSize, ~256 KiB on
+   * Chrome<->Chrome). This does ~one await per 4 MiB instead of one per 16 KiB,
+   * and ~16x fewer SCTP messages, so the channel runs near the link rate.
+   * bufferedAmount backpressure (SEND_HIGH_WATER) keeps memory bounded.
+   */
   private async streamFile(ch: RTCDataChannel, file: File, item: TransferItem): Promise<boolean> {
+    const sendChunk = this.sendChunkSize();
     let offset = 0;
     while (offset < file.size) {
       if (this.cancelledIds.has(item.id)) {
         this.cancelledIds.delete(item.id);
         return false;
       }
-      // Backpressure: wait until the send buffer drains below the high-water mark.
-      if (ch.bufferedAmount > HIGH_WATER_MARK) {
-        await this.waitForDrain(ch);
+
+      // Read one large block, then slice it into sendChunk-sized SCTP messages.
+      const block = await file.slice(offset, offset + READ_BLOCK).arrayBuffer();
+      let pos = 0;
+      while (pos < block.byteLength) {
+        if (this.cancelledIds.has(item.id)) {
+          this.cancelledIds.delete(item.id);
+          return false;
+        }
+        // Backpressure: wait until the send buffer drains below the high-water mark.
+        if (ch.bufferedAmount > SEND_HIGH_WATER) {
+          await this.waitForDrain(ch);
+        }
+        if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+
+        const end = Math.min(pos + sendChunk, block.byteLength);
+        // slice() copies; fine and avoids retaining the whole 4 MiB block per send.
+        ch.send(block.slice(pos, end));
+        offset += end - pos;
+        pos = end;
       }
-      if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
 
-      const slice = file.slice(offset, offset + CHUNK_SIZE);
-      const buf = await slice.arrayBuffer();
-      ch.send(buf);
-      offset += buf.byteLength;
-
+      // Emit progress once per block (~4 MiB) rather than per chunk, to avoid
+      // flooding the UI with re-renders while the bytes fly.
       item.transferred = offset;
       item.progress = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
       this.emit("transfer", { ...item });

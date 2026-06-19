@@ -18,6 +18,7 @@
 import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { formatBytes, type OfferItem, type TransferItem } from "../lib/wrap/transfer";
+import type { Connection } from "../lib/wrap/useWrapTransfer";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -105,11 +106,14 @@ function ItemRow({
   onCancel,
   onDownload,
   isMobile,
+  peerLabel,
 }: {
   item: TransferItem;
   onCancel: (id: string) => void;
   onDownload: (id: string) => void;
   isMobile: boolean;
+  /** Which device this item is to/from — shown only in a multi-device room. */
+  peerLabel?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const col = statusColor(item.status);
@@ -171,6 +175,12 @@ function ItemRow({
             <span style={{ color: item.direction === "receive" ? "var(--acc)" : "#908a7b" }}>
               {item.direction === "receive" ? "↓ IN" : "↑ OUT"}
             </span>
+            {peerLabel && (
+              <span style={{ color: "#908a7b" }}>
+                · {item.direction === "receive" ? "from" : "to"}{" "}
+                <span style={{ color: "var(--acc)" }}>{peerLabel}</span>
+              </span>
+            )}
             {!isText && <span>· {formatBytes(item.size)}</span>}
             <span style={{ color: col }}>· {STATUS_COPY[item.status]}</span>
           </span>
@@ -318,6 +328,7 @@ function Composer({
   onAddFiles,
   onRemovePending,
   onSendPending,
+  deviceCount = 1,
 }: {
   onSendFiles: (files: File[]) => void;
   onSendText: (text: string) => void;
@@ -326,6 +337,8 @@ function Composer({
   onAddFiles?: (files: File[]) => void;
   onRemovePending?: (id: string) => void;
   onSendPending?: () => void;
+  /** Connected devices a send fans out to (>1 in a mesh room). */
+  deviceCount?: number;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -337,6 +350,8 @@ function Composer({
   const staging = !!onAddFiles;
   const acceptFiles = staging ? onAddFiles! : onSendFiles;
   const pendingList = pending ?? [];
+  // " to N devices" suffix shown only in a mesh room (>1 connected device).
+  const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
 
   const pickFiles = () => fileInput.current?.click();
   const pickFolder = () => folderInput.current?.click();
@@ -382,6 +397,7 @@ function Composer({
             onRemovePending={onRemovePending}
             onSendPending={onSendPending}
             isMobile={isMobile}
+            fanout={fanout}
           />
         )}
 
@@ -431,7 +447,7 @@ function Composer({
               cursor: text.trim() ? "pointer" : "not-allowed",
             }}
           >
-            Send text →
+            Send text{fanout} →
           </button>
         </div>
       </div>
@@ -482,11 +498,14 @@ function PendingTray({
   onRemovePending,
   onSendPending,
   isMobile,
+  fanout = "",
 }: {
   pending: PendingFile[];
   onRemovePending: (id: string) => void;
   onSendPending: () => void;
   isMobile: boolean;
+  /** " to N devices" suffix for the send button (mesh room); "" when 1-to-1. */
+  fanout?: string;
 }) {
   const total = pending.reduce((s, p) => s + p.file.size, 0);
   const count = pending.length;
@@ -581,7 +600,7 @@ function PendingTray({
           cursor: "pointer",
         }}
       >
-        Send {count} {count === 1 ? "file" : "files"} →
+        Send {count} {count === 1 ? "file" : "files"}{fanout} →
       </button>
     </div>
   );
@@ -612,12 +631,15 @@ function Tray({
   onDownload,
   onDownloadAll,
   isMobile,
+  labelForPeer,
 }: {
   items: TransferItem[];
   onCancel: (id: string) => void;
   onDownload: (id: string) => void;
   onDownloadAll: () => void;
   isMobile: boolean;
+  /** Resolve a row's peer label; returns undefined to hide the tag (1-to-1). */
+  labelForPeer?: (peerId?: string) => string | undefined;
 }) {
   const receivedFiles = items.filter(
     (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && t.blob,
@@ -688,6 +710,7 @@ function Tray({
             onCancel={onCancel}
             onDownload={onDownload}
             isMobile={isMobile}
+            peerLabel={labelForPeer?.(item.peerId)}
           />
         ))
       )}
@@ -874,6 +897,43 @@ export function AcceptModal({
   );
 }
 
+/* ------------------------------------------------------------- device chip */
+
+/** One device in the mesh header: status dot + short label. */
+function DeviceChip({ label, connected }: { label: string; connected: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "4px 9px",
+        border: `1px solid ${connected ? "rgba(var(--acc-rgb),.5)" : HAIRLINE}`,
+        background: connected ? "rgba(var(--acc-rgb),.08)" : "transparent",
+        fontFamily: MONO,
+        fontSize: "11px",
+        color: connected ? "#efe9da" : "#6f6a5d",
+        maxWidth: "100%",
+      }}
+    >
+      <span
+        style={{
+          width: "6px",
+          height: "6px",
+          flexShrink: 0,
+          borderRadius: "50%",
+          background: connected ? "var(--acc)" : "#6f6a5d",
+          animation: connected ? "wrapBlink 1.6s steps(1) infinite" : undefined,
+        }}
+      />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {label}
+        {!connected && <span style={{ color: "#6f6a5d" }}> · linking</span>}
+      </span>
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------- session view */
 
 /**
@@ -895,6 +955,7 @@ export function SessionView({
   onAddFiles,
   onRemovePending,
   onSendPending,
+  connections,
 }: {
   peerLabel: string;
   items: TransferItem[];
@@ -913,14 +974,31 @@ export function SessionView({
   onRemovePending?: (id: string) => void;
   /** Offer every staged file now (receiver then sees the accept modal). */
   onSendPending?: () => void;
+  /**
+   * Devices in the room (mesh). When provided with >1 device, the header shows
+   * a device list, sends say "to N devices", and tray rows are tagged with the
+   * to/from device. Omitted (or a single device) keeps the clean 1-to-1 header.
+   */
+  connections?: Connection[];
 }) {
+  const liveConnections = connections ?? [];
+  const connectedCount = liveConnections.filter((c) => c.connected).length;
+  // Mesh chrome (device list + per-row tags + fan-out copy) only when there are
+  // genuinely several devices. One device looks exactly like the old 1-to-1 UI.
+  const multiDevice = liveConnections.length > 1;
+  // Map peerId -> label, so tray rows can name their to/from device.
+  const labelForPeer = multiDevice
+    ? (peerId?: string): string | undefined =>
+        peerId ? liveConnections.find((c) => c.peerId === peerId)?.label ?? peerId.slice(0, 8) : undefined
+    : undefined;
+
   return (
     <div style={{ animation: "wrapFade .5s ease both", display: "flex", flexDirection: "column", gap: "18px" }}>
       {/* connected header */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: multiDevice ? "flex-start" : "center",
           gap: "11px",
           padding: isMobile ? "13px 14px" : "14px 16px",
           border: `1px solid ${HAIRLINE}`,
@@ -932,6 +1010,7 @@ export function SessionView({
             width: "8px",
             height: "8px",
             flexShrink: 0,
+            marginTop: multiDevice ? "4px" : 0,
             background: "var(--acc)",
             animation: "wrapBlink 1.6s steps(1) infinite",
           }}
@@ -947,22 +1026,40 @@ export function SessionView({
               color: "#6f6a5d",
             }}
           >
-            {heading} · direct P2P
+            {multiDevice
+              ? `${connectedCount} of ${liveConnections.length} devices connected · direct P2P`
+              : `${heading} · direct P2P`}
           </span>
-          <span
-            style={{
-              display: "block",
-              fontFamily: MONO,
-              fontSize: "13px",
-              color: "#efe9da",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              marginTop: "2px",
-            }}
-          >
-            {peerLabel}
-          </span>
+
+          {multiDevice ? (
+            <span
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "6px",
+                marginTop: "8px",
+              }}
+            >
+              {liveConnections.map((c) => (
+                <DeviceChip key={c.peerId} label={c.label} connected={c.connected} />
+              ))}
+            </span>
+          ) : (
+            <span
+              style={{
+                display: "block",
+                fontFamily: MONO,
+                fontSize: "13px",
+                color: "#efe9da",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                marginTop: "2px",
+              }}
+            >
+              {peerLabel}
+            </span>
+          )}
         </span>
       </div>
 
@@ -974,6 +1071,7 @@ export function SessionView({
         onAddFiles={onAddFiles}
         onRemovePending={onRemovePending}
         onSendPending={onSendPending}
+        deviceCount={multiDevice ? connectedCount : 1}
       />
 
       <Tray
@@ -982,6 +1080,7 @@ export function SessionView({
         onDownload={onDownloadOne}
         onDownloadAll={onDownloadAll}
         isMobile={isMobile}
+        labelForPeer={labelForPeer}
       />
 
       <div

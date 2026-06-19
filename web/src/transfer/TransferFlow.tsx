@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
 import QRCode from "qrcode";
 import { navigate } from "../router";
-import { useWrapTransfer } from "../lib/wrap/useWrapTransfer";
+import { useWrapTransfer, type Connection } from "../lib/wrap/useWrapTransfer";
 import { formatBytes } from "../lib/wrap/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { AcceptModal, SessionView } from "./SessionView";
@@ -35,7 +35,7 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 
 export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWrapTransfer(joinCode);
-  const { mode, code, shareUrl, status, items, incoming, error } = wrap;
+  const { mode, code, shareUrl, status, items, incoming, error, connections } = wrap;
   const isMobile = useIsMobile();
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
@@ -100,11 +100,20 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     wrap.createRoom();
   };
 
+  // Header label for the single-device (1-to-1) case + a sensible fallback. In a
+  // mesh room SessionView renders the per-device chips from `connections` itself.
   const peerLabel = useMemo(() => {
     const others = wrap.peers;
     if (others.length) return others[0].slice(0, 8);
     return mode === "receive" ? "the sender" : "your peer";
   }, [wrap.peers, mode]);
+
+  // The accept modal names the exact device an offer came from (mesh-aware).
+  const incomingPeerLabel = useMemo(() => {
+    if (!incoming) return peerLabel;
+    const match = connections.find((c) => c.peerId === incoming.peerId);
+    return match?.label ?? incoming.peerId.slice(0, 8);
+  }, [incoming, connections, peerLabel]);
 
   return (
     <div
@@ -153,6 +162,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
           ) : showSession ? (
             <SessionView
               peerLabel={peerLabel}
+              connections={connections}
               items={items}
               onSendFiles={wrap.sendFiles}
               onSendText={wrap.sendText}
@@ -184,6 +194,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               fileCount={fileCount}
               totalBytes={totalBytes}
               connecting={status === "connecting"}
+              connections={connections}
               onBrowse={browse}
               onDropFiles={addFiles}
               onRemove={removeFile}
@@ -224,7 +235,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
           items={incoming.items}
           onAccept={wrap.accept}
           onDecline={wrap.decline}
-          peerName={peerLabel}
+          peerName={incomingPeerLabel}
           isMobile={isMobile}
         />
       )}
@@ -579,6 +590,7 @@ function PairStep({
   fileCount,
   totalBytes,
   connecting,
+  connections,
   onBrowse,
   onDropFiles,
   onRemove,
@@ -591,6 +603,7 @@ function PairStep({
   fileCount: string;
   totalBytes: number;
   connecting: boolean;
+  connections: Connection[];
   onBrowse: () => void;
   onDropFiles: (l: FileList) => void;
   onRemove: (id: string) => void;
@@ -633,11 +646,19 @@ function PairStep({
   };
 
   const isReceiver = mode === "receive";
+  // Devices that have joined the room but whose channel isn't open yet (sender
+  // side, while pairing). Once a channel opens, status flips to "connected" and
+  // we leave this screen entirely — so everything here is still "connecting".
+  const joiners = connections;
   const waitingText = isReceiver
     ? connecting
       ? "Joining channel"
       : "Waiting for sender"
-    : "Waiting for peer to connect";
+    : joiners.length === 1
+      ? "1 device joining — opening channel"
+      : joiners.length > 1
+        ? `${joiners.length} devices joining — opening channels`
+        : "Waiting for devices to join";
 
   return (
     <div style={{ animation: "wrapFade .5s ease both", textAlign: "center" }}>
@@ -746,6 +767,49 @@ function PairStep({
           <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d" }}>
             {fileCount} files · {formatBytes(totalBytes)} ready to offer
           </div>
+
+          {/* JOINERS — devices show up here the instant they enter the room, even
+              before the channel finishes opening. Add a few; send to them all. */}
+          {joiners.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "8px",
+                justifyContent: "center",
+                marginTop: "18px",
+              }}
+            >
+              {joiners.map((c) => (
+                <span
+                  key={c.peerId}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "7px",
+                    padding: "6px 12px",
+                    border: "1px solid rgba(var(--acc-rgb),.45)",
+                    background: "rgba(var(--acc-rgb),.06)",
+                    fontFamily: MONO,
+                    fontSize: "11.5px",
+                    color: "#efe9da",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: "var(--acc)",
+                      animation: "wrapBlink 1.6s steps(1) infinite",
+                    }}
+                  />
+                  {c.label}
+                  {!c.connected && <span style={{ color: "#6f6a5d" }}>· linking</span>}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* SHARE ROW */}
           <div

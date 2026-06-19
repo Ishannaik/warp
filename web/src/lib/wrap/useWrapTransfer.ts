@@ -1,17 +1,29 @@
 /**
- * React hook orchestrating a Wrap transfer: signaling socket, the WebRTC peer,
+ * React hook orchestrating a Wrap transfer: signaling socket, the WebRTC peers,
  * and the symmetric file-transfer tray. Both sender and receiver use this hook —
  * pass `joinCode` to act as the receiver who joins an existing room.
  *
- * Roles & glare avoidance (see peer.ts): whoever JOINS a room and receives a
- * non-empty `peers` list is the initiator and offers to the first existing
- * peer. The room creator waits for `peer-joined` then for the incoming offer.
+ * Multi-device mesh:
+ *   A room can hold several devices (the server allows up to 8). We keep ONE
+ *   `WrapPeer` per remote device in a Map, and every device is connected to
+ *   every other (full mesh). Each `WrapPeer` is per-remote and already self-
+ *   contained — it emits transfer/incoming-offer/file-received/etc. events — so
+ *   the hook just FANS OUT (send to all) and STAMPS each event with the peer it
+ *   came from (`item.peerId`, `incoming.peerId`).
  *
- * Review-before-receive redesign: the channel STAYS OPEN after a batch. Status
- * reaches "connected" and stays there — there is no terminal "done". Either peer
- * can offer files or send text repeatedly. Received files land in `items[]` as
- * in-memory blobs; the UI downloads them on demand (one file, or a zip of all).
- * An incoming `offer` is surfaced via `incoming` until the user accepts/declines.
+ * Roles & glare avoidance (see peer.ts): whoever JOINS a room and receives a
+ * non-empty `peers` list is the initiator and offers to EACH existing peer. A
+ * device already in the room is the responder for each later `peer-joined` and
+ * waits for the incoming offer.
+ *
+ * Review-before-receive: the channels STAY OPEN after a batch. Status reaches
+ * "connected" once at least one peer's data channel is open and stays there.
+ * Either side can offer files or send text repeatedly. Received files land in
+ * `items[]` as in-memory blobs; the UI downloads them on demand. An incoming
+ * `offer` is surfaced via `incoming` (tagged with its peerId) until accept/decline.
+ *
+ * The single-device case is unchanged in behaviour: one peer in the map, fan-out
+ * targets exactly that peer, and `incoming`/`accept`/`decline` work as before.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,13 +38,25 @@ export type WrapStatus =
   | "idle" // nothing started yet
   | "connecting" // socket opening / joining room
   | "waiting" // in a room, waiting for the other side
-  | "connected" // data channel open — STAYS here; both peers can keep sending
+  | "connected" // at least one data channel open — both peers can keep sending
   | "error";
 
 /** A pending inbound batch manifest awaiting the user's accept/decline. */
 export interface IncomingOffer {
   batchId: string;
   items: OfferItem[];
+  /** Which remote device this offer came from (mesh-aware). */
+  peerId: string;
+}
+
+/** A connected (or connecting) device in the room, for the UI's device list. */
+export interface Connection {
+  /** Remote device id (stable signaling id; used to route sends). */
+  peerId: string;
+  /** Short human label derived from the id (first 8 chars). */
+  label: string;
+  /** True once this device's data channel is open. */
+  connected: boolean;
 }
 
 export interface WrapError {
@@ -44,24 +68,30 @@ export interface UseWrapTransfer {
   mode: WrapMode;
   code: string | null;
   shareUrl: string | null;
+  /** Raw remote peer ids in the room (kept for back-compat with existing UI). */
   peers: string[];
+  /** Devices in the room with their labels + per-device connection state. */
+  connections: Connection[];
   status: WrapStatus;
-  /** The session tray: every item we've sent or received, both directions. */
+  /** The session tray: every item we've sent or received, both directions.
+   *  Each item carries `peerId` (which device it is to/from) in a mesh room. */
   items: TransferItem[];
-  /** A pending offer from the peer awaiting accept/decline, or null. */
+  /** A pending offer from a peer awaiting accept/decline (tagged peerId), or null. */
   incoming: IncomingOffer | null;
   error: WrapError | null;
-  /** Sender: open a fresh room and wait for a peer. */
+  /** Sender: open a fresh room and wait for peers. */
   createRoom: () => void;
-  /** Offer files to the peer (gated by their accept). Safe to call repeatedly. */
+  /** Offer files to EVERY connected device (each gated by that device's accept).
+   *  Safe to call repeatedly. Before anyone is connected, files are staged and
+   *  offered to each device as its channel comes up. */
   sendFiles: (files: File[]) => Promise<void>;
-  /** Send a text snippet — appears directly in the peer's tray (no accept). */
+  /** Send a text snippet to every connected device (appears in their tray). */
   sendText: (text: string) => void;
-  /** Accept the pending incoming offer -> bytes flow into the tray. */
+  /** Accept the pending incoming offer -> bytes flow from that device. */
   accept: () => void;
-  /** Decline the pending incoming offer -> nothing is received. */
+  /** Decline the pending incoming offer -> nothing is received from that device. */
   decline: () => void;
-  /** Cancel an in-flight item (either direction) by id. */
+  /** Cancel an in-flight item (either direction) by id — routed to its peer. */
   cancel: (id: string) => void;
   /** Save one received file's blob to disk via an anchor download. */
   downloadOne: (id: string) => void;
@@ -78,6 +108,11 @@ const ERROR_MESSAGES: Record<WrapError["kind"], string> = {
   signaling: "Lost contact with the signaling server.",
   "no-files": "Add at least one file before opening a channel.",
 };
+
+/** Short, stable label for a remote device id. */
+function labelFor(peerId: string): string {
+  return peerId.slice(0, 8);
+}
 
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
 function saveBlob(blob: Blob, filename: string): void {
@@ -97,14 +132,16 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
   const [code, setCode] = useState<string | null>(joinCode ?? null);
   const [peers, setPeers] = useState<string[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [status, setStatus] = useState<WrapStatus>("idle");
   const [items, setItems] = useState<TransferItem[]>([]);
   const [incoming, setIncoming] = useState<IncomingOffer | null>(null);
   const [error, setError] = useState<WrapError | null>(null);
 
   const signalingRef = useRef<SignalingClient | null>(null);
-  const peerRef = useRef<WrapPeer | null>(null);
-  /** Files staged by the sender to offer the moment the channel opens. */
+  /** One WrapPeer per remote device id (full mesh). */
+  const peersRef = useRef<Map<string, WrapPeer>>(new Map());
+  /** Files staged by the sender to offer each peer the moment its channel opens. */
   const pendingFilesRef = useRef<File[] | null>(null);
 
   const shareUrl = useMemo(
@@ -128,56 +165,87 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     });
   }, []);
 
-  /** Wire a freshly-created peer's events into hook state. */
+  /** Recompute the connections list from the live peer map. */
+  const refreshConnections = useCallback(() => {
+    setConnections(
+      Array.from(peersRef.current.entries()).map(([peerId, peer]) => ({
+        peerId,
+        label: labelFor(peerId),
+        connected: peer.isConnected,
+      })),
+    );
+  }, []);
+
+  /** Wire one per-remote peer's events into hook state, stamping its peerId. */
   const bindPeer = useCallback(
-    (peer: WrapPeer) => {
+    (peerId: string, peer: WrapPeer) => {
       peer.on("connected", () => {
+        // Any open channel means the session is live.
         setStatus((s) => (s === "error" ? s : "connected"));
-        // Sender auto-offers any staged files when the channel comes up.
+        refreshConnections();
+        // Sender auto-offers any staged files to THIS peer as it comes up.
         const files = pendingFilesRef.current;
         if (files && files.length) {
-          pendingFilesRef.current = null;
           peer.offerFiles(files).catch(() => fail("channel-error"));
         }
       });
 
-      // Both directions: an item was created or its progress changed.
-      peer.on("transfer", (item) => upsertItem(item));
+      // Both directions: an item was created or its progress changed. Stamp the
+      // device it belongs to so the UI can tag tray rows / route cancels.
+      peer.on("transfer", (item) => upsertItem({ ...item, peerId }));
 
-      // A whole manifest arrived — surface the accept modal.
-      peer.on("incoming-offer", (info) => setIncoming(info));
+      // A whole manifest arrived from THIS peer — surface the accept modal.
+      peer.on("incoming-offer", (info) => setIncoming({ ...info, peerId }));
 
-      // A file fully arrived: the engine already attached item.blob and emitted
-      // a `transfer` with status "done", so we don't need to mutate state here.
-      // (Hook keeps the blob in items[] for downloadOne/downloadAll.)
+      // file-received / text-received are already covered by the `transfer`
+      // emit (which stamps peerId), so nothing extra to do here.
       peer.on("file-received", () => {});
-
-      // A text snippet arrived: the engine emits a `transfer` with the text, so
-      // upsert via that already covers it; nothing extra to do.
       peer.on("text-received", () => {});
-
-      // A batch WE offered was declined — items are marked "declined" via
-      // `transfer`, so just clear any stale staged files.
       peer.on("declined", () => {});
-
-      // A file was cancelled (either side) — `transfer` already updated status.
       peer.on("cancelled", () => {});
 
       peer.on("error", (kind) => fail(kind));
     },
-    [fail, upsertItem],
+    [fail, upsertItem, refreshConnections],
   );
 
-  /** Establish the signaling socket and the join/role dance. */
+  /** Create + register an initiator peer for an existing device and offer to it. */
+  const addInitiator = useCallback(
+    (sig: SignalingClient, peerId: string) => {
+      if (peersRef.current.has(peerId)) return;
+      const peer = new WrapPeer(sig, peerId, true);
+      peersRef.current.set(peerId, peer);
+      bindPeer(peerId, peer);
+      refreshConnections();
+      peer.start().catch(() => fail("channel-error"));
+    },
+    [bindPeer, refreshConnections, fail],
+  );
+
+  /** Create + register a responder peer that waits for `peerId`'s incoming offer. */
+  const addResponder = useCallback(
+    (sig: SignalingClient, peerId: string) => {
+      if (peersRef.current.has(peerId)) return peersRef.current.get(peerId)!;
+      const peer = new WrapPeer(sig, peerId, false);
+      peersRef.current.set(peerId, peer);
+      bindPeer(peerId, peer);
+      refreshConnections();
+      return peer;
+    },
+    [bindPeer, refreshConnections],
+  );
+
+  /** Establish the signaling socket and the join/role dance for a full mesh. */
   const connect = useCallback(
     (roomCode: string | undefined) => {
-      // Tear down any prior session.
-      peerRef.current?.close();
-      peerRef.current = null;
+      // Tear down any prior session (all peers).
+      for (const p of peersRef.current.values()) p.close();
+      peersRef.current.clear();
       signalingRef.current?.close();
       setItems([]);
       setIncoming(null);
       setError(null);
+      setConnections([]);
       setStatus("connecting");
 
       const sig = new SignalingClient();
@@ -187,11 +255,8 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
         setCode(room); // the server's real, joinable code — not a locally-minted one
         setPeers(existing);
         if (existing.length > 0) {
-          // We're the new peer -> initiator. Offer to the first existing peer.
-          const peer = new WrapPeer(sig, existing[0], true);
-          peerRef.current = peer;
-          bindPeer(peer);
-          peer.start().catch(() => fail("channel-error"));
+          // We're the new device -> initiator to EVERY existing device.
+          for (const peerId of existing) addInitiator(sig, peerId);
         } else {
           // Empty room: wait for someone to join.
           setStatus("waiting");
@@ -200,27 +265,27 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
       sig.on("peer-joined", (peerId) => {
         setPeers((p) => (p.includes(peerId) ? p : [...p, peerId]));
-        // We were here first -> responder. Build a peer that waits for the offer.
-        if (!peerRef.current) {
-          const peer = new WrapPeer(sig, peerId, false);
-          peerRef.current = peer;
-          bindPeer(peer);
-        }
+        // We were here first for this device -> responder. It will send us the offer.
+        addResponder(sig, peerId);
       });
 
       sig.on("peer-left", (peerId) => {
         setPeers((p) => p.filter((x) => x !== peerId));
+        const peer = peersRef.current.get(peerId);
+        if (peer) {
+          peer.close();
+          peersRef.current.delete(peerId);
+        }
+        // Clear a pending offer that came from the device that just left.
+        setIncoming((off) => (off && off.peerId === peerId ? null : off));
+        refreshConnections();
       });
 
       sig.on("signal", ({ from, data }: { from: string; data: SignalData }) => {
-        // A responder may receive its first offer before any peer-joined was
-        // processed into a WrapPeer; lazily construct one here.
-        if (!peerRef.current) {
-          const peer = new WrapPeer(sig, from, false);
-          peerRef.current = peer;
-          bindPeer(peer);
-        }
-        peerRef.current.handleSignal(from, data).catch(() => fail("channel-error"));
+        // A responder may receive its first offer before `peer-joined` was
+        // processed into a WrapPeer; lazily construct one for `from`.
+        const peer = peersRef.current.get(from) ?? addResponder(sig, from);
+        peer.handleSignal(from, data).catch(() => fail("channel-error"));
       });
 
       sig.on("error", (err: string) => {
@@ -234,7 +299,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
       sig.connect(roomCode);
     },
-    [bindPeer, fail],
+    [addInitiator, addResponder, refreshConnections, fail],
   );
 
   const createRoom = useCallback(() => {
@@ -245,58 +310,77 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     connect(undefined);
   }, [connect]);
 
+  /** Every peer whose data channel is currently open. */
+  const connectedPeers = useCallback((): WrapPeer[] => {
+    return Array.from(peersRef.current.values()).filter((p) => p.isConnected);
+  }, []);
+
   const sendFiles = useCallback(
     async (files: File[]) => {
       if (!files.length) {
         fail("no-files");
         return;
       }
-      const peer = peerRef.current;
-      if (peer && peer.isConnected) {
-        // Channel already open: offer immediately.
+      const open = connectedPeers();
+      if (open.length) {
+        // Fan out: offer the same batch to every connected device. Each offer is
+        // an independent per-peer accept/stream.
         try {
-          await peer.offerFiles(files);
+          await Promise.all(open.map((p) => p.offerFiles(files)));
         } catch {
           fail("channel-error");
         }
       } else {
-        // Not paired yet: stage for the sender's `connected` handler to offer.
+        // Nobody connected yet: stage for each peer's `connected` handler to offer.
         pendingFilesRef.current = files;
       }
     },
-    [fail],
+    [fail, connectedPeers],
   );
 
   const sendText = useCallback(
     (text: string) => {
-      const peer = peerRef.current;
-      if (!peer || !peer.isConnected || !text) return;
+      if (!text) return;
+      const open = connectedPeers();
+      if (!open.length) return;
       try {
-        peer.sendText(text);
+        for (const p of open) p.sendText(text);
       } catch {
         fail("channel-error");
       }
     },
-    [fail],
+    [fail, connectedPeers],
   );
 
   const accept = useCallback(() => {
     const off = incoming;
     if (!off) return;
     setIncoming(null);
-    peerRef.current?.acceptOffer(off.batchId);
+    peersRef.current.get(off.peerId)?.acceptOffer(off.batchId);
   }, [incoming]);
 
   const decline = useCallback(() => {
     const off = incoming;
     if (!off) return;
     setIncoming(null);
-    peerRef.current?.declineOffer(off.batchId);
+    peersRef.current.get(off.peerId)?.declineOffer(off.batchId);
   }, [incoming]);
 
-  const cancel = useCallback((id: string) => {
-    peerRef.current?.cancel(id);
-  }, []);
+  const cancel = useCallback(
+    (id: string) => {
+      // Route to the peer that owns the item; the item carries its peerId.
+      const item = items.find((t) => t.id === id);
+      const peer = item?.peerId ? peersRef.current.get(item.peerId) : undefined;
+      if (peer) {
+        peer.cancel(id);
+        return;
+      }
+      // Fallback (e.g. peerId not yet stamped): try every peer; the wrong ones
+      // no-op because they don't own the id.
+      for (const p of peersRef.current.values()) p.cancel(id);
+    },
+    [items],
+  );
 
   const downloadOne = useCallback(
     (id: string) => {
@@ -356,7 +440,8 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   useEffect(() => {
     if (joinCode) connect(joinCode);
     return () => {
-      peerRef.current?.close();
+      for (const p of peersRef.current.values()) p.close();
+      peersRef.current.clear();
       signalingRef.current?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -367,6 +452,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     code,
     shareUrl,
     peers,
+    connections,
     status,
     items,
     incoming,

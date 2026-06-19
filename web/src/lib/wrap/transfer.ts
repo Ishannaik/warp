@@ -94,6 +94,12 @@ export interface TransferItem {
   text?: string;
   /** Received file bytes, held in memory until the user downloads. */
   blob?: Blob;
+  /**
+   * Which remote device this item is to/from, in a multi-device (mesh) room.
+   * Stamped by the hook from the emitting WrapPeer's remoteId. Omitted in the
+   * single-peer case (or carried but ignored by UIs that don't show it).
+   */
+  peerId?: string;
 }
 
 /** Human-readable byte formatter matching the design's `fmt()`. */
