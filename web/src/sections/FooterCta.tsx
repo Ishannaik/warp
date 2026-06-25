@@ -13,20 +13,24 @@ import { useIsMobile } from "../lib/useIsMobile";
  * React hover state (muted #6f6a5d -> ink #efe9da).
  */
 
-const footerLinks: { label: string; href: string; external?: boolean }[] = [
+const footerLinks: { label: string; href: string; external?: boolean; to?: string }[] = [
   { label: "How it works", href: "#work" },
   { label: "Security", href: "#trust" },
   { label: "FAQ", href: "#faq" },
+  { label: "Brand", href: "/brand", to: "/brand" },
+  { label: "Terms", href: "/terms", to: "/terms" },
+  { label: "Privacy", href: "/privacy", to: "/privacy" },
   { label: "GitHub", href: "https://github.com/Ishannaik/warp", external: true },
 ];
 
-function FooterLink({ label, href, external }: { label: string; href: string; external?: boolean }) {
+function FooterLink({ label, href, external, to }: { label: string; href: string; external?: boolean; to?: string }) {
   const [hover, setHover] = useState(false);
   return (
     <a
       href={href}
       target={external ? "_blank" : undefined}
       rel={external ? "noopener noreferrer" : undefined}
+      onClick={to ? (e) => { e.preventDefault(); navigate(to); } : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{ color: hover ? "#efe9da" : "#6f6a5d", textDecoration: "none" }}
@@ -161,7 +165,7 @@ export default function FooterCta() {
           }}
         >
           {footerLinks.map((l) => (
-            <FooterLink key={l.label} label={l.label} href={l.href} external={l.external} />
+            <FooterLink key={l.label} label={l.label} href={l.href} external={l.external} to={l.to} />
           ))}
         </div>
         <div

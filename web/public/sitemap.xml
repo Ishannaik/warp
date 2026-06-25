@@ -20,4 +20,19 @@
     <lastmod>2026-06-19</lastmod>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://warp.ishannaik.com/brand</loc>
+    <lastmod>2026-06-20</lastmod>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://warp.ishannaik.com/terms</loc>
+    <lastmod>2026-06-20</lastmod>
+    <changefreq>yearly</changefreq>
+  </url>
+  <url>
+    <loc>https://warp.ishannaik.com/privacy</loc>
+    <lastmod>2026-06-20</lastmod>
+    <changefreq>yearly</changefreq>
+  </url>
 </urlset>
