@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { navigate } from "../router";
+import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
 import "./theory.css";
 import WebRtcLogo from "./WebRtcLogo";
@@ -124,18 +125,7 @@ function Chrome() {
             color: "#efe9da",
           }}
         >
-          <span
-            style={{
-              width: "26px",
-              height: "26px",
-              background: "var(--acc)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <span style={{ width: "9px", height: "9px", background: "#121110" }} />
-          </span>
+          <WarpLogo size={26} />
           <span
             style={{
               fontFamily: DISPLAY,

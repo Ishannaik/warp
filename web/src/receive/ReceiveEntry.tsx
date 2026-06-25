@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { navigate } from "../router";
+import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
 
 /**
@@ -79,18 +80,7 @@ export default function ReceiveEntry() {
           }}
           style={{ display: "flex", alignItems: "center", gap: "11px", textDecoration: "none", color: "#efe9da" }}
         >
-          <div
-            style={{
-              width: "24px",
-              height: "24px",
-              background: "var(--acc)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <div style={{ width: "8px", height: "8px", background: "#121110" }} />
-          </div>
+          <WarpLogo size={24} />
           <span style={{ fontFamily: DISPLAY, fontSize: "19px", fontWeight: 800, letterSpacing: "-.02em" }}>
             WARP
           </span>

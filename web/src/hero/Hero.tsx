@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Atmosphere from "./Atmosphere";
 import TransferWindow from "./TransferWindow";
 import { navigate } from "../router";
+import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
 
 /**
@@ -137,18 +138,7 @@ export default function Hero() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div
-            style={{
-              width: "26px",
-              height: "26px",
-              background: "var(--acc)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <div style={{ width: "9px", height: "9px", background: "#121110" }} />
-          </div>
+          <WarpLogo size={26} />
           <span
             style={{
               fontFamily: DISPLAY,

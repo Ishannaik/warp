@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
 import QRCode from "qrcode";
 import { navigate } from "../router";
+import WarpLogo from "../WarpLogo";
 import { useWrapTransfer, type Connection } from "../lib/wrap/useWrapTransfer";
 import { formatBytes } from "../lib/wrap/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
@@ -264,18 +265,7 @@ function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
         }}
         style={{ display: "flex", alignItems: "center", gap: "11px", textDecoration: "none", color: "#efe9da" }}
       >
-        <div
-          style={{
-            width: "24px",
-            height: "24px",
-            background: "var(--acc)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <div style={{ width: "8px", height: "8px", background: "#121110" }} />
-        </div>
+        <WarpLogo size={24} />
         <span style={{ fontFamily: DISPLAY, fontSize: "19px", fontWeight: 800, letterSpacing: "-.02em" }}>
           WARP
         </span>
