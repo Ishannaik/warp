@@ -7,7 +7,10 @@
  *   1. fan-out: sendFiles/sendText hit every CONNECTED peer (and nobody else).
  *   2. stamping: every emitted item/offer is tagged with the peer it came from.
  *   3. routing: accept/decline/cancel reach the one peer that owns the work.
- *   4. lifecycle: peer-left closes + removes that peer and clears its offer.
+ *   4. lifecycle: peer-left KEEPS a peer whose data channel is still open
+ *      (signaling is only the handshake plane) and removes a dead one; a
+ *      transport death mid-batch is SALVAGED: unfinished send files re-staged
+ *      for the automatic re-offer, dead tray rows dropped, pending offer cleared.
  *   5. accept-strategy: a LARGE offer (>=256 MiB total or any single file) picks
  *      the disk-stream path (picker prompted, AcceptTarget passed to the peer); a
  *      SMALL offer stays in-memory (no picker, no target). A cancelled picker on
@@ -179,11 +182,47 @@ function cancel(id) {
 
 function peerLeft(peerId) {
   const peer = peersMap.get(peerId);
+  // Keep a peer whose channel is open: a signaling blip must not kill a live
+  // transfer. Only a dead peer is torn down here.
+  if (peer && !peer.isConnected) {
+    peer.close();
+    peersMap.delete(peerId);
+    if (incoming && incoming.peerId === peerId) incoming = null;
+  }
+}
+
+// ---- the hook's salvage logic (mid-session transport death), mirrored 1:1 -----
+
+const allFiles = [];
+let pendingFiles = null;
+
+function salvage(peerId) {
+  const peer = peersMap.get(peerId);
   if (peer) {
     peer.close();
     peersMap.delete(peerId);
   }
   if (incoming && incoming.peerId === peerId) incoming = null;
+
+  const unfinished = items.filter(
+    (t) =>
+      t.peerId === peerId &&
+      t.kind === "file" &&
+      t.status !== "done" &&
+      t.status !== "declined" &&
+      t.status !== "cancelled",
+  );
+  const pool = [...allFiles];
+  const files = [];
+  for (const t of unfinished) {
+    if (t.direction !== "send") continue;
+    const i = pool.findIndex((f) => f.name === t.name && f.size === t.size);
+    if (i !== -1) files.push(pool.splice(i, 1)[0]);
+  }
+  if (files.length) pendingFiles = files;
+
+  const gone = new Set(unfinished.map((t) => t.id));
+  items = items.filter((t) => !gone.has(t.id));
 }
 
 // ---- scenario -----------------------------------------------------------------
@@ -231,13 +270,35 @@ cancel("f1");
 assert(b.cancelled.length === 1 && b.cancelled[0] === "f1", "cancel routes to the item's owning peer");
 assert(a.cancelled.length === 0 && c.cancelled.length === 0, "cancel does not touch unrelated peers");
 
-// 4. Lifecycle: a pending offer from a peer that leaves is cleared, peer closed+removed.
+// 4. Lifecycle: peer-left keeps a LIVE peer (open channel) and removes a dead one.
 a._emit("incoming-offer", { batchId: "btA2", items: [] });
 assert(incoming && incoming.peerId === a.remoteId, "second offer from A is pending");
-peerLeft(a.remoteId);
-assert(incoming === null, "peer-left clears a pending offer from that peer");
-assert(a.closed === true, "peer-left closes the departing peer");
-assert(!peersMap.has(a.remoteId), "peer-left removes the departing peer from the map");
+peerLeft(a.remoteId); // A's channel is still open -> signaling blip, keep it
+assert(peersMap.has(a.remoteId) && a.closed === false, "peer-left KEEPS a peer with a live channel");
+assert(incoming && incoming.peerId === a.remoteId, "a live peer's pending offer survives peer-left");
+peerLeft(c.remoteId); // C never connected -> dead, remove it
+assert(c.closed === true && !peersMap.has(c.remoteId), "peer-left removes a peer without a live channel");
+
+// 4b. Salvage: A's transport dies mid-batch -> peer torn down, unfinished send
+//     files re-staged for the automatic re-offer, dead rows dropped, offer cleared.
+allFiles.push({ name: "x.bin", size: 5 }, { name: "y.bin", size: 7 });
+items.push(
+  { id: "s-done", peerId: a.remoteId, kind: "file", direction: "send", status: "done", name: "y.bin", size: 7 },
+  { id: "s-half", peerId: a.remoteId, kind: "file", direction: "send", status: "transferring", name: "x.bin", size: 5 },
+  { id: "r-half", peerId: a.remoteId, kind: "file", direction: "receive", status: "transferring", name: "z.bin", size: 9 },
+);
+salvage(a.remoteId);
+assert(a.closed === true && !peersMap.has(a.remoteId), "salvage closes + removes the dead peer");
+assert(incoming === null, "salvage clears a pending offer from the dead peer");
+assert(
+  pendingFiles && pendingFiles.length === 1 && pendingFiles[0].name === "x.bin",
+  "salvage re-stages ONLY unfinished send files (matched by name+size)",
+);
+assert(items.some((t) => t.id === "s-done"), "salvage keeps completed rows");
+assert(
+  !items.some((t) => t.id === "s-half") && !items.some((t) => t.id === "r-half"),
+  "salvage drops unfinished rows (the automatic re-offer recreates them)",
+);
 
 // 5. Accept-strategy: large vs small offers choose disk vs memory. ---------------
 const MB = 1024 * 1024;

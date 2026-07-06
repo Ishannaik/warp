@@ -17,3 +17,6 @@ build/
 *.log
 .DS_Store
 Thumbs.db
+
+bash.exe.stackdump
+*.tsbuildinfo

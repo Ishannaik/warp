@@ -59,14 +59,31 @@ const ICE_SERVERS: RTCIceServer[] = [
  *  - READ_BLOCK: how much of the file we pull into memory per blob.arrayBuffer()
  *    read, then slice into TARGET_SEND_CHUNK sends — one await per ~4 MiB instead
  *    of one per 16 KiB.
- *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. Raised to 16 MiB so
- *    the pump keeps the SCTP send buffer full between drains without ballooning
- *    memory. Resume happens on `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
+ *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. MUST sit well below
+ *    Chrome's hard 16 MiB SCTP send-buffer cap: bufferedAmount can never
+ *    exceed that cap (send() throws first), so a 16 MiB high-water mark meant
+ *    the backpressure branch NEVER ran and every large transfer deterministically
+ *    died ~⅓ in with a mid-send exception once the file outpaced the link.
+ *    8 MiB keeps the pipe full while leaving real headroom. Resume happens on
+ *    `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
  */
 const TARGET_SEND_CHUNK = 256 * 1024;
 const MIN_SEND_CHUNK = 16 * 1024;
 const READ_BLOCK = 4 * 1024 * 1024;
-const SEND_HIGH_WATER = 16 * 1024 * 1024;
+const SEND_HIGH_WATER = 8 * 1024 * 1024;
+
+/**
+ * Mid-session transport recovery. A `disconnected`/`failed` connectionState is
+ * NOT terminal: Wi-Fi power-save, a locked phone screen, or a network flap can
+ * drop ICE while the SCTP channel object survives. The initiator ICE-restarts
+ * (up to MAX_ICE_RESTARTS, re-checking every RESTART_CHECK_MS); the send pump
+ * simply stalls on backpressure meanwhile and resumes byte-exact when the
+ * transport comes back — no data is lost (SCTP is reliable+ordered).
+ * DISCONNECT_GRACE_MS gives "disconnected" a chance to self-heal first.
+ */
+const MAX_ICE_RESTARTS = 3;
+const RESTART_CHECK_MS = 7000;
+const DISCONNECT_GRACE_MS = 3000;
 
 /**
  * Minimal File System Access API surface we use to stream large files straight
@@ -99,6 +116,10 @@ export type PeerErrorKind = "nat-failed" | "disconnected" | "channel-error";
 export interface PeerEvents {
   /** Data channel is open and ready to carry files. */
   connected: () => void;
+  /** Transport dropped mid-session; an ICE restart is being attempted. */
+  reconnecting: () => void;
+  /** Transport recovered after `reconnecting`; in-flight transfers resume. */
+  recovered: () => void;
   /** A transfer item was created or updated (send or receive, both directions). */
   transfer: (item: TransferItem) => void;
   /** A batch manifest arrived; the receiver shows an accept modal. The peer
@@ -158,6 +179,8 @@ export class WrapPeer {
 
   private listeners: { [K in keyof PeerEvents]: Set<Listener<K>> } = {
     connected: new Set(),
+    reconnecting: new Set(),
+    recovered: new Set(),
     transfer: new Set(),
     "incoming-offer": new Set(),
     "file-received": new Set(),
@@ -191,6 +214,12 @@ export class WrapPeer {
   /** File ids the local side asked to cancel, so we drop their remaining chunks. */
   private cancelledIds = new Set<string>();
 
+  /** True once the transport has EVER been up — separates a real NAT failure
+   *  (never connected) from a mid-session drop (recoverable). */
+  private everConnected = false;
+  private restartAttempts = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(signaling: SignalingClient, remoteId: string, initiator: boolean) {
     this.signaling = signaling;
     this.remoteId = remoteId;
@@ -214,6 +243,7 @@ export class WrapPeer {
   }
 
   private emit<K extends keyof PeerEvents>(event: K, ...args: Parameters<Listener<K>>): void {
+    if (this.disposed) return; // a closed peer must not resurrect UI state
     for (const fn of this.listeners[event]) {
       (fn as (...a: unknown[]) => void)(...args);
     }
@@ -231,14 +261,75 @@ export class WrapPeer {
     this.pc.addEventListener("connectionstatechange", () => {
       if (this.disposed) return; // ignore teardown after an explicit close
       const s = this.pc.connectionState;
-      if (s === "failed") {
-        // Terminal: couldn't establish (or keep) a direct route. Be honest.
-        this.emit("error", "nat-failed");
+      if (s === "connected") {
+        const wasDown = this.restartAttempts > 0 || this.restartTimer !== null;
+        this.clearRestartTimer();
+        this.everConnected = true;
+        this.restartAttempts = 0;
+        if (wasDown) this.emit("recovered");
+        return;
       }
-      // Note: "disconnected" is often transient (ICE can recover) and "closed" is
-      // normal teardown — neither is surfaced as a failure on its own. The channel
-      // stays usable across batches, so we never flip a "completed" latch here.
+      // "disconnected" is often transient — give ICE a grace window to self-heal
+      // before forcing a restart. "failed" gets an immediate restart attempt.
+      // Neither is terminal on its own anymore: a mid-transfer drop (locked
+      // phone, Wi-Fi flap) is recoverable, and calling it "nat-failed" was a lie.
+      if (s === "disconnected") this.scheduleRestart(DISCONNECT_GRACE_MS);
+      else if (s === "failed") this.scheduleRestart(0);
     });
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer !== null) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+  }
+
+  private scheduleRestart(delay: number): void {
+    if (this.disposed || this.restartTimer !== null) return;
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      void this.attemptRestart();
+    }, delay);
+  }
+
+  /**
+   * Try to bring a dropped transport back. Only the INITIATOR renegotiates
+   * (createOffer after restartIce) — the responder never offers, so there is no
+   * glare; it just waits here for the initiator's restart offer to arrive via
+   * the normal handleSignal path. Gives up after MAX_ICE_RESTARTS checks:
+   *   - never connected at all  -> honest "nat-failed" (a real NAT block)
+   *   - was connected, then died -> "disconnected" (the hook salvages + rebuilds)
+   */
+  private async attemptRestart(): Promise<void> {
+    if (this.disposed) return;
+    const s = this.pc.connectionState;
+    if (s === "connected" || s === "closed") return;
+
+    if (!this.everConnected) {
+      if (s === "failed") this.emit("error", "nat-failed");
+      return; // still "connecting"/"disconnected" pre-connect: let ICE keep trying
+    }
+    if (this.restartAttempts >= MAX_ICE_RESTARTS) {
+      this.emit("error", "disconnected");
+      return;
+    }
+    this.restartAttempts += 1;
+    this.emit("reconnecting");
+
+    if (this.initiator && this.remoteId) {
+      try {
+        this.pc.restartIce();
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
+        this.signaling.signal(this.remoteId, { kind: "offer", sdp: offer.sdp ?? "" });
+      } catch {
+        /* pc unusable; the re-check below surfaces the failure */
+      }
+    }
+    // Either we recover (the "connected" branch resets attempts) or this fires
+    // again and eventually gives up.
+    this.scheduleRestart(RESTART_CHECK_MS);
   }
 
   /** Initiator: build and send the offer once peer construction is done. */
@@ -288,6 +379,12 @@ export class WrapPeer {
     ch.addEventListener("open", () => this.emit("connected"));
     ch.addEventListener("error", () => {
       if (!this.disposed) this.emit("error", "channel-error");
+    });
+    // SCTP is gone for good once the channel closes (an ICE restart can't revive
+    // a closed channel). Surface it so the hook can salvage + rebuild the peer.
+    ch.addEventListener("close", () => {
+      this.clearRestartTimer();
+      if (!this.disposed) this.emit("error", "disconnected");
     });
     ch.addEventListener("message", (ev) => this.onMessage(ev.data));
   }
@@ -354,34 +451,45 @@ export class WrapPeer {
       return;
     }
 
-    // Accepted: stream each file in order.
-    for (let i = 0; i < files.length; i += 1) {
-      const id = ids[i];
-      const file = files[i];
-      const item = this.items.get(id);
-      if (!item) continue;
+    // Accepted: stream each file in order. A transport death mid-batch is NOT
+    // terminal for the app: mark the in-flight + unsent items "error" so the
+    // hook can salvage them into an automatic re-offer once the peer rebuilds.
+    try {
+      for (let i = 0; i < files.length; i += 1) {
+        const id = ids[i];
+        const file = files[i];
+        const item = this.items.get(id);
+        if (!item) continue;
 
-      if (this.cancelledIds.has(id)) {
-        this.cancelledIds.delete(id);
-        continue; // cancelled before it started; status already set by cancel()
+        if (this.cancelledIds.has(id)) {
+          this.cancelledIds.delete(id);
+          continue; // cancelled before it started; status already set by cancel()
+        }
+
+        item.status = "transferring";
+        this.emit("transfer", { ...item });
+
+        this.send(ch, { t: "file-begin", id });
+        const finishedClean = await this.streamFile(ch, file, item);
+        if (!finishedClean) {
+          // Cancelled mid-flight: tell the receiver and stop this file.
+          this.send(ch, { t: "cancel", id });
+          continue;
+        }
+        this.send(ch, { t: "file-end", id });
+
+        item.status = "done";
+        item.transferred = item.size;
+        item.progress = 100;
+        this.emit("transfer", { ...item });
       }
-
-      item.status = "transferring";
-      this.emit("transfer", { ...item });
-
-      this.send(ch, { t: "file-begin", id });
-      const finishedClean = await this.streamFile(ch, file, item);
-      if (!finishedClean) {
-        // Cancelled mid-flight: tell the receiver and stop this file.
-        this.send(ch, { t: "cancel", id });
-        continue;
+    } catch {
+      for (const id of ids) {
+        const it = this.items.get(id);
+        if (it && (it.status === "transferring" || it.status === "offered")) {
+          this.markStatus(id, "error");
+        }
       }
-      this.send(ch, { t: "file-end", id });
-
-      item.status = "done";
-      item.transferred = item.size;
-      item.progress = 100;
-      this.emit("transfer", { ...item });
     }
   }
 
@@ -553,9 +661,12 @@ export class WrapPeer {
           this.cancelledIds.delete(item.id);
           return false;
         }
-        // Backpressure: wait until the send buffer drains below the high-water mark.
-        if (ch.bufferedAmount > SEND_HIGH_WATER) {
+        // Backpressure: wait until the send buffer drains below the high-water
+        // mark. Counts the chunk we're ABOUT to send, so we can never push
+        // bufferedAmount toward the browser's hard cap and blow up send().
+        while (ch.bufferedAmount + sendChunk > SEND_HIGH_WATER) {
           await this.waitForDrain(ch);
+          if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
         }
         if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
 
@@ -575,13 +686,23 @@ export class WrapPeer {
     return true;
   }
 
+  /**
+   * Wait for the send buffer to drain. ALSO resolves on channel close/error:
+   * without that, a channel that dies mid-transfer never fires
+   * `bufferedamountlow` and the pump parks forever — the "frozen at 40% with no
+   * error" bug. On resolve the pump re-checks readyState and fails loudly.
+   */
   private waitForDrain(ch: RTCDataChannel): Promise<void> {
     return new Promise((resolve) => {
-      const onLow = () => {
-        ch.removeEventListener("bufferedamountlow", onLow);
+      const done = () => {
+        ch.removeEventListener("bufferedamountlow", done);
+        ch.removeEventListener("close", done);
+        ch.removeEventListener("error", done);
         resolve();
       };
-      ch.addEventListener("bufferedamountlow", onLow);
+      ch.addEventListener("bufferedamountlow", done);
+      ch.addEventListener("close", done);
+      ch.addEventListener("error", done);
     });
   }
 
@@ -755,6 +876,18 @@ export class WrapPeer {
     if (!inc || inc.item.id !== id) return;
     this.incoming = null;
 
+    // Belt-and-braces: a reliable+ordered channel shouldn't lose bytes, but if
+    // the count doesn't match the manifest, say so instead of faking "done".
+    if (inc.item.transferred < inc.item.size) {
+      if (inc.writable) {
+        void inc.writeChain
+          .then(() => (inc.writable?.abort ? inc.writable.abort() : inc.writable?.close()))
+          .catch(() => {});
+      }
+      this.markStatus(id, "error");
+      return;
+    }
+
     if (this.acceptTargets.has(inc.item.batchId)) {
       const name = inc.savedName ?? inc.item.name;
       // Close after all queued writes land, then mark done + emit.
@@ -811,6 +944,7 @@ export class WrapPeer {
 
   close(): void {
     this.disposed = true;
+    this.clearRestartTimer();
     try {
       this.channel?.close();
     } catch {

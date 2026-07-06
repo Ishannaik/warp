@@ -282,28 +282,24 @@ export function useNearby(): UseNearby {
       },
     );
 
-    // Re-announce whenever the socket (re)opens. SignalingClient attaches its
-    // own "open" handler that sends `join`; we add ours for `announce`.
-    const onOpen = () => announce(nameRef.current);
+    // (Re)announce + (re)attach the raw nearby listener on EVERY socket open —
+    // SignalingClient now auto-reconnects after a drop, and each reconnect is a
+    // brand-new WebSocket, so per-socket listeners must be re-attached and our
+    // presence re-announced (the server mints a fresh peerId per announce).
+    const offOpen = sig.on("open", () => {
+      detachNearby?.();
+      detachNearby = null;
+      attachNearbyListener();
+      announce(nameRef.current);
+    });
 
     // Open the socket (no room -> server mints a throwaway room we ignore).
     sig.connect();
 
-    // The ws is created synchronously in connect(); attach listeners now, and
-    // retry once on the next tick in case of any timing surprise.
-    const wsNow = (sig as unknown as SignalingInternals).ws;
-    if (wsNow) {
-      wsNow.addEventListener("open", onOpen);
-      attachNearbyListener();
-      // If it's already open (reconnected client), announce immediately.
-      if (wsNow.readyState === WebSocket.OPEN) announce(nameRef.current);
-    }
-
     return () => {
       offSignal();
+      offOpen();
       detachNearby?.();
-      const ws = (sig as unknown as SignalingInternals).ws;
-      ws?.removeEventListener("open", onOpen);
       for (const p of peers.values()) p.close();
       peers.clear();
       sig.close();

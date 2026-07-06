@@ -45,7 +45,10 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const connected = status === "connected";
+  // "reconnecting" keeps the session view up (with a banner) instead of
+  // bouncing the user back to a pre-connect step — transfers auto-resume.
+  const reconnecting = status === "reconnecting";
+  const connected = status === "connected" || reconnecting;
 
   // Drive the visible pre-connect step off the hook status + role. Once
   // "connected", we render the session view instead of a step.
@@ -141,6 +144,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
         .wrap-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
         .wrap-cta:hover{filter:brightness(1.08)}
         .wrap-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
       `}</style>
 
       <TopBar
@@ -161,31 +165,67 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
           {error ? (
             <ErrorPanel message={error.message} onRetry={wrap.retry} isMobile={isMobile} />
           ) : showSession ? (
-            <SessionView
-              peerLabel={peerLabel}
-              connections={connections}
-              items={items}
-              onSendFiles={wrap.sendFiles}
-              onSendText={wrap.sendText}
-              onCancel={wrap.cancel}
-              onDownloadOne={wrap.downloadOne}
-              onDownloadAll={wrap.downloadAll}
-              isMobile={isMobile}
-              heading={mode === "receive" ? "Connected to sender" : "Connected"}
-              // Sender only: the staged queue stays editable until they hit Send.
-              // The receiver has no pre-queue, so these stay undefined.
-              pending={mode === "send" ? queue : undefined}
-              onAddFiles={mode === "send" ? addFiles : undefined}
-              onRemovePending={mode === "send" ? removeFile : undefined}
-              onSendPending={
-                mode === "send"
-                  ? () => {
-                      void wrap.sendFiles(queue.map((q) => q.file));
-                      setQueue([]);
-                    }
-                  : undefined
-              }
-            />
+            <>
+              {reconnecting && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    marginBottom: "14px",
+                    padding: "10px 14px",
+                    border: "1px solid rgba(239,106,61,.45)",
+                    background: "rgba(239,106,61,.08)",
+                    fontFamily: MONO,
+                    fontSize: "12px",
+                    letterSpacing: ".06em",
+                    color: "var(--amb)",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: "var(--amb)",
+                      animation: "pulse 1.2s ease-in-out infinite",
+                    }}
+                  />
+                  CONNECTION DROPPED — RECONNECTING… TRANSFERS RESUME AUTOMATICALLY
+                </div>
+              )}
+              <SessionView
+                peerLabel={peerLabel}
+                connections={connections}
+                items={items}
+                onSendFiles={wrap.sendFiles}
+                onSendText={wrap.sendText}
+                onCancel={wrap.cancel}
+                onDownloadOne={wrap.downloadOne}
+                onDownloadAll={wrap.downloadAll}
+                isMobile={isMobile}
+                heading={
+                  reconnecting
+                    ? "Reconnecting…"
+                    : mode === "receive"
+                      ? "Connected to sender"
+                      : "Connected"
+                }
+                // Sender only: the staged queue stays editable until they hit Send.
+                // The receiver has no pre-queue, so these stay undefined.
+                pending={mode === "send" ? queue : undefined}
+                onAddFiles={mode === "send" ? addFiles : undefined}
+                onRemovePending={mode === "send" ? removeFile : undefined}
+                onSendPending={
+                  mode === "send"
+                    ? () => {
+                        void wrap.sendFiles(queue.map((q) => q.file));
+                        setQueue([]);
+                      }
+                    : undefined
+                }
+              />
+            </>
           ) : showPair ? (
             <PairStep
               mode={mode}

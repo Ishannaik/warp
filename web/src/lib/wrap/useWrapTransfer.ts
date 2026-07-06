@@ -68,6 +68,7 @@ export type WrapStatus =
   | "connecting" // socket opening / joining room
   | "waiting" // in a room, waiting for the other side
   | "connected" // at least one data channel open — both peers can keep sending
+  | "reconnecting" // transport dropped mid-session; recovery in progress
   | "error";
 
 /** A pending inbound batch manifest awaiting the user's accept/decline. */
@@ -138,12 +139,16 @@ export interface UseWrapTransfer {
 }
 
 const ERROR_MESSAGES: Record<WrapError["kind"], string> = {
-  "nat-failed": "Couldn't punch through the network. One side may be on a restrictive NAT.",
-  disconnected: "The peer disconnected before the transfer finished.",
+  "nat-failed": "Couldn't open a direct path between the devices. One side may be on a restrictive network.",
+  disconnected:
+    "The connection dropped and couldn't be restored. Retry to reconnect — unfinished files will be offered again.",
   "channel-error": "The data channel hit an error.",
   signaling: "Lost contact with the signaling server.",
   "no-files": "Add at least one file before opening a channel.",
 };
+
+/** How long "reconnecting" may last before we surface an honest failure. */
+const RECONNECT_WATCHDOG_MS = 25_000;
 
 /** Short, stable label for a remote device id. */
 function labelFor(peerId: string): string {
@@ -179,6 +184,18 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   const peersRef = useRef<Map<string, WrapPeer>>(new Map());
   /** Files staged by the sender to offer each peer the moment its channel opens. */
   const pendingFilesRef = useRef<File[] | null>(null);
+  /** Every File handed to sendFiles this session — the pool salvage draws on to
+   *  rebuild a re-offer after a dropped connection (matched by name+size). */
+  const allFilesRef = useRef<File[]>([]);
+  /** Ref mirrors so long-lived peer event listeners never read stale state. */
+  const itemsRef = useRef<TransferItem[]>([]);
+  const peersListRef = useRef<string[]>([]);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  useEffect(() => {
+    peersListRef.current = peers;
+  }, [peers]);
 
   const shareUrl = useMemo(
     () => (code ? `${window.location.origin}/r/${code}` : null),
@@ -212,18 +229,46 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     );
   }, []);
 
+  /** Every peer whose data channel is currently open. */
+  const connectedPeers = useCallback((): WrapPeer[] => {
+    return Array.from(peersRef.current.values()).filter((p) => p.isConnected);
+  }, []);
+
+  /** Salvage-and-rebuild for a dead peer; assigned below (breaks the
+   *  bindPeer <-> salvagePeer <-> addInitiator callback cycle). */
+  const salvageRef = useRef<(peerId: string) => void>(() => {});
+  /** Late-bound self-reference so connect's own handlers can re-connect. */
+  const connectRef = useRef<(room?: string) => void>(() => {});
+
   /** Wire one per-remote peer's events into hook state, stamping its peerId. */
   const bindPeer = useCallback(
     (peerId: string, peer: WrapPeer) => {
       peer.on("connected", () => {
-        // Any open channel means the session is live.
-        setStatus((s) => (s === "error" ? s : "connected"));
+        // Any open channel means the session is live — even from a terminal
+        // error screen (a device coming back late self-heals the session).
+        setError(null);
+        setStatus("connected");
         refreshConnections();
         // Sender auto-offers any staged files to THIS peer as it comes up.
+        // A failed offer is NOT terminal: the files stay staged for the next
+        // channel (salvage/reconnect re-offers them).
         const files = pendingFilesRef.current;
         if (files && files.length) {
-          peer.offerFiles(files).catch(() => fail("channel-error"));
+          peer.offerFiles(files).catch(() => {});
         }
+      });
+
+      // Transport wobble: show "reconnecting" only when no channel is left
+      // carrying bytes; flip back the moment the transport recovers.
+      peer.on("reconnecting", () => {
+        if (!connectedPeers().length) {
+          setStatus((s) => (s === "connected" ? "reconnecting" : s));
+        }
+      });
+      peer.on("recovered", () => {
+        setError(null);
+        setStatus("connected");
+        refreshConnections();
       });
 
       // Both directions: an item was created or its progress changed. Stamp the
@@ -240,9 +285,18 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
 
-      peer.on("error", (kind) => fail(kind));
+      peer.on("error", (kind) => {
+        // A mid-session transport death is salvageable: rebuild the link and
+        // automatically re-offer whatever didn't finish. Only a genuine
+        // could-never-connect ("nat-failed") is terminal on the spot.
+        if (kind === "disconnected" || kind === "channel-error") {
+          salvageRef.current(peerId);
+          return;
+        }
+        fail(kind);
+      });
     },
-    [fail, upsertItem, refreshConnections],
+    [fail, upsertItem, refreshConnections, connectedPeers],
   );
 
   /** Create + register an initiator peer for an existing device and offer to it. */
@@ -291,8 +345,27 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
         setCode(room); // the server's real, joinable code — not a locally-minted one
         setPeers(existing);
         if (existing.length > 0) {
-          // We're the new device -> initiator to EVERY existing device.
-          for (const peerId of existing) addInitiator(sig, peerId);
+          // We're the new (or REJOINING) device -> initiator to every existing
+          // device we don't already hold a LIVE channel to. A healthy channel
+          // that survived a signaling blip is kept untouched; a dead entry is
+          // replaced with a fresh handshake.
+          for (const peerId of existing) {
+            const cur = peersRef.current.get(peerId);
+            if (cur && cur.isConnected) continue;
+            if (cur) {
+              cur.close();
+              peersRef.current.delete(peerId);
+            }
+            addInitiator(sig, peerId);
+          }
+          // Devices that vanished while we were away: prune their dead peers.
+          for (const [id, p] of peersRef.current) {
+            if (!existing.includes(id) && !p.isConnected) {
+              p.close();
+              peersRef.current.delete(id);
+            }
+          }
+          refreshConnections();
         } else {
           // Empty room: wait for someone to join.
           setStatus("waiting");
@@ -301,19 +374,24 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
       sig.on("peer-joined", (peerId) => {
         setPeers((p) => (p.includes(peerId) ? p : [...p, peerId]));
-        // We were here first for this device -> responder. It will send us the offer.
-        addResponder(sig, peerId);
+        // We were here first -> responder. The WrapPeer is created LAZILY when
+        // its first signal frame arrives (see the "signal" handler), so a device
+        // that joins but never handshakes doesn't leave a ghost entry.
       });
 
       sig.on("peer-left", (peerId) => {
         setPeers((p) => p.filter((x) => x !== peerId));
         const peer = peersRef.current.get(peerId);
-        if (peer) {
+        // KEEP a peer whose data channel is still open: signaling is only the
+        // handshake plane — bytes keep flowing without it (the old code killed
+        // healthy mid-transfer sessions here whenever a socket blipped). If the
+        // transport later dies too, the peer's own error event salvages it.
+        if (peer && !peer.isConnected) {
           peer.close();
           peersRef.current.delete(peerId);
+          // Clear a pending offer that came from the device that just left.
+          setIncoming((off) => (off && off.peerId === peerId ? null : off));
         }
-        // Clear a pending offer that came from the device that just left.
-        setIncoming((off) => (off && off.peerId === peerId ? null : off));
         refreshConnections();
       });
 
@@ -325,18 +403,27 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
       });
 
       sig.on("error", (err: string) => {
+        // Our own room evaporated while our socket was down (we were its only
+        // member). Sender with no live channels: mint a fresh room and keep
+        // going — the code/QR on screen simply updates.
+        if (err === "room-not-found" && mode === "send" && !connectedPeers().length) {
+          connectRef.current(undefined);
+          return;
+        }
         const map: Record<string, string> = {
           "room-not-found": "That room is no longer open — ask the sender for a fresh link.",
           "room-full": "That room is full (up to 8 devices).",
           "bad-room": "That room code looks invalid.",
+          "signaling-lost": "Lost contact with the signaling server — check your connection and retry.",
         };
         fail("signaling", map[err]);
       });
 
       sig.connect(roomCode);
     },
-    [addInitiator, addResponder, refreshConnections, fail],
+    [addInitiator, addResponder, refreshConnections, fail, mode, connectedPeers],
   );
+  connectRef.current = connect;
 
   const createRoom = useCallback(() => {
     // The server owns room codes. Connect with NO room so it creates one and
@@ -346,10 +433,73 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     connect(undefined);
   }, [connect]);
 
-  /** Every peer whose data channel is currently open. */
-  const connectedPeers = useCallback((): WrapPeer[] => {
-    return Array.from(peersRef.current.values()).filter((p) => p.isConnected);
-  }, []);
+  /**
+   * A peer's transport died for good (channel closed / restarts exhausted).
+   * Instead of a terminal error: tear that peer down, re-stage its unfinished
+   * outgoing files for an automatic re-offer, drop the dead tray rows, show
+   * "reconnecting" (bounded by the watchdog), and — if the device's socket is
+   * still in the room (only ICE died) — rebuild the link immediately.
+   */
+  const salvagePeer = useCallback(
+    (peerId: string) => {
+      const peer = peersRef.current.get(peerId);
+      if (peer) {
+        peer.close();
+        peersRef.current.delete(peerId);
+      }
+      setIncoming((off) => (off && off.peerId === peerId ? null : off));
+
+      const unfinished = itemsRef.current.filter(
+        (t) =>
+          t.peerId === peerId &&
+          t.kind === "file" &&
+          t.status !== "done" &&
+          t.status !== "declined" &&
+          t.status !== "cancelled",
+      );
+
+      // Sender side: put the Files behind unfinished sends back on the staging
+      // pad — the existing staged-files path auto-offers them to the next
+      // channel that opens (the same device coming back, in the 1-to-1 case).
+      // ponytail: files restart from byte 0 on re-offer; add offset resume if
+      // interrupted multi-GB transfers ever hurt. Matched by name+size.
+      const pool = [...allFilesRef.current];
+      const files: File[] = [];
+      for (const t of unfinished) {
+        if (t.direction !== "send") continue;
+        const i = pool.findIndex((f) => f.name === t.name && f.size === t.size);
+        if (i !== -1) files.push(pool.splice(i, 1)[0]);
+      }
+      if (files.length) {
+        pendingFilesRef.current = files;
+        // The device may ALREADY be back (a reload races: its new channel can
+        // open before the old one's death is detected). The staged-files offer
+        // in the `connected` handler has already fired in that case, so offer
+        // to every currently open channel right now as well (idempotent-ish:
+        // each offer is accept-gated on the receiving side).
+        for (const p of connectedPeers()) p.offerFiles(files).catch(() => {});
+      }
+
+      // Drop the dead rows — the automatic re-offer recreates them fresh.
+      const gone = new Set(unfinished.map((t) => t.id));
+      if (gone.size) setItems((prev) => prev.filter((t) => !gone.has(t.id)));
+      refreshConnections();
+
+      if (!connectedPeers().length) {
+        setStatus((s) => (s === "error" ? s : "reconnecting"));
+      }
+
+      // Device still in the room (its socket outlived the transport)? Rebuild
+      // now. Deterministic initiator — the lexicographically smaller id offers —
+      // so both sides don't offer at once; the other side responds lazily.
+      const sig = signalingRef.current;
+      if (sig && sig.selfId && peersListRef.current.includes(peerId) && sig.selfId < peerId) {
+        addInitiator(sig, peerId);
+      }
+    },
+    [refreshConnections, connectedPeers, addInitiator],
+  );
+  salvageRef.current = salvagePeer;
 
   const sendFiles = useCallback(
     async (files: File[]) => {
@@ -357,14 +507,18 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
         fail("no-files");
         return;
       }
+      // Remember every File this session so an interrupted transfer can be
+      // salvaged into an automatic re-offer after a reconnect.
+      allFilesRef.current.push(...files);
       const open = connectedPeers();
       if (open.length) {
         // Fan out: offer the same batch to every connected device. Each offer is
-        // an independent per-peer accept/stream.
+        // an independent per-peer accept/stream. If the channel dies under us,
+        // stage the files instead of failing — the reconnect path re-offers.
         try {
           await Promise.all(open.map((p) => p.offerFiles(files)));
         } catch {
-          fail("channel-error");
+          pendingFilesRef.current = files;
         }
       } else {
         // Nobody connected yet: stage for each peer's `connected` handler to offer.
@@ -503,7 +657,9 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   }, [items, fail]);
 
   const retry = useCallback(() => {
-    pendingFilesRef.current = null;
+    // NOTE: pendingFilesRef is deliberately KEPT — after a mid-transfer failure
+    // it holds the salvaged unfinished files, and retry's whole point is to
+    // reconnect and re-offer them automatically.
     if (mode === "receive" && joinCode) {
       setCode(joinCode);
       connect(joinCode);
@@ -513,6 +669,50 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
       createRoom();
     }
   }, [mode, joinCode, code, connect, createRoom]);
+
+  // Watchdog: "reconnecting" must not spin forever. If nothing comes back
+  // within the window, surface an honest, retryable failure. (A late recovery
+  // still self-heals: any channel opening clears the error.)
+  useEffect(() => {
+    if (status !== "reconnecting") return;
+    const t = setTimeout(() => fail("disconnected"), RECONNECT_WATCHDOG_MS);
+    return () => clearTimeout(t);
+  }, [status, fail]);
+
+  // Keep the screen awake while bytes are in flight — a phone locking its
+  // screen mid-transfer suspends the tab and kills the transport, which was
+  // the #1 way big transfers died at 40%. Best-effort (absent API = no-op);
+  // re-acquired when the tab becomes visible again (the OS releases it on hide).
+  const transferring = items.some((t) => t.status === "transferring");
+  useEffect(() => {
+    if (!transferring) return;
+    type WakeSentinel = { release: () => Promise<void> };
+    const nav = navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<WakeSentinel> };
+    };
+    if (!nav.wakeLock) return;
+    let sentinel: WakeSentinel | null = null;
+    let done = false;
+    const acquire = () => {
+      nav
+        .wakeLock!.request("screen")
+        .then((s) => {
+          if (done) void s.release().catch(() => {});
+          else sentinel = s;
+        })
+        .catch(() => {}); // denied (background tab / power saver) — best-effort
+    };
+    acquire();
+    const onVis = () => {
+      if (document.visibilityState === "visible") acquire();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      done = true;
+      document.removeEventListener("visibilitychange", onVis);
+      void sentinel?.release().catch(() => {});
+    };
+  }, [transferring]);
 
   // Receiver: auto-join the room from the URL on mount.
   useEffect(() => {
