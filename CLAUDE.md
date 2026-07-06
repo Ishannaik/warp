@@ -24,6 +24,8 @@ bg `#121110`, ink `#efe9da`, body `#a8a293`, muted `#6f6a5d`, accent `var(--acc)
 client→server: `{type:'join'}` (server mints the code) · `{type:'join',room}` · `{type:'signal',to,data}` · `{type:'ping'}` (keepalive).
 server→client: `{type:'joined',selfId,room,peers[]}` · `{type:'peer-joined'}` · `{type:'peer-left'}` · `{type:'signal',from,data}` · `{type:'error',error}`.
 
+- **`SEND_HIGH_WATER` (peer.ts) must stay well BELOW 16 MiB.** Chrome's SCTP send buffer hard-caps at 16 MiB and `bufferedAmount` can never exceed it — a ≥16 MiB high-water mark disables backpressure entirely and every large transfer dies mid-send (~40% of a 50 MB file). It's 8 MiB now; the check also counts the chunk about to be sent.
+- **Transfers must survive drops.** Signaling auto-reconnects + rejoins; ICE restarts (initiator-only); `peer-left` keeps a peer whose channel is still open; a dead peer is salvaged (unfinished send files auto re-offered on reconnect). Don't turn transient drops back into terminal errors.
 - **Never mint room codes on the client.** The server owns codes (6 chars, `^[A-HJ-KM-NP-Z2-9]{6}$`). The sender connects with NO room and uses `joined.room`. (A local `WRAP-…` code got rejected as `bad-room` and broke every transfer.)
 - **Keep the keepalive ping (every 8s).** Without it the DO hibernates after 10s idle and drops a waiting room before the peer joins. Don't remove it.
 
@@ -36,8 +38,9 @@ pnpm dev:server                       # wrangler dev on :8787
 pnpm --filter @warp/web build         # always lint + typecheck + build before deploy
 pnpm --filter @warp/server test       # signaling e2e
 
-# deploy (Cloudflare)
-cd web && wrangler pages deploy dist --project-name=wrap --branch=main --commit-dirty=true
+# deploy (Cloudflare) — a stale CLOUDFLARE_API_TOKEN in the env 403s; strip it so
+# wrangler uses the OAuth login (which auto-refreshes): prefix with `env -u CLOUDFLARE_API_TOKEN`
+cd web && env -u CLOUDFLARE_API_TOKEN wrangler pages deploy dist --project-name=wrap --branch=main --commit-dirty=true
 pnpm --filter @warp/server run deploy  # `run` avoids pnpm's `deploy` builtin
 ```
 
