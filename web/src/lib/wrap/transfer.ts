@@ -36,18 +36,31 @@ export interface OfferItem {
   mime: string;
   /** Small data-URL preview (image files only, best-effort). Omitted otherwise. */
   thumb?: string;
+  /** Stable per-file identity (name+size+mtime) so a re-offer after a drop is
+   *  recognized as the SAME file and the receiver can resume its partial. */
+  key?: string;
+  /** Random, unguessable token the sender mints per file and reuses on every
+   *  re-offer of that file. The receiver only auto-resumes a re-offer whose token
+   *  matches — peer-id-agnostic (survives a fresh selfId) and un-hijackable by
+   *  other devices in a mesh room. */
+  resumeToken?: string;
 }
 
 /** Control frames (JSON strings) sent over the data channel. */
 export type ControlMessage =
   /** Sender announces a batch manifest; receiver must accept before any bytes flow. */
   | { t: "offer"; batchId: string; items: OfferItem[] }
-  /** Receiver accepts a batch -> sender starts streaming. */
-  | { t: "accept"; batchId: string }
+  /** Receiver accepts a batch -> sender starts streaming. `resume` maps a file id
+   *  to the receiver's durably-written byte count for a resumed file (absent/0 =
+   *  fresh from byte 0). */
+  | { t: "accept"; batchId: string; resume?: Record<string, number> }
   /** Receiver declines a batch -> sender sends nothing, marks the batch declined. */
   | { t: "decline"; batchId: string }
-  /** Sent immediately before a file's binary chunks. */
-  | { t: "file-begin"; id: string }
+  /** Sent immediately before a file's binary chunks. `offset` echoes the byte the
+   *  sender will actually stream from (tus-style) so the receiver can verify its
+   *  partial lines up before appending — and detect a stale sender that ignored
+   *  the resume request and restarted at 0. */
+  | { t: "file-begin"; id: string; offset: number }
   /** Sent immediately after a file's binary chunks. */
   | { t: "file-end"; id: string }
   /** Either side cancels a file in flight (sender stops; receiver discards partial). */
@@ -65,6 +78,7 @@ export type ItemKind = "file" | "text";
 export type TransferStatus =
   | "offered" // announced, awaiting accept (send) / awaiting bytes (receive)
   | "transferring" // bytes in flight
+  | "reconnecting" // transport dropped mid-file; holding progress, will resume
   | "done" // fully transferred
   | "declined" // the receiver declined the batch
   | "cancelled" // cancelled mid-flight by either side
@@ -130,4 +144,23 @@ export function generateCode(): string {
 /** Stable id for a file or batch. */
 export function fileId(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+/**
+ * Stable per-file identity used to match a re-offer after a drop to the receiver's
+ * partial. name + size + mtime is enough to catch "the peer picked a different
+ * file"; the U+241F unit-separator glyph can't appear in a filename, so the fields
+ * can't bleed across the delimiter (e.g. name "a1"+size 1 vs name "a"+size 11).
+ */
+export function fileKey(f: { name: string; size: number; lastModified: number }): string {
+  return `${f.name}␟${f.size}␟${f.lastModified}`;
+}
+
+/**
+ * Random, unguessable token the SENDER mints per file and reuses on every re-offer
+ * of that file. The receiver auto-resumes a re-offer only when the token matches —
+ * so another device in a mesh room can't hijack a resume with a guessable key.
+ */
+export function newResumeToken(): string {
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
 }

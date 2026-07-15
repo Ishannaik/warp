@@ -469,7 +469,7 @@ export class WrapPeer {
         item.status = "transferring";
         this.emit("transfer", { ...item });
 
-        this.send(ch, { t: "file-begin", id });
+        this.send(ch, { t: "file-begin", id, offset: 0 });
         const finishedClean = await this.streamFile(ch, file, item);
         if (!finishedClean) {
           // Cancelled mid-flight: tell the receiver and stop this file.

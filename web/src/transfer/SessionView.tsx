@@ -88,6 +88,7 @@ function Thumb({ item, size = 40 }: { item: { thumb?: string; mime: string; kind
 const STATUS_COPY: Record<TransferItem["status"], string> = {
   offered: "WAITING",
   transferring: "MOVING",
+  reconnecting: "RESUMING",
   done: "DONE",
   declined: "DECLINED",
   cancelled: "CANCELLED",
