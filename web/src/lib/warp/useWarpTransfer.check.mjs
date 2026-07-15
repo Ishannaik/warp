@@ -41,6 +41,7 @@ class FakePeer {
     this.acceptTargets = [];
     this.declined = [];
     this.cancelled = [];
+    this.resumes = [];
     this.closed = false;
     this._listeners = {};
   }
@@ -57,9 +58,10 @@ class FakePeer {
   sendText(t) {
     this.texts.push(t);
   }
-  acceptOffer(b, target) {
+  acceptOffer(b, target, resume) {
     this.accepted.push(b);
     this.acceptTargets.push(target); // undefined => in-memory; object => disk-stream
+    this.resumes.push(resume); // per-file resume offsets (undefined => fresh)
   }
   declineOffer(b) {
     this.declined.push(b);
@@ -355,6 +357,95 @@ assert(g.accepted.length === 1, "cancelled picker still accepts the batch (in-me
 const tNoApi = await runAccept(h.remoteId, [{ id: "n1", name: "huge.zip", size: 800 * MB, mime: "application/zip" }], "none");
 assert(tNoApi === undefined, "large offer on a browser without the FS Access API accepts in-memory");
 assert(fsPickers.fileCalls === 0 && fsPickers.dirCalls === 0, "no picker is prompted when the FS Access API is absent");
+
+// 6. Auto-resume decision (Fable H3/H5/M1/M2), reproduced 1:1 from handleIncomingOffer.
+// The registry keeps a partial across a drop; a re-offer whose key+token match an
+// inactive entry auto-accepts with the durable offset and NO modal.
+const receiveReg = new Map();
+const cancelledKeys = new Set();
+
+function fakeSink(bytes) {
+  return { bytesWritten: bytes, async quiesce() {}, async abort() {} };
+}
+
+async function handleOffer(peerId, info) {
+  const keys = info.items.map((i) => i.key);
+  const dupKeys = new Set(keys).size !== keys.length;
+  const allResumable =
+    !dupKeys &&
+    info.items.length > 0 &&
+    info.items.every((it) => {
+      const e = it.key ? receiveReg.get(it.key) : undefined;
+      return !!e && !e.active && !!it.resumeToken && e.resumeToken === it.resumeToken && !cancelledKeys.has(it.key);
+    });
+  if (!allResumable) {
+    incoming = { ...info, peerId };
+    return;
+  }
+  const peer = peersMap.get(peerId);
+  if (!peer) return;
+  const resume = {};
+  let target;
+  for (const it of info.items) {
+    const e = receiveReg.get(it.key);
+    await e.sink.quiesce();
+    resume[it.id] = e.sink.bytesWritten;
+    if (!target) target = e.target;
+  }
+  peer.acceptOffer(info.batchId, target, resume);
+}
+
+const rp = new FakePeer("rrrrrrrr99", true);
+rp.isConnected = true;
+peersMap.set(rp.remoteId, rp);
+bind(rp.remoteId, rp);
+
+// A file "vid.mp4" was accepted; 6 of 10 bytes durably received; then the peer dropped
+// (entry kept, marked inactive — exactly what salvage does).
+receiveReg.set("vid.mp4|10|42", { key: "vid.mp4|10|42", size: 10, resumeToken: "tok-A", sink: fakeSink(6), active: false, target: undefined });
+
+// 6a. Re-offer with matching key+token -> AUTO-RESUME (no modal), offset = 6.
+incoming = null;
+await handleOffer(rp.remoteId, { batchId: "re1", items: [{ id: "n1", key: "vid.mp4|10|42", size: 10, resumeToken: "tok-A" }] });
+assert(incoming === null, "re-offer of a known file auto-resumes with NO accept modal");
+assert(rp.resumes.at(-1) && rp.resumes.at(-1)["n1"] === 6, "auto-resume reports the durable offset (6)");
+
+// 6b. Re-offer with a MISMATCHED token -> modal (H5: no cross-peer hijack).
+incoming = null;
+rp.accepted.length = 0;
+await handleOffer(rp.remoteId, { batchId: "re2", items: [{ id: "n2", key: "vid.mp4|10|42", size: 10, resumeToken: "EVIL" }] });
+assert(incoming && incoming.batchId === "re2", "re-offer with a wrong resumeToken surfaces the modal, not auto-resume");
+assert(rp.accepted.length === 0, "mismatched-token re-offer is NOT auto-accepted");
+
+// 6c. A genuinely NEW key -> modal.
+incoming = null;
+await handleOffer(rp.remoteId, { batchId: "re3", items: [{ id: "n3", key: "fresh.bin|5|9", size: 5, resumeToken: "tok-Z" }] });
+assert(incoming && incoming.batchId === "re3", "a new (unknown) key surfaces the accept modal");
+
+// 6d. Cancelled key -> modal even if the entry lingers (M2).
+receiveReg.set("gone.bin|3|1", { key: "gone.bin|3|1", size: 3, resumeToken: "tok-C", sink: fakeSink(1), active: false, target: undefined });
+cancelledKeys.add("gone.bin|3|1");
+incoming = null;
+await handleOffer(rp.remoteId, { batchId: "re4", items: [{ id: "n4", key: "gone.bin|3|1", size: 3, resumeToken: "tok-C" }] });
+assert(incoming && incoming.batchId === "re4", "a cancelled key re-offered surfaces the modal, not an auto-resume");
+
+// 6e. Duplicate keys within one batch -> modal (M1: ambiguous, can't resume).
+receiveReg.set("dup|2|2", { key: "dup|2|2", size: 2, resumeToken: "tok-D", sink: fakeSink(1), active: false, target: undefined });
+incoming = null;
+await handleOffer(rp.remoteId, {
+  batchId: "re5",
+  items: [
+    { id: "d1", key: "dup|2|2", size: 2, resumeToken: "tok-D" },
+    { id: "d2", key: "dup|2|2", size: 2, resumeToken: "tok-D" },
+  ],
+});
+assert(incoming && incoming.batchId === "re5", "duplicate keys in one batch fall back to the modal (no resume)");
+
+// 6f. An ACTIVE entry (still being received) -> modal, not a second concurrent accept (H3).
+receiveReg.set("busy|9|9", { key: "busy|9|9", size: 9, resumeToken: "tok-E", sink: fakeSink(4), active: true, target: undefined });
+incoming = null;
+await handleOffer(rp.remoteId, { batchId: "re6", items: [{ id: "e1", key: "busy|9|9", size: 9, resumeToken: "tok-E" }] });
+assert(incoming && incoming.batchId === "re6", "a duplicate offer for an ACTIVE file is not double-accepted");
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

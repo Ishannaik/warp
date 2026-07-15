@@ -35,8 +35,31 @@ import {
   type FsDirHandle,
   type FsFileHandle,
   type PeerErrorKind,
+  type ReceiveHost,
 } from "./peer";
+import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
+
+/**
+ * One in-flight (or paused) incoming file's durable state, owned by the HOOK
+ * (not the peer) so it SURVIVES a peer rebuild on reconnect — the key to resume.
+ * Keyed by the file's stable `key`. `sink.bytesWritten` is the resume offset.
+ */
+interface RxEntry {
+  key: string;
+  size: number;
+  /** The sender's token; a re-offer must present the same one to auto-resume (H5). */
+  resumeToken: string;
+  sink: ReceiveSink;
+  /** Disk target for this file (absent = in-memory). */
+  target?: AcceptTarget;
+  /** True while a peer is actively receiving into it. A drop sets it false. */
+  active: boolean;
+  /** Which peer currently owns writes (H4): a chunk from a non-owner is dropped. */
+  ownerToken?: string;
+  /** On-disk name chosen (disk mode). */
+  savedName?: string;
+}
 
 /**
  * At/above this many bytes (256 MiB) — total batch OR any single file — we stream
@@ -155,6 +178,22 @@ function labelFor(peerId: string): string {
   return peerId.slice(0, 8);
 }
 
+/** De-dupe a filename within a folder target: "a.txt", "a (1).txt", … */
+function uniqueName(used: Set<string>, name: string): string {
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  let n = 1;
+  let candidate = `${stem} (${n})${ext}`;
+  while (used.has(candidate)) candidate = `${stem} (${(n += 1)})${ext}`;
+  used.add(candidate);
+  return candidate;
+}
+
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
 function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -187,6 +226,12 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** Every File handed to sendFiles this session — the pool salvage draws on to
    *  rebuild a re-offer after a dropped connection (matched by name+size). */
   const allFilesRef = useRef<File[]>([]);
+  /** Durable receive state keyed by file identity, surviving peer rebuilds (resume). */
+  const receiveRegRef = useRef<Map<string, RxEntry>>(new Map());
+  /** Keys the user explicitly cancelled — a re-offer of these must NOT auto-resume. */
+  const cancelledKeysRef = useRef<Set<string>>(new Set());
+  /** Receive item id -> file key, so cancel(id) can find & poison the right entry. */
+  const rxIdKeyRef = useRef<Map<string, string>>(new Map());
   /** Ref mirrors so long-lived peer event listeners never read stale state. */
   const itemsRef = useRef<TransferItem[]>([]);
   const peersListRef = useRef<string[]>([]);
@@ -240,6 +285,96 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** Late-bound self-reference so connect's own handlers can re-connect. */
   const connectRef = useRef<(room?: string) => void>(() => {});
 
+  /**
+   * A ReceiveHost bound to one peer, backed by the hook-owned registry. `begin`
+   * reuses a pre-created entry (so a resumed file keeps its partial); the peerId is
+   * the owner token so a zombie peer's late chunks are dropped (Fable H4).
+   */
+  const makeHost = useCallback((peerId: string): ReceiveHost => {
+    const idKey = new Map<string, string>();
+    const reg = receiveRegRef.current;
+    return {
+      begin(key, id, item, target) {
+        idKey.set(id, key);
+        rxIdKeyRef.current.set(id, key);
+        let e = reg.get(key);
+        if (!e) {
+          // No entry pre-created by accept() (safety) — default to in-memory.
+          e = { key, size: item.size, resumeToken: "", sink: memorySink(item.mime), target, active: false };
+          reg.set(key, e);
+        }
+        e.active = true;
+        e.ownerToken = peerId;
+        return e.sink;
+      },
+      get(id) {
+        const key = idKey.get(id);
+        const e = key ? reg.get(key) : undefined;
+        if (!e || e.ownerToken !== peerId) return undefined; // H4: only the owner writes
+        return e.sink;
+      },
+      savedName(id) {
+        const key = idKey.get(id);
+        return key ? reg.get(key)?.savedName : undefined;
+      },
+      end(id) {
+        const key = idKey.get(id);
+        idKey.delete(id);
+        if (key) reg.delete(key); // completion or cancel -> drop the durable entry
+      },
+    };
+  }, []);
+
+  /**
+   * Decide what to do with an inbound offer (Fable H3/H5/M1/M2): if EVERY item is a
+   * known in-progress file — its key is in the registry, not active, token matches,
+   * and it wasn't cancelled — auto-accept it with each file's durable resume offset
+   * and NO modal. Otherwise surface the accept modal. Duplicate keys in one batch
+   * disable resume (force the modal).
+   */
+  const handleIncomingOffer = useCallback(
+    (peerId: string, info: { batchId: string; items: OfferItem[] }) => {
+      const reg = receiveRegRef.current;
+      const keys = info.items.map((i) => i.key);
+      const dupKeys = new Set(keys).size !== keys.length;
+      const allResumable =
+        !dupKeys &&
+        info.items.length > 0 &&
+        info.items.every((it) => {
+          const e = it.key ? reg.get(it.key) : undefined;
+          return (
+            !!e &&
+            !e.active &&
+            !!it.resumeToken &&
+            e.resumeToken === it.resumeToken &&
+            !cancelledKeysRef.current.has(it.key!)
+          );
+        });
+
+      if (!allResumable) {
+        setIncoming({ ...info, peerId });
+        return;
+      }
+
+      // Auto-resume: report each file's DURABLE byte count as its offset (H1).
+      const peer = peersRef.current.get(peerId);
+      if (!peer) return;
+      void (async () => {
+        const resume: Record<string, number> = {};
+        let target: AcceptTarget | undefined;
+        for (const it of info.items) {
+          const e = reg.get(it.key!)!;
+          await e.sink.quiesce();
+          resume[it.id] = e.sink.bytesWritten;
+          rxIdKeyRef.current.set(it.id, it.key!);
+          if (!target) target = e.target;
+        }
+        peer.acceptOffer(info.batchId, target, resume);
+      })();
+    },
+    [],
+  );
+
   /** Wire one per-remote peer's events into hook state, stamping its peerId. */
   const bindPeer = useCallback(
     (peerId: string, peer: WarpPeer) => {
@@ -275,8 +410,9 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       // device it belongs to so the UI can tag tray rows / route cancels.
       peer.on("transfer", (item) => upsertItem({ ...item, peerId }));
 
-      // A whole manifest arrived from THIS peer — surface the accept modal.
-      peer.on("incoming-offer", (info) => setIncoming({ ...info, peerId }));
+      // A whole manifest arrived from THIS peer — auto-resume a known in-progress
+      // file (no modal), else surface the accept modal.
+      peer.on("incoming-offer", (info) => handleIncomingOffer(peerId, info));
 
       // file-received / text-received are already covered by the `transfer`
       // emit (which stamps peerId), so nothing extra to do here.
@@ -296,33 +432,33 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         fail(kind);
       });
     },
-    [fail, upsertItem, refreshConnections, connectedPeers],
+    [fail, upsertItem, refreshConnections, connectedPeers, handleIncomingOffer],
   );
 
   /** Create + register an initiator peer for an existing device and offer to it. */
   const addInitiator = useCallback(
     (sig: SignalingClient, peerId: string) => {
       if (peersRef.current.has(peerId)) return;
-      const peer = new WarpPeer(sig, peerId, true);
+      const peer = new WarpPeer(sig, peerId, true, makeHost(peerId));
       peersRef.current.set(peerId, peer);
       bindPeer(peerId, peer);
       refreshConnections();
       peer.start().catch(() => fail("channel-error"));
     },
-    [bindPeer, refreshConnections, fail],
+    [bindPeer, refreshConnections, fail, makeHost],
   );
 
   /** Create + register a responder peer that waits for `peerId`'s incoming offer. */
   const addResponder = useCallback(
     (sig: SignalingClient, peerId: string) => {
       if (peersRef.current.has(peerId)) return peersRef.current.get(peerId)!;
-      const peer = new WarpPeer(sig, peerId, false);
+      const peer = new WarpPeer(sig, peerId, false, makeHost(peerId));
       peersRef.current.set(peerId, peer);
       bindPeer(peerId, peer);
       refreshConnections();
       return peer;
     },
-    [bindPeer, refreshConnections],
+    [bindPeer, refreshConnections, makeHost],
   );
 
   /** Establish the signaling socket and the join/role dance for a full mesh. */
@@ -448,6 +584,13 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         peersRef.current.delete(peerId);
       }
       setIncoming((off) => (off && off.peerId === peerId ? null : off));
+
+      // KEEP the durable receive partials owned by the dead peer, just mark them
+      // inactive so the re-offer after reconnect auto-resumes them (don't close the
+      // disk writable — that's the whole point of hoisting it into the hook).
+      for (const e of receiveRegRef.current.values()) {
+        if (e.ownerToken === peerId) e.active = false;
+      }
 
       const unfinished = itemsRef.current.filter(
         (t) =>
@@ -578,6 +721,39 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       }
     }
 
+    // Build a durable registry entry + sink per file BEFORE accepting, so the
+    // received bytes live in a place the HOOK owns and thus survive a peer rebuild
+    // on reconnect (the key to resume). Disk => stream to the chosen target (names
+    // de-duped within a folder); otherwise accumulate in memory.
+    const usedNames = new Set<string>();
+    for (const it of off.items) {
+      if (!it.key) continue;
+      let sink: ReceiveSink;
+      let savedName: string | undefined;
+      if (target && "dirHandle" in target) {
+        savedName = uniqueName(usedNames, it.name);
+        const dir = target.dirHandle;
+        const name = savedName;
+        sink = diskSink(async () => (await dir.getFileHandle(name, { create: true })).createWritable());
+      } else if (target && "fileHandle" in target) {
+        savedName = target.fileHandle.name || it.name;
+        const fh = target.fileHandle;
+        sink = diskSink(async () => fh.createWritable());
+      } else {
+        sink = memorySink(it.mime);
+      }
+      receiveRegRef.current.set(it.key, {
+        key: it.key,
+        size: it.size,
+        resumeToken: it.resumeToken ?? "",
+        sink,
+        target,
+        active: false,
+        savedName,
+      });
+      rxIdKeyRef.current.set(it.id, it.key);
+    }
+
     // Clear the modal only after the picker settles, so a cancelled picker can
     // still fall through to an in-memory accept of the same offer.
     setIncoming(null);
@@ -593,6 +769,17 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
 
   const cancel = useCallback(
     (id: string) => {
+      // Remember the cancelled file's key + drop its durable entry, so a later
+      // re-offer of that key surfaces the modal instead of auto-resurrecting a file
+      // the user explicitly killed (Fable M2).
+      const key = rxIdKeyRef.current.get(id);
+      if (key) {
+        cancelledKeysRef.current.add(key);
+        const e = receiveRegRef.current.get(key);
+        if (e) void e.sink.abort();
+        receiveRegRef.current.delete(key);
+      }
+
       // Route to the peer that owns the item; the item carries its peerId.
       const item = items.find((t) => t.id === id);
       const peer = item?.peerId ? peersRef.current.get(item.peerId) : undefined;
