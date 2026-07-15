@@ -43,7 +43,7 @@ export interface ReceiveSink {
 }
 
 /** In-memory accumulator. bytesWritten is exact immediately (no async write). */
-export function memorySink(): ReceiveSink {
+export function memorySink(mime?: string): ReceiveSink {
   const chunks: ArrayBuffer[] = [];
   let bytes = 0;
   return {
@@ -61,7 +61,7 @@ export function memorySink(): ReceiveSink {
       /* memory writes are synchronous */
     },
     async finalize() {
-      return new Blob(chunks);
+      return new Blob(chunks, mime ? { type: mime } : undefined);
     },
     async abort() {
       chunks.length = 0;

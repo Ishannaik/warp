@@ -38,6 +38,7 @@ import {
   type OfferItem,
   type TransferItem,
 } from "./transfer";
+import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -159,14 +160,86 @@ interface OutgoingBatch {
 /** In-flight receive bookkeeping for the single active incoming file. */
 interface IncomingState {
   item: TransferItem;
-  /** In-memory accumulator (in-memory mode). Empty when streaming to disk. */
-  chunks: ArrayBuffer[];
-  /** Open writable when streaming straight to disk; undefined for in-memory. */
-  writable?: FsWritable;
-  /** Chain of pending disk writes so chunks land in order; resolves before close. */
-  writeChain: Promise<void>;
-  /** The on-disk name actually used (after de-duping within a folder). */
-  savedName?: string;
+  /** Durable-write sink (memory or disk), owned by the ReceiveHost. The sink's
+   *  bytesWritten is the single source of truth for how many bytes are durable —
+   *  used both for progress and as the resume offset the receiver reports. */
+  sink: ReceiveSink;
+}
+
+/**
+ * Where an in-flight file's bytes go. WrapPeer is sink-agnostic: it asks the host
+ * to `begin` a sink for a file and reads/writes through it, so the OWNER of the
+ * bytes can live OUTSIDE the peer (the hook, in a registry keyed by file identity)
+ * and survive a peer rebuild on a reconnect — the key to disk resume.
+ *
+ * When no host is injected, WrapPeer uses DefaultReceiveHost (below), preserving
+ * the standalone memory/disk behaviour the check harness exercises.
+ */
+export interface ReceiveHost {
+  /** Start (or resume) receiving `id` (identity `key`); returns its sink. */
+  begin(key: string, id: string, item: TransferItem, target?: AcceptTarget): ReceiveSink;
+  /** The live sink for `id`, if any. */
+  get(id: string): ReceiveSink | undefined;
+  /** Disk mode: the on-disk name chosen (deduped); undefined for memory mode. */
+  savedName(id: string): string | undefined;
+  /** Done with `id` (completed or cancelled) — the host may drop its entry. */
+  end(id: string): void;
+}
+
+/**
+ * Default, peer-local host: one sink per file id, memory unless an AcceptTarget is
+ * supplied (then disk). Names are de-duped within a dir target. This is the
+ * behaviour the engine had before the registry refactor; the hook injects its own
+ * host to make receives survive reconnects.
+ */
+export class DefaultReceiveHost implements ReceiveHost {
+  private sinks = new Map<string, ReceiveSink>();
+  private names = new Map<string, string>();
+  private usedInDir = new Map<AcceptTarget, Set<string>>();
+
+  begin(_key: string, id: string, item: TransferItem, target?: AcceptTarget): ReceiveSink {
+    if (!target) {
+      const s = memorySink(item.mime);
+      this.sinks.set(id, s);
+      return s;
+    }
+    const saved =
+      "dirHandle" in target ? this.uniqueName(target, item.name) : target.fileHandle.name || item.name;
+    this.names.set(id, saved);
+    const s = diskSink(async () =>
+      "dirHandle" in target
+        ? await (await target.dirHandle.getFileHandle(saved, { create: true })).createWritable()
+        : await target.fileHandle.createWritable(),
+    );
+    this.sinks.set(id, s);
+    return s;
+  }
+  get(id: string): ReceiveSink | undefined {
+    return this.sinks.get(id);
+  }
+  savedName(id: string): string | undefined {
+    return this.names.get(id);
+  }
+  end(id: string): void {
+    this.sinks.delete(id);
+    this.names.delete(id);
+  }
+  private uniqueName(target: AcceptTarget, name: string): string {
+    const used = this.usedInDir.get(target) ?? new Set<string>();
+    this.usedInDir.set(target, used);
+    if (!used.has(name)) {
+      used.add(name);
+      return name;
+    }
+    const dot = name.lastIndexOf(".");
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    let n = 1;
+    let candidate = `${stem} (${n})${ext}`;
+    while (used.has(candidate)) candidate = `${stem} (${(n += 1)})${ext}`;
+    used.add(candidate);
+    return candidate;
+  }
 }
 
 export class WrapPeer {
@@ -208,8 +281,11 @@ export class WrapPeer {
   /** Disk target per accepted batch (when streaming to disk). Absent => in-memory. */
   private acceptTargets = new Map<string, AcceptTarget>();
 
-  /** Names already used within a dir target, to de-dupe across the batch. */
-  private usedNames = new Map<string, Set<string>>();
+  /** Identity key per accepted receive id (from the offer manifest), for resume matching. */
+  private incomingKeys = new Map<string, string>();
+
+  /** Where in-flight received bytes go. Injected so the hook can own state across rebuilds. */
+  private readonly host: ReceiveHost;
 
   /** File ids the local side asked to cancel, so we drop their remaining chunks. */
   private cancelledIds = new Set<string>();
@@ -220,10 +296,11 @@ export class WrapPeer {
   private restartAttempts = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(signaling: SignalingClient, remoteId: string, initiator: boolean) {
+  constructor(signaling: SignalingClient, remoteId: string, initiator: boolean, host?: ReceiveHost) {
     this.signaling = signaling;
     this.remoteId = remoteId;
     this.initiator = initiator;
+    this.host = host ?? new DefaultReceiveHost();
     this.pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     this.wirePeerConnection();
 
@@ -534,13 +611,13 @@ export class WrapPeer {
     if (!items) return;
     this.pendingOffers.delete(batchId);
     this.acceptedBatches.add(batchId);
-    if (target) {
-      this.acceptTargets.set(batchId, target);
-      this.usedNames.set(batchId, new Set());
-    }
+    if (target) this.acceptTargets.set(batchId, target);
 
     // Create receive-items in the tray (offered -> they'll go transferring/done).
     for (const oi of items) {
+      // Remember the identity key so a later re-offer of the same file can resume
+      // its partial. Fall back to name:size if a stale sender omitted `key`.
+      this.incomingKeys.set(oi.id, oi.key ?? `${oi.name}:${oi.size}`);
       const item: TransferItem = {
         id: oi.id,
         batchId,
@@ -605,15 +682,12 @@ export class WrapPeer {
     this.markStatus(id, "cancelled");
 
     // If we're the receiver and this is the active incoming file, drop it and
-    // abort/close any open disk writable so a partial file isn't left dangling.
+    // abort the sink so a partial file isn't left dangling on disk.
     if (this.incoming && this.incoming.item.id === id) {
       const inc = this.incoming;
       this.incoming = null;
-      if (inc.writable) {
-        void inc.writeChain
-          .then(() => (inc.writable?.abort ? inc.writable.abort() : inc.writable?.close()))
-          .catch(() => {});
-      }
+      void inc.sink.abort();
+      this.host.end(id);
     }
 
     this.emit("cancelled", { id });
@@ -767,7 +841,7 @@ export class WrapPeer {
         break;
       }
       case "file-begin": {
-        this.startIncoming(msg.id);
+        this.startIncoming(msg.id, msg.offset);
         break;
       }
       case "file-end": {
@@ -810,49 +884,39 @@ export class WrapPeer {
    * write chunks straight through (no Blob accumulation); otherwise accumulate in
    * memory exactly as before.
    */
-  private startIncoming(id: string): void {
+  private startIncoming(id: string, offset = 0): void {
     if (this.cancelledIds.has(id)) return; // cancelled before bytes flowed
     const item = this.items.get(id);
     if (!item || item.direction !== "receive") return; // unaccepted / unknown -> ignore
-    item.status = "transferring";
-    this.emit("transfer", { ...item });
 
-    const inc: IncomingState = { item, chunks: [], writeChain: Promise.resolve() };
-    this.incoming = inc;
-
+    const key = this.incomingKeys.get(id) ?? `${item.name}:${item.size}`;
     const target = this.acceptTargets.get(item.batchId);
-    if (target) {
-      // Open the writable as the head of the write chain so every subsequent
-      // onChunk write is ordered behind it. uniqueName de-dupes within a folder.
-      const savedName =
-        "dirHandle" in target
-          ? this.uniqueName(item.batchId, item.name)
-          : target.fileHandle.name || item.name;
-      inc.savedName = savedName;
-      inc.writeChain = (async () => {
-        inc.writable =
-          "dirHandle" in target
-            ? await (await target.dirHandle.getFileHandle(savedName, { create: true })).createWritable()
-            : await target.fileHandle.createWritable();
-      })().catch(() => {
-        // If opening fails, fall back to in-memory accumulation for this file.
-        inc.writable = undefined;
-      });
+    const sink = this.host.begin(key, id, item, target);
+
+    // Fable H2: the sender echoes the offset it will actually stream from. If that
+    // disagrees with what we've DURABLY got, the prefixes don't line up — refuse to
+    // append onto a mismatched partial (stale sender that restarted at 0, or a
+    // wrong-file resume). For a fresh receive both are 0. Real resume: Task 5.
+    if (offset !== sink.bytesWritten) {
+      this.host.end(id);
+      this.markStatus(id, "error");
+      return;
     }
+
+    this.incoming = { item, sink };
+    item.status = "transferring";
+    item.transferred = sink.bytesWritten;
+    item.progress = Math.min(100, Math.round((item.transferred / Math.max(1, item.size)) * 100));
+    this.emit("transfer", { ...item });
   }
 
   private onChunk(buf: ArrayBuffer): void {
     const inc = this.incoming;
     if (!inc) return; // no active incoming file (cancelled / not accepted)
-
-    if (this.acceptTargets.has(inc.item.batchId)) {
-      // Disk path: queue the write behind the open + prior writes (ordered).
-      inc.writeChain = inc.writeChain.then(() => inc.writable?.write(buf)).catch(() => {});
-    } else {
-      inc.chunks.push(buf);
-    }
-
-    inc.item.transferred += buf.byteLength;
+    inc.sink.append(buf);
+    // Durable count is the single source of truth (Fable H1): for disk it advances
+    // as writes resolve, so progress is conservative, never ahead of what's on disk.
+    inc.item.transferred = inc.sink.bytesWritten;
     inc.item.progress = Math.min(
       100,
       Math.round((inc.item.transferred / Math.max(1, inc.item.size)) * 100),
@@ -875,69 +939,43 @@ export class WrapPeer {
     const inc = this.incoming;
     if (!inc || inc.item.id !== id) return;
     this.incoming = null;
+    void this.completeIncoming(id, inc);
+  }
 
-    // Belt-and-braces: a reliable+ordered channel shouldn't lose bytes, but if
-    // the count doesn't match the manifest, say so instead of faking "done".
-    if (inc.item.transferred < inc.item.size) {
-      if (inc.writable) {
-        void inc.writeChain
-          .then(() => (inc.writable?.abort ? inc.writable.abort() : inc.writable?.close()))
-          .catch(() => {});
-      }
+  /**
+   * Flush the sink, verify the DURABLE byte count matches the manifest EXACTLY
+   * (Fable H1/H2: an over- OR under-count, or a poisoned sink, must fail — never
+   * fake "done"), then emit file-received. Memory → a Blob; disk → savedToDisk
+   * with no blob (bytes already on disk).
+   */
+  private async completeIncoming(id: string, inc: IncomingState): Promise<void> {
+    await inc.sink.quiesce();
+    const bytes = inc.sink.bytesWritten;
+    if (bytes !== inc.item.size || inc.sink.failed) {
+      await inc.sink.abort();
+      this.host.end(id);
       this.markStatus(id, "error");
       return;
     }
 
-    if (this.acceptTargets.has(inc.item.batchId)) {
-      const name = inc.savedName ?? inc.item.name;
-      // Close after all queued writes land, then mark done + emit.
-      void inc.writeChain
-        .then(() => inc.writable?.close())
-        .catch(() => {})
-        .then(() => {
-          inc.item.savedToDisk = true;
-          inc.item.name = name;
-          inc.item.status = "done";
-          inc.item.transferred = inc.item.size;
-          inc.item.progress = 100;
-          this.emit("transfer", { ...inc.item });
-          this.emit("file-received", { id, name, mime: inc.item.mime, savedToDisk: true });
-        });
-      return;
-    }
+    const blob = await inc.sink.finalize(); // memory -> Blob; disk -> null (writable closed)
+    const savedName = this.host.savedName(id);
+    this.host.end(id);
+    if (this.disposed) return;
 
-    const blob = new Blob(inc.chunks, { type: inc.item.mime });
-    inc.item.blob = blob;
     inc.item.status = "done";
     inc.item.transferred = inc.item.size;
     inc.item.progress = 100;
-    this.emit("transfer", { ...inc.item });
-    this.emit("file-received", { id, name: inc.item.name, mime: inc.item.mime, blob });
-  }
-
-  /**
-   * De-dupe a filename within a dir target for a batch: "a.txt", "a (1).txt", …
-   * Reused per accepted batch via the usedNames set seeded in acceptOffer.
-   */
-  private uniqueName(batchId: string, name: string): string {
-    const used = this.usedNames.get(batchId) ?? new Set<string>();
-    if (!used.has(name)) {
-      used.add(name);
-      this.usedNames.set(batchId, used);
-      return name;
+    if (blob) {
+      inc.item.blob = blob;
+      this.emit("transfer", { ...inc.item });
+      this.emit("file-received", { id, name: inc.item.name, mime: inc.item.mime, blob });
+    } else {
+      inc.item.savedToDisk = true;
+      if (savedName) inc.item.name = savedName;
+      this.emit("transfer", { ...inc.item });
+      this.emit("file-received", { id, name: inc.item.name, mime: inc.item.mime, savedToDisk: true });
     }
-    const dot = name.lastIndexOf(".");
-    const stem = dot > 0 ? name.slice(0, dot) : name;
-    const ext = dot > 0 ? name.slice(dot) : "";
-    let n = 1;
-    let candidate = `${stem} (${n})${ext}`;
-    while (used.has(candidate)) {
-      n += 1;
-      candidate = `${stem} (${n})${ext}`;
-    }
-    used.add(candidate);
-    this.usedNames.set(batchId, used);
-    return candidate;
   }
 
   // ---- teardown ------------------------------------------------------------
