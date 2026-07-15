@@ -124,6 +124,8 @@ const sendPromise = sender.offerFiles([file]);
 const offer = await offerSeen;
 assert.equal(offer.items.length, 1, "receiver sees one offered item");
 assert.equal(offer.items[0].size, file.size, "manifest carries size");
+assert.ok(offer.items[0].key, "manifest carries a resume key");
+assert.ok(offer.items[0].resumeToken, "manifest carries a resumeToken");
 
 const got = waitFor(receiver, "file-received");
 receiver.acceptOffer(offer.batchId); // gate opens -> bytes flow
@@ -142,6 +144,45 @@ const declined = waitFor(sender, "declined");
 receiver.declineOffer(offer2.batchId);
 await declined;
 await send2; // resolves (does not throw) after a decline
+
+// --- resume: an accept carrying resume{offset} streams ONLY the tail ----------
+// We spy the sender's binary sends: with offset 6 on a 10-byte file, exactly 4
+// bytes must cross the wire. (Receiver-side reassembly of a resume is a hook-level
+// concern — tested in useWarpTransfer.check.mjs — so here we assert the sender.)
+const ten = new Blob(["ABCDEFGHIJ"], { type: "text/plain" }); // 10 bytes
+ten.name = "ten.txt";
+ten.slice = Blob.prototype.slice;
+
+let sentBinary = 0;
+const rawSend = sCh.send.bind(sCh);
+sCh.send = (d) => {
+  if (d instanceof ArrayBuffer) sentBinary += d.byteLength;
+  return rawSend(d);
+};
+
+const oSeen = waitFor(receiver, "incoming-offer");
+const sendResume = sender.offerFiles([ten]);
+const o = await oSeen;
+receiver.acceptOffer(o.batchId, undefined, { [o.items[0].id]: 6 }); // resume from byte 6
+await sendResume;
+assert.equal(sentBinary, ten.size - 6, "resume streamed only the 4-byte tail, not the whole file");
+
+// --- offset > size (or garbage) restarts from 0 -------------------------------
+const ten2 = new Blob(["ABCDEFGHIJ"], { type: "text/plain" });
+ten2.name = "ten2.txt";
+ten2.slice = Blob.prototype.slice;
+sentBinary = 0;
+const oSeen2 = waitFor(receiver, "incoming-offer");
+const got2 = waitFor(receiver, "file-received");
+const sendRestart = sender.offerFiles([ten2]);
+const o2 = await oSeen2;
+receiver.acceptOffer(o2.batchId, undefined, { [o2.items[0].id]: 999 }); // bogus offset > size
+const recv2 = await got2;
+assert.equal(await recv2.blob.text(), "ABCDEFGHIJ", "offset>size restarts at 0 -> full file received");
+assert.equal(sentBinary, ten2.size, "offset>size streamed the whole file (restart), not a bad slice");
+await sendRestart;
+
+sCh.send = rawSend; // restore
 
 // --- accept-to-disk: a target streams straight to a writable (no blob) -----
 // A fake File System Access writable + dir handle that records what's written.

@@ -34,6 +34,8 @@ import type { SignalData, SignalingClient } from "./signaling";
 import {
   LOW_WATER_MARK,
   fileId,
+  fileKey,
+  newResumeToken,
   type ControlMessage,
   type OfferItem,
   type TransferItem,
@@ -150,11 +152,13 @@ type Listener<K extends keyof PeerEvents> = PeerEvents[K];
 interface OutgoingBatch {
   batchId: string;
   files: File[];
-  /** Resolves when the receiver accepts; rejects when declined. */
-  resolve: () => void;
+  /** Resolves (with the receiver's per-file resume offsets) on accept; rejects on decline. */
+  resolve: (resume?: Record<string, number>) => void;
   reject: (reason: "declined") => void;
   /** Set true the moment the receiver responds, so a late dup is ignored. */
   settled: boolean;
+  /** Per-file resumeToken (id -> token) so a re-offer reuses the same token. */
+  tokens: Record<string, string>;
 }
 
 /** In-flight receive bookkeeping for the single active incoming file. */
@@ -283,6 +287,9 @@ export class WarpPeer {
 
   /** Identity key per accepted receive id (from the offer manifest), for resume matching. */
   private incomingKeys = new Map<string, string>();
+
+  /** Stable resumeToken per file identity (key), so re-offers reuse the same token. */
+  private resumeTokens = new Map<string, string>();
 
   /** Where in-flight received bytes go. Injected so the hook can own state across rebuilds. */
   private readonly host: ReceiveHost;
@@ -472,6 +479,16 @@ export class WarpPeer {
 
   // ---- sending -------------------------------------------------------------
 
+  /** Stable resumeToken for a file identity: minted once, reused on every re-offer. */
+  private tokenForKey(key: string): string {
+    let t = this.resumeTokens.get(key);
+    if (!t) {
+      t = newResumeToken();
+      this.resumeTokens.set(key, t);
+    }
+    return t;
+  }
+
   /**
    * Offer a list of files. Builds a manifest (with best-effort image thumbnails),
    * sends it, creates "offered" send-items, and AWAITS the receiver's response.
@@ -487,14 +504,20 @@ export class WarpPeer {
     const batchId = fileId();
 
     // Build the manifest + create local send-items in lockstep so ids match.
+    // Each file gets a stable `key` (identity) and a random `resumeToken` so a
+    // re-offer after a drop is recognized and can only be resumed by this sender.
     const manifest: OfferItem[] = [];
     const ids: string[] = [];
+    const tokens: Record<string, string> = {};
     for (const file of files) {
       const id = fileId();
       ids.push(id);
       const mime = file.type || "application/octet-stream";
+      const key = fileKey(file);
+      const resumeToken = this.tokenForKey(key);
+      tokens[id] = resumeToken;
       const thumb = await makeThumb(file); // best-effort; undefined on non-image/failure
-      manifest.push({ id, name: file.name, size: file.size, mime, ...(thumb ? { thumb } : {}) });
+      manifest.push({ id, name: file.name, size: file.size, mime, key, resumeToken, ...(thumb ? { thumb } : {}) });
 
       const item: TransferItem = {
         id,
@@ -514,14 +537,15 @@ export class WarpPeer {
     }
 
     // Register the pending batch BEFORE sending, so an instant accept/decline finds it.
-    const accepted = new Promise<void>((resolve, reject) => {
-      this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false });
+    const accepted = new Promise<Record<string, number> | undefined>((resolve, reject) => {
+      this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false, tokens });
     });
 
     this.send(ch, { t: "offer", batchId, items: manifest });
 
+    let resume: Record<string, number> | undefined;
     try {
-      await accepted;
+      resume = await accepted;
     } catch {
       // Declined: mark every item declined and bail (channel stays open).
       for (const id of ids) this.markStatus(id, "declined");
@@ -543,11 +567,17 @@ export class WarpPeer {
           continue; // cancelled before it started; status already set by cancel()
         }
 
-        item.status = "transferring";
+        // Resume offset the receiver asked for, validated (Fable L1). A garbage
+        // or >size offset falls back to 0 (full restart); the echoed file-begin
+        // offset tells the receiver so it discards a mismatched partial (Fable H2).
+        const offset = clampOffset(resume?.[id], file.size);
+        item.status = offset > 0 ? "reconnecting" : "transferring";
+        item.transferred = offset;
+        item.progress = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
         this.emit("transfer", { ...item });
 
-        this.send(ch, { t: "file-begin", id, offset: 0 });
-        const finishedClean = await this.streamFile(ch, file, item);
+        this.send(ch, { t: "file-begin", id, offset });
+        const finishedClean = await this.streamFile(ch, file, item, offset);
         if (!finishedClean) {
           // Cancelled mid-flight: tell the receiver and stop this file.
           this.send(ch, { t: "cancel", id });
@@ -606,7 +636,7 @@ export class WarpPeer {
    *                      (names de-duped within the folder).
    *   - { fileHandle } : a single file written to that handle.
    */
-  acceptOffer(batchId: string, target?: AcceptTarget): void {
+  acceptOffer(batchId: string, target?: AcceptTarget, resume?: Record<string, number>): void {
     const items = this.pendingOffers.get(batchId);
     if (!items) return;
     this.pendingOffers.delete(batchId);
@@ -614,10 +644,12 @@ export class WarpPeer {
     if (target) this.acceptTargets.set(batchId, target);
 
     // Create receive-items in the tray (offered -> they'll go transferring/done).
+    // A resumed item starts at its offset so the bar continues from N%, not 0.
     for (const oi of items) {
       // Remember the identity key so a later re-offer of the same file can resume
       // its partial. Fall back to name:size if a stale sender omitted `key`.
       this.incomingKeys.set(oi.id, oi.key ?? `${oi.name}:${oi.size}`);
+      const base = resume?.[oi.id] ?? 0;
       const item: TransferItem = {
         id: oi.id,
         batchId,
@@ -626,9 +658,9 @@ export class WarpPeer {
         mime: oi.mime,
         kind: "file",
         direction: "receive",
-        status: "offered",
-        transferred: 0,
-        progress: 0,
+        status: base > 0 ? "reconnecting" : "offered",
+        transferred: base,
+        progress: Math.min(100, Math.round((base / Math.max(1, oi.size)) * 100)),
         ...(oi.thumb ? { thumb: oi.thumb } : {}),
       };
       this.items.set(oi.id, item);
@@ -636,7 +668,7 @@ export class WarpPeer {
     }
 
     const ch = this.channel;
-    if (ch && ch.readyState === "open") this.send(ch, { t: "accept", batchId });
+    if (ch && ch.readyState === "open") this.send(ch, { t: "accept", batchId, ...(resume ? { resume } : {}) });
   }
 
   /** Receiver: decline a pending offered batch -> the sender sends nothing. */
@@ -718,9 +750,15 @@ export class WarpPeer {
    * and ~16x fewer SCTP messages, so the channel runs near the link rate.
    * bufferedAmount backpressure (SEND_HIGH_WATER) keeps memory bounded.
    */
-  private async streamFile(ch: RTCDataChannel, file: File, item: TransferItem): Promise<boolean> {
+  private async streamFile(
+    ch: RTCDataChannel,
+    file: File,
+    item: TransferItem,
+    startOffset = 0,
+  ): Promise<boolean> {
     const sendChunk = this.sendChunkSize();
-    let offset = 0;
+    // Resume: begin reading at startOffset (the receiver already holds [0,startOffset)).
+    let offset = startOffset;
     while (offset < file.size) {
       if (this.cancelledIds.has(item.id)) {
         this.cancelledIds.delete(item.id);
@@ -826,7 +864,7 @@ export class WarpPeer {
         if (batch && !batch.settled) {
           batch.settled = true;
           this.outgoing.delete(msg.batchId);
-          batch.resolve();
+          batch.resolve(msg.resume); // carries per-file resume offsets (undefined = fresh)
         }
         break;
       }
@@ -997,6 +1035,16 @@ export class WarpPeer {
 }
 
 /** Max edge of a generated thumbnail, in CSS pixels. */
+/**
+ * Validate a receiver-supplied resume offset (Fable L1): must be a non-negative
+ * integer no larger than the file. Anything else (NaN, negative, >size, non-int —
+ * e.g. a stale/hostile peer) falls back to 0, a full restart. Guards against
+ * `Blob.slice(-n)`'s relative-from-end behaviour on a negative offset.
+ */
+function clampOffset(v: unknown, size: number): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= size ? v : 0;
+}
+
 const THUMB_MAX = 64;
 
 /**
