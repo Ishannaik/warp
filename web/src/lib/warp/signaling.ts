@@ -104,6 +104,7 @@ export class SignalingClient {
     if (this.ws) return;
     this.closed = false;
     this.joinRoom = room;
+    this.installWakeListeners();
     this.openSocket();
   }
 
@@ -160,17 +161,68 @@ export class SignalingClient {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer !== null) return;
-    if (this.reconnectAttempts >= 8) {
+    // Never-give-up: once we've EVER joined a room, keep retrying for the life of
+    // the tab — a tunnel / elevator / wifi↔cellular handoff must not permanently
+    // kill the session (transfers resume on rejoin). Only a socket that NEVER
+    // joined (bad URL/env) gives up honestly after the cap.
+    if (this.room === null && this.reconnectAttempts >= 8) {
       this.emit("error", "signaling-lost");
       return;
     }
-    const delay = Math.min(500 * 2 ** this.reconnectAttempts, 8000);
+    // Pause while provably offline — each attempt otherwise allocates a socket that
+    // fails instantly and burns battery; the `online` listener resumes us. Re-check
+    // shortly rather than opening a doomed socket now.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        this.scheduleReconnect();
+      }, 2000);
+      return;
+    }
+    // Capped exponential backoff (cap the exponent so a long outage settles at ~15s).
+    const delay = Math.min(500 * 2 ** Math.min(this.reconnectAttempts, 5), 15000);
     this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.closed && !this.ws) this.openSocket();
     }, delay);
   }
+
+  /** Kick an immediate reconnect (fired by online / visibility / network-change). */
+  private wake = (): void => {
+    if (this.closed) return;
+    this.reconnectAttempts = 0; // a network event is a fresh chance — reset backoff
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (!this.ws) this.openSocket();
+  };
+
+  private installWakeListeners(): void {
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", this.wake);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.onVisible);
+    }
+    const conn = (navigator as unknown as { connection?: { addEventListener?: (t: string, f: () => void) => void } })
+      .connection;
+    conn?.addEventListener?.("change", this.wake);
+  }
+
+  private removeWakeListeners(): void {
+    if (typeof window !== "undefined") window.removeEventListener("online", this.wake);
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisible);
+    const conn = (
+      navigator as unknown as { connection?: { removeEventListener?: (t: string, f: () => void) => void } }
+    ).connection;
+    conn?.removeEventListener?.("change", this.wake);
+  }
+
+  private onVisible = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") this.wake();
+  };
 
   private dispatch(msg: ServerMessage): void {
     switch (msg.type) {
@@ -215,6 +267,7 @@ export class SignalingClient {
   close(): void {
     this.closed = true;
     this.pending = [];
+    this.removeWakeListeners();
     if (this.reconnectTimer !== null) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.keepalive) { clearInterval(this.keepalive); this.keepalive = null; }
     if (this.ws) {
