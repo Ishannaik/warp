@@ -1,9 +1,10 @@
 # Warp — Robust Resumable Transfers (tier-C) — Design
 
 **Date:** 2026-07-13
-**Status:** Design approved (user: "do all"); Fable adversarial review folded in; **pending
-the H6 A/B decision** (dual-drop room reclamation). Ready for implementation-plan on that answer.
-**Scope owner:** engine (`web/src/lib/wrap/*`) + transfer UI (`web/src/transfer/*`) + (H6=A) `server/src/index.js`
+**Status:** Design approved (user: "do all"); Fable adversarial review folded in;
+**H6 resolved → A** (Fable's call, delegated by user) — DO reclaim record. Ready for the
+implementation plan.
+**Scope owner:** engine (`web/src/lib/wrap/*`) + transfer UI (`web/src/transfer/*`) + signaling `server/src/index.js` (H6=A)
 
 ## Problem
 
@@ -175,23 +176,42 @@ Today `IncomingState` (partial chunks / writable) and `acceptTargets` (handle) l
 - **Pause retries while provably offline (Fable M6):** skip attempts entirely when
   `navigator.onLine === false` (each attempt otherwise allocates a WebSocket that fails
   instantly and burns battery); resume immediately on the `online` event.
-- **Dual-drop room reclamation (Fable H6) — the load-bearing decision.** Room state lives in
-  the live sockets' `serializeAttachment`; the 8 s keepalive only flows while a socket is up.
-  If **both** devices drop at once (shared Wi-Fi flap, both in a tunnel — exactly the
-  never-give-up scenario), the DO hibernates and the room is gone in ~10 s → rejoin returns
-  `room-not-found`, the sender mints a *fresh* code (receiver's link now permanently wrong) and
-  the receiver hits the terminal `fail("signaling", …)` (`useWrapTransfer.ts:409,419`). So
-  "never hard-fail" is **unimplementable for the dual-drop case without a server-side reserve.**
-  **Chosen approach (pending user A/B):**
-  - **A (recommended, "super robust"):** a *small* server change — the DO writes a tiny
-    reclaim record `{ code, members, expiresAt = now + ~3 min }` to DO storage when its last
-    socket drops, and lets a `join{room}` within the window **resurrect the same code**. Still
-    $0 (DO storage on CF free), still a dumb relay (it never sees a file byte — it only
-    remembers a code reservation). Both-sides-dropped then rejoin the *same* code and resume.
-  - **B (no server change):** never-give-up covers **single-side** outages (the common case);
-    a dual-drop with a dead data channel surfaces an honest "session lost — reopen the link",
-    and the Goals wording drops the absolute "never hard-fail". The WebRTC channel often
-    survives a signaling-only blip, so this still fixes most real drops.
+- **Dual-drop room reclamation (Fable H6) — DECIDED: A (Fable's call, delegated by user).**
+  Room state lives in the live sockets' `serializeAttachment`; the 8 s keepalive only flows
+  while a socket is up. If **both** devices drop at once (shared Wi-Fi flap, both in a tunnel —
+  a *correlated* drop, so this is the *common* dual-drop, not a rare one), the DO hibernates and
+  the room is gone in ~10 s → rejoin returns `room-not-found`, the sender mints a *fresh* code
+  (receiver's link now permanently wrong) and the receiver hits the terminal
+  `fail("signaling", …)` (`useWrapTransfer.ts:409,419`). Fix — a **small, additive, backward-
+  compatible server change** (`server/src/index.js`); it stays a dumb relay (a reclaim record
+  is room-membership metadata the DO already holds implicitly — it still never sees a file byte)
+  and $0 (single-digit bytes of DO storage + one alarm). Mechanics:
+  1. **Detect true last-close:** in `webSocketClose`/`webSocketError`, count survivors
+     *excluding the closing socket* —
+     `ctx.getWebSockets().filter(ws => ws !== closingWs && ws.readyState === WebSocket.OPEN)`.
+     Only when empty, write the record. (Don't trust the in-memory peer list — it's rebuilt
+     from live attachments.)
+  2. **No hibernation race:** the DO isn't evicted while a storage op is in flight (output gate
+     holds it in memory until the `put` settles). `await state.storage.put('reclaim',
+     { code, members, expiresAt: Date.now() + 180_000 })` — `await` it so the handler doesn't
+     return before the put is durable.
+  3. **Expire via a DO alarm** (`state.storage.setAlarm(expiresAt)`); the alarm is **GC only** —
+     always re-validate on read during a reclaim-join (`if (!rec || rec.expiresAt < Date.now())
+     → room-not-found`), since alarms can be delayed/coalesced. Delete the record + cancel the
+     alarm when the room goes live again.
+  4. **Reclaim-join = re-mint an empty room under the same code; do NOT restore
+     `serializeAttachment`** (the old per-socket state died with the sockets — stale selfIds/SDP).
+     Admit the joiner as first member, delete the record. Both peers re-handshake fresh; the
+     *file* resume is carried entirely by the client registry + `resumeToken`/`file-begin.offset`,
+     never by server-side transfer state. The server only owes them the *same rendezvous code*.
+  5. **Concurrency is free** (DO event loop is serial): the first reclaim-`join` flips
+     reclaim→live atomically and deletes the record; the second peer then sees a live room and
+     joins normally.
+  6. **Client:** the receiver's `room-not-found` stops being terminal — during the ~3 min window
+     a `join{room}` now succeeds, so treat `room-not-found` as retryable inside the never-give-up
+     loop and only surface "session lost — reopen link" **after** the window elapses. Keep the
+     existing sender re-mint-fresh fallback (`useWrapTransfer.ts:409`) for genuinely post-window
+     dead rooms (it now fires far less).
 - **Exit for a peer that's gone for good (Fable M6):** with the watchdog neutered, a receiver
   whose sender closed the laptop forever must not spin "reconnecting…" forever (a different
   lie). After `peer-left` + channel-dead + N minutes, show a soft terminal "Other device left —
@@ -305,8 +325,9 @@ see below); the goal is that closing/reloading the tab mid-transfer and reopenin
 - `web/src/lib/wrap/signaling.ts` — capped-backoff reconnect while open, paused when
   `!navigator.onLine`; `online`/`offline`/`connection`-change/`visibility` triggers;
   `room-not-found` handling (per H6 decision); no mid-session terminal.
-- `server/src/index.js` — **only if H6 = A:** DO writes a `{code, members, expiresAt}` reclaim
-  record on last-socket-drop and honors it on `join{room}` within ~3 min. (No change for H6 = B.)
+- `server/src/index.js` — **(H6 = A)** DO writes a `{code, members, expiresAt}` reclaim record
+  on true last-socket-drop, a `setAlarm` to GC it, and honors a `join{room}` within ~3 min by
+  re-minting the same code (re-validate `expiresAt` on read; delete on go-live).
 - `web/src/transfer/SessionView.tsx` — per-item resuming/reconnecting rendering; 1%-delta
   throttle.
 - `web/src/transfer/TransferFlow.tsx` — keep reconnecting banner honest; keep drop out of the
@@ -347,8 +368,9 @@ see below); the goal is that closing/reloading the tab mid-transfer and reopenin
 - Riskiest code: durable `bytesWritten`/writeChain accounting + disk-writable survival across
   peer rebuild (Pillar 2), the IDB fallback (Pillar 4), and the C+ checkpoint/seek path
   (Pillar 6). All covered by check-harness tests + a manual two-device run before deploy.
-- H6 = A adds a small `server/src/index.js` change (DO reclaim record); it keeps the server a
-  dumb relay (never reads a file) and stays on CF free. H6 = B leaves the server untouched.
+- H6 = A is **one additive, backward-compatible server change** (reclaim record + alarm in
+  `server/src/index.js`); the relay still never touches a file byte and stays on CF free. Old
+  clients that never hit the reclaim window are unaffected.
 
 ## Review history
 
@@ -357,5 +379,6 @@ see below); the goal is that closing/reloading the tab mid-transfer and reopenin
   H3 double-offer → tail streamed twice; H4 zombie+new peer both write one key; H5 mesh
   key-hijack) + 7 MED + 4 LOW. **All folded in above.** Headline fix per Fable: two wire
   fields (`file-begin.offset` echo + per-file `resumeToken`) close H2–H5 and most of L1 for
-  far less than the originally-planned content hash. H6 (dual-drop room reclamation) surfaced
-  as a user decision (A: small server reserve / B: honest scoping).
+  far less than the originally-planned content hash. H6 (dual-drop room reclamation) was
+  delegated back to Fable, which chose **A** (small DO reclaim record + alarm) with the exact
+  hibernation-safe / alarm-GC mechanics now inlined in Pillar 3.
