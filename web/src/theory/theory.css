@@ -1,7 +1,7 @@
 /*
  * theory.css — animations + helpers specific to the /how deep-dive.
  *
- * The global @keyframes (wrapRise, wrapFade, wrapBlink, wrapFlow, …) live in
+ * The global @keyframes (warpRise, warpFade, warpBlink, warpFlow, …) live in
  * src/styles/keyframes.css and are reused freely. This file adds only the
  * motions the Theory page and its diagrams need, all namespaced `thy*` to avoid
  * collisions, plus a prefers-reduced-motion block that settles everything to

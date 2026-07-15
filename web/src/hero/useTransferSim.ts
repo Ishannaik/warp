@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
  * State lives in React useState so the component re-renders each tick. The
  * entrance animations live on the OUTER window wrapper (owned by Hero) and on
  * static chrome — the per-row markup carries no entrance animation, so these
- * sim re-renders never restart any `wrapRise`/`wrapFade` etc.
+ * sim re-renders never restart any `warpRise`/`warpFade` etc.
  */
 
 export type RowStatus = "up" | "done" | "queued";

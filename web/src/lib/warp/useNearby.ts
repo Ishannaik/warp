@@ -5,7 +5,7 @@
  * DISCOVERABLE (other same-IP devices see us in their `nearby` snapshot) and
  * READY to receive incoming WebRTC offers from those devices. It is the home
  * screen's "who's around me" radar — distinct from the code-room transfer flow
- * in `useWrapTransfer`.
+ * in `useWarpTransfer`.
  *
  * How it rides on top of the unmodified `SignalingClient`:
  *   - `SignalingClient.connect()` opens the socket and (harmlessly) joins a
@@ -22,16 +22,16 @@
  *     client already understands keeps flowing through it untouched.
  *
  * Exposes a way to get the `SignalingClient` so the home UI can:
- *   (a) SEND  — `new WrapPeer(sig, targetPeerId, true)`, then `peer.start()` +
+ *   (a) SEND  — `new WarpPeer(sig, targetPeerId, true)`, then `peer.start()` +
  *               `peer.offerFiles(files)` (gated by the receiver's accept).
  *   (b) RECEIVE — an unsolicited offer from a nearby peer (no peer yet) fires the
  *               `onIncoming` callback with the sender and a ready-to-accept
- *               responder `WrapPeer`; feed it the offer and bind your handlers.
+ *               responder `WarpPeer`; feed it the offer and bind your handlers.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignalingClient, type SignalData } from "./signaling";
-import { WrapPeer } from "./peer";
+import { WarpPeer } from "./peer";
 
 const DEVICE_NAME_KEY = "wrap.deviceName";
 
@@ -60,7 +60,7 @@ export interface IncomingConnection {
   /** Best-effort display name of the sender (from the latest `nearby`). */
   name: string;
   /** Responder peer, primed with the offer; an answer is already in flight. */
-  peer: WrapPeer;
+  peer: WarpPeer;
 }
 
 export interface UseNearby {
@@ -75,11 +75,11 @@ export interface UseNearby {
   /** Rename this device and re-announce so peers see the new label. */
   rename: (name: string) => void;
   /**
-   * Begin a send to a discovered device. Constructs an initiator `WrapPeer`,
+   * Begin a send to a discovered device. Constructs an initiator `WarpPeer`,
    * kicks off the offer, and returns it so the caller can bind handlers and
    * `sendFiles`. Returns null if the socket isn't ready yet.
    */
-  connectTo: (targetPeerId: string) => WrapPeer | null;
+  connectTo: (targetPeerId: string) => WarpPeer | null;
   /**
    * Register a handler for unsolicited incoming offers from nearby peers.
    * Returns an unsubscribe function. The handler receives a primed responder.
@@ -142,8 +142,8 @@ export function useNearby(): UseNearby {
   const sigRef = useRef<SignalingClient | null>(null);
   /** Latest snapshot, kept in a ref so callbacks resolve names without re-binding. */
   const devicesRef = useRef<NearbyDevice[]>([]);
-  /** Discovery peers we already have a WrapPeer for (send or receive). */
-  const peersRef = useRef<Map<string, WrapPeer>>(new Map());
+  /** Discovery peers we already have a WarpPeer for (send or receive). */
+  const peersRef = useRef<Map<string, WarpPeer>>(new Map());
   /** Consumers listening for unsolicited incoming offers. */
   const incomingListeners = useRef<Set<(conn: IncomingConnection) => void>>(new Set());
   /** Always-current name for re-announce / open handlers without re-binding. */
@@ -173,14 +173,14 @@ export function useNearby(): UseNearby {
   }, []);
 
   const connectTo = useCallback(
-    (targetPeerId: string): WrapPeer | null => {
+    (targetPeerId: string): WarpPeer | null => {
       const sig = sigRef.current;
       if (!sig) return null;
       // Reuse an existing peer for this target if one is already live.
       const existing = peersRef.current.get(targetPeerId);
       if (existing) return existing;
 
-      const peer = new WrapPeer(sig, targetPeerId, true);
+      const peer = new WarpPeer(sig, targetPeerId, true);
       peersRef.current.set(targetPeerId, peer);
       peer.start().catch(() => {
         /* surfaced to the caller via peer.on('error'); drop our handle */
@@ -266,7 +266,7 @@ export function useNearby(): UseNearby {
         // answers/ICE for an unknown peer (e.g. arrived after teardown).
         if (data.kind !== "offer") return;
 
-        const peer = new WrapPeer(sig, from, false);
+        const peer = new WarpPeer(sig, from, false);
         peersRef.current.set(from, peer);
         peer.handleSignal(from, data).catch(() => {
           peersRef.current.delete(from);

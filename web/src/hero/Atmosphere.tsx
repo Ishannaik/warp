@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 /**
  * Hero background atmosphere layer: an aceternity-style lamp glow plus a set of
  * magic-ui meteor streaks. Ported verbatim from the Wrap design source
- * (`#wrap-atmo`). Pointer-events disabled; sits behind the hero content.
+ * (`#warp-atmo`). Pointer-events disabled; sits behind the hero content.
  *
  * The shipped default variant has atmosphere ON, so this is always rendered.
  */
@@ -27,7 +27,7 @@ const lamp: CSSProperties = {
   background:
     "radial-gradient(closest-side,rgba(var(--acc-rgb),.5),transparent 72%)",
   filter: "blur(44px)",
-  animation: "wrapLamp 5s ease-in-out infinite",
+  animation: "warpLamp 5s ease-in-out infinite",
 };
 
 interface Meteor {
@@ -94,7 +94,7 @@ export default function Atmosphere() {
     <div
       aria-hidden="true"
       className="pointer-events-none"
-      id="wrap-atmo"
+      id="warp-atmo"
       style={layer}
     >
       <div style={lamp} />
@@ -109,7 +109,7 @@ export default function Atmosphere() {
             height: m.height,
             borderRadius: "9999px",
             background: m.grad,
-            animation: `wrapMeteor ${m.dur} linear infinite${
+            animation: `warpMeteor ${m.dur} linear infinite${
               m.delay ? ` ${m.delay}` : ""
             }`,
           }}

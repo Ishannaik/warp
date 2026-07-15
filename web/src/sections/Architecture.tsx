@@ -213,7 +213,7 @@ export default function Architecture() {
                     ? "repeating-linear-gradient(180deg,var(--acc) 0 7px,transparent 7px 20px)"
                     : "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 20px)",
                   backgroundSize: isMobile ? "100% 32px" : "32px 100%",
-                  animation: "wrapFlow .9s linear infinite",
+                  animation: "warpFlow .9s linear infinite",
                   WebkitMaskImage: isMobile
                     ? "linear-gradient(180deg,transparent,#000 12%,#000 88%,transparent)"
                     : "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",

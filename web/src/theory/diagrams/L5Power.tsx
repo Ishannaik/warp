@@ -93,7 +93,7 @@ export default function L5Power() {
                 ? "repeating-linear-gradient(90deg,var(--amb) 0 7px,transparent 7px 20px)"
                 : "repeating-linear-gradient(90deg,rgba(239,106,61,.55) 0 7px,transparent 7px 20px)",
               backgroundSize: "32px 100%",
-              animation: animate ? "wrapFlow .8s linear infinite" : undefined,
+              animation: animate ? "warpFlow .8s linear infinite" : undefined,
               WebkitMaskImage:
                 "linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent)",
               maskImage:
@@ -266,7 +266,7 @@ export default function L5Power() {
                     borderTop: "2px solid var(--acc)",
                     opacity: animate ? undefined : 0.8,
                     animation: animate
-                      ? "wrapBlink 1.6s steps(1) infinite"
+                      ? "warpBlink 1.6s steps(1) infinite"
                       : undefined,
                     animationDelay: animate ? `${i * 0.22}s` : undefined,
                   }}
@@ -399,7 +399,7 @@ function Meter({ spin }: { spin: boolean }) {
       <g
         style={{
           transformOrigin: "28px 28px",
-          animation: spin ? "wrapSpin2 3.6s linear infinite" : undefined,
+          animation: spin ? "warpSpin2 3.6s linear infinite" : undefined,
           transform: spin ? undefined : "rotate(40deg)",
         }}
       >
@@ -426,7 +426,7 @@ function Meter({ spin }: { spin: boolean }) {
         kWh
       </text>
       <style>{`
-        @keyframes wrapSpin2 { to { transform: rotate(360deg); } }
+        @keyframes warpSpin2 { to { transform: rotate(360deg); } }
       `}</style>
     </svg>
   );

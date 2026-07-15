@@ -119,7 +119,7 @@ export interface TransferItem {
   savedToDisk?: boolean;
   /**
    * Which remote device this item is to/from, in a multi-device (mesh) room.
-   * Stamped by the hook from the emitting WrapPeer's remoteId. Omitted in the
+   * Stamped by the hook from the emitting WarpPeer's remoteId. Omitted in the
    * single-peer case (or carried but ignored by UIs that don't show it).
    */
   peerId?: string;

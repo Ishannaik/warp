@@ -13,7 +13,7 @@ Peer-to-peer WebRTC file transfer. Brand is **Warp** (user-facing), matching the
 
 - `web/` — Vite + React 19 + TypeScript + Tailwind v4 (`@tailwindcss/vite`, CSS-first `@theme`). pnpm workspace `@warp/web`. Client router in `src/router.tsx` (`navigate`, `useRoute`). Routes: `/` landing, `/send` + `/r/:code` transfer flow, `/receive` code entry, `/how` theory.
 - `server/` — Cloudflare **Worker + Durable Object** signaling server (`src/index.js`), WebSocket Hibernation, `@warp/server`. One DO via `idFromName('global')` holds all rooms; room state lives in the live sockets' `serializeAttachment` (hibernation-safe).
-- `web/src/lib/wrap/` — the WebRTC engine: `signaling.ts` (WS client), `peer.ts` (`RTCPeerConnection` + data channel, STUN-only), `transfer.ts` (wire protocol), `useWrapTransfer.ts` (orchestration).
+- `web/src/lib/warp/` — the WebRTC engine: `signaling.ts` (WS client), `peer.ts` (`RTCPeerConnection` + data channel, STUN-only), `transfer.ts` (wire protocol), `receiveController.ts` (durable-write receive sink), `useWarpTransfer.ts` (orchestration). (Dir + identifiers renamed `wrap`→`warp` for brand consistency; the Cloudflare Pages project stays `wrap`.)
 
 ## Design tokens (match exactly)
 

@@ -3,8 +3,8 @@ import type { CSSProperties, DragEvent } from "react";
 import QRCode from "qrcode";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
-import { useWrapTransfer, type Connection } from "../lib/wrap/useWrapTransfer";
-import { formatBytes } from "../lib/wrap/transfer";
+import { useWarpTransfer, type Connection } from "../lib/warp/useWarpTransfer";
+import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { AcceptModal, SessionView } from "./SessionView";
 
@@ -35,7 +35,7 @@ interface QueuedFile {
 const HAIRLINE = "rgba(239,233,218,.13)";
 
 export default function TransferFlow({ joinCode }: { joinCode?: string }) {
-  const wrap = useWrapTransfer(joinCode);
+  const wrap = useWarpTransfer(joinCode);
   const { mode, code, shareUrl, status, items, incoming, error, connections } = wrap;
   const isMobile = useIsMobile();
 
@@ -137,13 +137,13 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
       }}
     >
       <style>{`
-        .wrap-drop:hover{border-color:var(--acc) !important;background:rgba(var(--acc-rgb),.05) !important}
-        .wrap-remove:hover{color:var(--amb) !important}
-        .wrap-exit:hover{color:#efe9da !important}
-        .wrap-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
-        .wrap-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
-        .wrap-cta:hover{filter:brightness(1.08)}
-        .wrap-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
+        .warp-drop:hover{border-color:var(--acc) !important;background:rgba(var(--acc-rgb),.05) !important}
+        .warp-remove:hover{color:var(--amb) !important}
+        .warp-exit:hover{color:#efe9da !important}
+        .warp-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
+        .warp-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
+        .warp-cta:hover{filter:brightness(1.08)}
+        .warp-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
       `}</style>
 
@@ -335,7 +335,7 @@ function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
 
       <a
         href="/"
-        className="wrap-exit"
+        className="warp-exit"
         onClick={(e) => {
           e.preventDefault();
           navigate("/");
@@ -455,7 +455,7 @@ function QueueList({
               {formatBytes(q.file.size)}
             </span>
             <span
-              className="wrap-remove"
+              className="warp-remove"
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove(q.id);
@@ -501,7 +501,7 @@ function SelectStep({
   isMobile: boolean;
 }) {
   return (
-    <div style={{ animation: "wrapFade .5s ease both" }}>
+    <div style={{ animation: "warpFade .5s ease both" }}>
       <div style={{ ...stepLabel, marginBottom: "10px" }}>Step 01 / Select</div>
       <h1
         style={{
@@ -517,7 +517,7 @@ function SelectStep({
       </h1>
 
       <div
-        className="wrap-drop"
+        className="warp-drop"
         onClick={onBrowse}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -587,7 +587,7 @@ function SelectStep({
           Files stay on your device until a peer accepts.
         </span>
         <span
-          className={files.length ? "wrap-cta" : undefined}
+          className={files.length ? "warp-cta" : undefined}
           onClick={onOpenChannel}
           style={{
             display: isMobile ? "block" : "inline-block",
@@ -691,7 +691,7 @@ function PairStep({
         : "Waiting for devices to join";
 
   return (
-    <div style={{ animation: "wrapFade .5s ease both", textAlign: "center" }}>
+    <div style={{ animation: "warpFade .5s ease both", textAlign: "center" }}>
       <div style={{ ...stepLabel, marginBottom: "30px" }}>Step 02 / Pair</div>
 
       <div
@@ -708,7 +708,7 @@ function PairStep({
             inset: 0,
             border: "1px solid rgba(var(--acc-rgb),.5)",
             borderRadius: "50%",
-            animation: "wrapPing 2.4s ease-out infinite",
+            animation: "warpPing 2.4s ease-out infinite",
           }}
         />
         <div
@@ -717,7 +717,7 @@ function PairStep({
             inset: 0,
             border: "1px solid rgba(var(--acc-rgb),.5)",
             borderRadius: "50%",
-            animation: "wrapPing 2.4s ease-out infinite 1.2s",
+            animation: "warpPing 2.4s ease-out infinite 1.2s",
           }}
         />
         <div
@@ -755,7 +755,7 @@ function PairStep({
             width: "7px",
             height: "7px",
             background: "var(--amb)",
-            animation: "wrapBlink 1.2s steps(1) infinite",
+            animation: "warpBlink 1.2s steps(1) infinite",
           }}
         />
         {waitingText}
@@ -831,7 +831,7 @@ function PairStep({
                       height: "6px",
                       borderRadius: "50%",
                       background: "var(--acc)",
-                      animation: "wrapBlink 1.6s steps(1) infinite",
+                      animation: "warpBlink 1.6s steps(1) infinite",
                     }}
                   />
                   {c.label}
@@ -854,7 +854,7 @@ function PairStep({
             }}
           >
             <span
-              className="wrap-share"
+              className="warp-share"
               onClick={copy}
               style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
             >
@@ -862,7 +862,7 @@ function PairStep({
             </span>
             {canShare && (
               <span
-                className="wrap-share"
+                className="warp-share"
                 onClick={share}
                 style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
               >
@@ -906,7 +906,7 @@ function PairStep({
               offered until the peer connects and you hit Send in the session. */}
           <div style={{ marginTop: "30px", textAlign: "left" }}>
             <div
-              className="wrap-drop"
+              className="warp-drop"
               onClick={onBrowse}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
@@ -969,7 +969,7 @@ function ErrorPanel({
   isMobile: boolean;
 }) {
   return (
-    <div style={{ animation: "wrapFade .5s ease both", textAlign: "center" }}>
+    <div style={{ animation: "warpFade .5s ease both", textAlign: "center" }}>
       <div
         style={{
           width: "72px",
@@ -1025,7 +1025,7 @@ function ErrorPanel({
         }}
       >
         <span
-          className="wrap-cta"
+          className="warp-cta"
           onClick={onRetry}
           style={{
             display: isMobile ? "block" : "inline-block",
@@ -1085,7 +1085,7 @@ function DropOverlay() {
         background: "rgba(10,10,14,.45)",
         backdropFilter: "blur(13px)",
         WebkitBackdropFilter: "blur(13px)",
-        animation: "wrapFade .18s ease both",
+        animation: "warpFade .18s ease both",
       }}
     >
       <div

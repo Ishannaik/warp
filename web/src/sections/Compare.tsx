@@ -84,8 +84,8 @@ const labelCellStyle: CSSProperties = {
   letterSpacing: 0,
 };
 
-// Wrap (highlighted) cell — base styles. The last row adds a bottom accent border.
-const wrapCellStyle: CSSProperties = {
+// Warp (highlighted) cell — base styles. The last row adds a bottom accent border.
+const warpCellStyle: CSSProperties = {
   padding: "15px",
   textAlign: "center",
   color: "var(--acc)",
@@ -106,12 +106,12 @@ const dimCellStyle: CSSProperties = {
   color: "#5a5648",
 };
 
-/** A non-Wrap cell value + whether it renders affirmatively (accent) or muted (dim). */
+/** A non-Warp cell value + whether it renders affirmatively (accent) or muted (dim). */
 type Cell = { value: ReactNode; ok: boolean };
 
 interface Row {
   label: string;
-  wrap: ReactNode; // Wrap column is always affirmative in the source
+  warp: ReactNode; // Warp column is always affirmative in the source
   airdrop: Cell;
   wetransfer: Cell;
   wormhole: Cell;
@@ -120,35 +120,35 @@ interface Row {
 const ROWS: Row[] = [
   {
     label: "Direct peer-to-peer",
-    wrap: CHECK,
+    warp: CHECK,
     airdrop: { value: CHECK, ok: true },
     wetransfer: { value: CROSS, ok: false },
     wormhole: { value: CHECK, ok: true },
   },
   {
     label: "No file-size limit",
-    wrap: CHECK,
+    warp: CHECK,
     airdrop: { value: CHECK, ok: true },
     wetransfer: { value: "2 GB", ok: false },
     wormhole: { value: "10 GB", ok: false },
   },
   {
     label: "No account needed",
-    wrap: CHECK,
+    warp: CHECK,
     airdrop: { value: CHECK, ok: true },
     wetransfer: { value: CROSS, ok: false },
     wormhole: { value: CHECK, ok: true },
   },
   {
     label: "Works cross-platform",
-    wrap: CHECK,
+    warp: CHECK,
     airdrop: { value: "Apple", ok: false },
     wetransfer: { value: CHECK, ok: true },
     wormhole: { value: CHECK, ok: true },
   },
   {
     label: "Free & open-source",
-    wrap: CHECK,
+    warp: CHECK,
     airdrop: { value: CROSS, ok: false },
     wetransfer: { value: CROSS, ok: false },
     wormhole: { value: CHECK, ok: true },
@@ -203,13 +203,13 @@ export default function Compare() {
                 gridTemplateColumns: gridTemplate,
                 ...(isLast ? {} : { borderBottom: "1px solid rgba(239,233,218,.08)" }),
               };
-              const wrapStyle: CSSProperties = isLast
-                ? { ...wrapCellStyle, borderBottom: "1px solid var(--acc)" }
-                : wrapCellStyle;
+              const warpStyle: CSSProperties = isLast
+                ? { ...warpCellStyle, borderBottom: "1px solid var(--acc)" }
+                : warpCellStyle;
               return (
                 <div key={row.label} style={rowStyle}>
                   <div style={labelCellStyle}>{row.label}</div>
-                  <div style={wrapStyle}>{row.wrap}</div>
+                  <div style={warpStyle}>{row.warp}</div>
                   <div style={otherCellStyle(row.airdrop.ok)}>{row.airdrop.value}</div>
                   <div style={otherCellStyle(row.wetransfer.ok)}>{row.wetransfer.value}</div>
                   <div style={otherCellStyle(row.wormhole.ok)}>{row.wormhole.value}</div>

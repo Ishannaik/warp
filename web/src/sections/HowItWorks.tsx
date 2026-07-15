@@ -160,7 +160,7 @@ export default function HowItWorks() {
                 background:
                   "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 20px)",
                 backgroundSize: "32px 100%",
-                animation: "wrapFlow .9s linear infinite",
+                animation: "warpFlow .9s linear infinite",
                 WebkitMaskImage:
                   "linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent)",
                 maskImage:

@@ -1,5 +1,5 @@
 /**
- * Runnable check for the multi-device (mesh) HOOK logic in useWrapTransfer.ts.
+ * Runnable check for the multi-device (mesh) HOOK logic in useWarpTransfer.ts.
  *
  * The hook itself is React-bound, so rather than spin a renderer we re-create the
  * three load-bearing mesh decisions in isolation and assert them against fake
@@ -16,7 +16,7 @@
  *      SMALL offer stays in-memory (no picker, no target). A cancelled picker on
  *      a large offer falls back to in-memory.
  *
- * Run:  node src/lib/wrap/useWrapTransfer.check.mjs
+ * Run:  node src/lib/warp/useWarpTransfer.check.mjs
  */
 
 let failures = 0;
@@ -29,7 +29,7 @@ function assert(cond, msg) {
   }
 }
 
-/** A fake WrapPeer that records calls and lets us drive its events. */
+/** A fake WarpPeer that records calls and lets us drive its events. */
 class FakePeer {
   constructor(remoteId, initiator) {
     this.remoteId = remoteId;

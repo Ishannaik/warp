@@ -51,10 +51,10 @@ export default function NearbyDevices() {
         .nearby-link:hover{color:#efe9da !important}
         .nearby-cta:hover{filter:brightness(1.08)}
         .nearby-ghost:hover{border-color:rgba(239,233,218,.45) !important;color:#efe9da !important}
-        .wrap-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
-        .wrap-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
-        .wrap-cta:hover{filter:brightness(1.08)}
-        .wrap-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
+        .warp-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
+        .warp-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
+        .warp-cta:hover{filter:brightness(1.08)}
+        .warp-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
       `}</style>
 
       <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
@@ -75,7 +75,7 @@ export default function NearbyDevices() {
                 width: "8px",
                 height: "8px",
                 background: "var(--acc)",
-                animation: "wrapBlink 1.6s steps(1) infinite",
+                animation: "warpBlink 1.6s steps(1) infinite",
               }}
             />
             <span
@@ -245,7 +245,7 @@ function DeviceCard({
             borderRadius: "50%",
             background: "var(--acc)",
             boxShadow: "0 0 0 2px #121110",
-            animation: "wrapBlink 1.8s steps(1) infinite",
+            animation: "warpBlink 1.8s steps(1) infinite",
           }}
         />
       </span>
@@ -316,7 +316,7 @@ function EmptyState({ isMobile }: { isMobile: boolean }) {
               height: "9px",
               borderRadius: "50%",
               border: "1px solid rgba(239,233,218,.3)",
-              animation: "wrapBlink 1.8s steps(1) infinite",
+              animation: "warpBlink 1.8s steps(1) infinite",
               animationDelay: `${i * 0.3}s`,
             }}
           />
@@ -492,7 +492,7 @@ function SessionModal({
     background: "#121110",
     border: "1px solid rgba(239,233,218,.18)",
     boxShadow: "0 40px 120px -30px rgba(0,0,0,.85)",
-    animation: "wrapRise .35s cubic-bezier(.2,.8,.2,1) both",
+    animation: "warpRise .35s cubic-bezier(.2,.8,.2,1) both",
     padding: "18px",
   };
 
@@ -512,7 +512,7 @@ function SessionModal({
         background: "rgba(10,10,14,.55)",
         backdropFilter: "blur(10px)",
         WebkitBackdropFilter: "blur(10px)",
-        animation: "wrapFade .18s ease both",
+        animation: "warpFade .18s ease both",
         fontFamily: "'Archivo',system-ui,sans-serif",
         color: "#efe9da",
       }}

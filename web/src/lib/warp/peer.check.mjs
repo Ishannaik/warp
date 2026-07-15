@@ -1,20 +1,20 @@
 /**
  * Runnable check for the review-before-receive transfer protocol (no test runner,
- * no new deps — matches server/test.js style). Wires two WrapPeers together via
+ * no new deps — matches server/test.js style). Wires two WarpPeers together via
  * fake data channels and asserts the offer -> accept -> stream -> file-received
  * round-trip, plus decline gating and cancel.
  *
- * Run:  node src/lib/wrap/peer.check.mjs   (after `pnpm --filter @warp/web build`,
+ * Run:  node src/lib/warp/peer.check.mjs   (after `pnpm --filter @warp/web build`,
  * OR with a transpile step). Because peer.ts is TS, this check imports a tiny
  * transpiled copy via esbuild if available; otherwise it documents the expected
- * trace. Kept dependency-free: it stubs only the browser globals WrapPeer touches.
+ * trace. Kept dependency-free: it stubs only the browser globals WarpPeer touches.
  */
 
 import assert from "node:assert";
 
 // --- minimal browser global stubs ----------------------------------------
 // A fake RTCPeerConnection that never actually connects; we drive the channel
-// directly. WrapPeer's constructor calls createDataChannel (initiator) or waits
+// directly. WarpPeer's constructor calls createDataChannel (initiator) or waits
 // for a "datachannel" event (responder).
 class FakeChannel extends EventTarget {
   constructor() {
@@ -62,7 +62,7 @@ globalThis.RTCPeerConnection = FakePC;
 if (typeof globalThis.document === "undefined") globalThis.document = undefined; // forces makeThumb to bail (non-image anyway)
 
 // --- transpile peer.ts/transfer.ts on the fly (esbuild if present) --------
-let WrapPeer;
+let WarpPeer;
 try {
   const esbuild = await import("esbuild");
   const fs = await import("node:fs/promises");
@@ -79,7 +79,7 @@ try {
   });
   const code = out.outputFiles[0].text;
   const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
-  ({ WrapPeer } = await import(dataUrl));
+  ({ WarpPeer } = await import(dataUrl));
   void fs;
 } catch (e) {
   console.error("SKIP: esbuild not available to transpile TS for this check —", e.message);
@@ -94,8 +94,8 @@ const sig = {
     sigSent.push({ to, data });
   },
 };
-const sender = new WrapPeer(sig, "B", true); // initiator owns localChannel
-const receiver = new WrapPeer(sig, "A", false);
+const sender = new WarpPeer(sig, "B", true); // initiator owns localChannel
+const receiver = new WarpPeer(sig, "A", false);
 
 // Cross-wire the sender's created channel to a fresh receiver channel.
 const sCh = sender.pc.localChannel;

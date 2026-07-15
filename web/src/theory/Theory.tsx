@@ -478,7 +478,7 @@ function FlowDiagram() {
             height: "9px",
             background: accent,
             display: "inline-block",
-            animation: direct ? "wrapBlink 1.1s steps(1) infinite" : "none",
+            animation: direct ? "warpBlink 1.1s steps(1) infinite" : "none",
           }}
         />
         <span
@@ -586,7 +586,7 @@ function FlowDiagram() {
                 ? "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 20px)"
                 : "repeating-linear-gradient(90deg,rgba(239,233,218,.18) 0 4px,transparent 4px 12px)",
               backgroundSize: "32px 100%",
-              animation: direct ? "wrapFlow .9s linear infinite" : "none",
+              animation: direct ? "warpFlow .9s linear infinite" : "none",
               WebkitMaskImage:
                 "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
               maskImage:
@@ -1172,7 +1172,7 @@ export default function Theory() {
               letterSpacing: ".2em",
               textTransform: "uppercase",
               color: "#908a7b",
-              animation: "wrapFade .8s ease both",
+              animation: "warpFade .8s ease both",
             }}
           >
             The theory &mdash; in plain language
@@ -1193,7 +1193,7 @@ export default function Theory() {
               <span
                 style={{
                   display: "inline-block",
-                  animation: "wrapRise .7s cubic-bezier(.2,.8,.2,1) both",
+                  animation: "warpRise .7s cubic-bezier(.2,.8,.2,1) both",
                 }}
               >
                 No server
@@ -1204,7 +1204,7 @@ export default function Theory() {
                 style={{
                   display: "inline-block",
                   color: "var(--acc)",
-                  animation: "wrapRise .7s cubic-bezier(.2,.8,.2,1) .09s both",
+                  animation: "warpRise .7s cubic-bezier(.2,.8,.2,1) .09s both",
                 }}
               >
                 in the middle.
@@ -1218,7 +1218,7 @@ export default function Theory() {
               color: "#cdc8ba",
               maxWidth: "600px",
               margin: "28px 0 0",
-              animation: "wrapFade .8s ease .5s both",
+              animation: "warpFade .8s ease .5s both",
             }}
           >
             Warp moves a file straight from one device to another over an
@@ -1230,7 +1230,7 @@ export default function Theory() {
           <div
             style={{
               marginTop: isMobile ? "36px" : "52px",
-              animation: "wrapFade .8s ease .65s both",
+              animation: "warpFade .8s ease .65s both",
             }}
           >
             <FlowDiagram />

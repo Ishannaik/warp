@@ -538,7 +538,7 @@ export function Endpoint({
                 height: "8px",
                 borderRadius: "50%",
                 background: tone === "neutral" ? ACC : toneColor(tone),
-                animation: "wrapBlink 1.1s steps(1) infinite",
+                animation: "warpBlink 1.1s steps(1) infinite",
               }}
             />
           ) : null}

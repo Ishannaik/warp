@@ -115,7 +115,7 @@ export default function ReceiveEntry() {
           padding: isMobile ? "32px 16px" : "48px 26px",
         }}
       >
-        <div style={{ width: "100%", maxWidth: "460px", animation: "wrapFade .5s ease both" }}>
+        <div style={{ width: "100%", maxWidth: "460px", animation: "warpFade .5s ease both" }}>
           <div
             style={{
               fontFamily: MONO,

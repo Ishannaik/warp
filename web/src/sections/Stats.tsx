@@ -98,7 +98,7 @@ export default function Stats() {
       <div style={{ maxWidth: 1320, margin: "0 auto" }}>
         <div
           ref={ref}
-          id="wrap-stats"
+          id="warp-stats"
           style={{
             display: "grid",
             gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)",

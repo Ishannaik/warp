@@ -5,8 +5,8 @@
  *
  * Multi-device mesh:
  *   A room can hold several devices (the server allows up to 8). We keep ONE
- *   `WrapPeer` per remote device in a Map, and every device is connected to
- *   every other (full mesh). Each `WrapPeer` is per-remote and already self-
+ *   `WarpPeer` per remote device in a Map, and every device is connected to
+ *   every other (full mesh). Each `WarpPeer` is per-remote and already self-
  *   contained — it emits transfer/incoming-offer/file-received/etc. events — so
  *   the hook just FANS OUT (send to all) and STAMPS each event with the peer it
  *   came from (`item.peerId`, `incoming.peerId`).
@@ -30,7 +30,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zipSync, type Zippable } from "fflate";
 import { SignalingClient, type SignalData } from "./signaling";
 import {
-  WrapPeer,
+  WarpPeer,
   type AcceptTarget,
   type FsDirHandle,
   type FsFileHandle,
@@ -61,9 +61,9 @@ interface WindowWithFsPickers {
   showDirectoryPicker?: () => Promise<FsDirHandle>;
 }
 
-export type WrapMode = "send" | "receive";
+export type WarpMode = "send" | "receive";
 
-export type WrapStatus =
+export type WarpStatus =
   | "idle" // nothing started yet
   | "connecting" // socket opening / joining room
   | "waiting" // in a room, waiting for the other side
@@ -89,26 +89,26 @@ export interface Connection {
   connected: boolean;
 }
 
-export interface WrapError {
+export interface WarpError {
   kind: PeerErrorKind | "signaling" | "no-files";
   message: string;
 }
 
-export interface UseWrapTransfer {
-  mode: WrapMode;
+export interface UseWarpTransfer {
+  mode: WarpMode;
   code: string | null;
   shareUrl: string | null;
   /** Raw remote peer ids in the room (kept for back-compat with existing UI). */
   peers: string[];
   /** Devices in the room with their labels + per-device connection state. */
   connections: Connection[];
-  status: WrapStatus;
+  status: WarpStatus;
   /** The session tray: every item we've sent or received, both directions.
    *  Each item carries `peerId` (which device it is to/from) in a mesh room. */
   items: TransferItem[];
   /** A pending offer from a peer awaiting accept/decline (tagged peerId), or null. */
   incoming: IncomingOffer | null;
-  error: WrapError | null;
+  error: WarpError | null;
   /** Sender: open a fresh room and wait for peers. */
   createRoom: () => void;
   /** Offer files to EVERY connected device (each gated by that device's accept).
@@ -138,7 +138,7 @@ export interface UseWrapTransfer {
   retry: () => void;
 }
 
-const ERROR_MESSAGES: Record<WrapError["kind"], string> = {
+const ERROR_MESSAGES: Record<WarpError["kind"], string> = {
   "nat-failed": "Couldn't open a direct path between the devices. One side may be on a restrictive network.",
   disconnected:
     "The connection dropped and couldn't be restored. Retry to reconnect — unfinished files will be offered again.",
@@ -168,20 +168,20 @@ function saveBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
-  const mode: WrapMode = joinCode ? "receive" : "send";
+export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
+  const mode: WarpMode = joinCode ? "receive" : "send";
 
   const [code, setCode] = useState<string | null>(joinCode ?? null);
   const [peers, setPeers] = useState<string[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [status, setStatus] = useState<WrapStatus>("idle");
+  const [status, setStatus] = useState<WarpStatus>("idle");
   const [items, setItems] = useState<TransferItem[]>([]);
   const [incoming, setIncoming] = useState<IncomingOffer | null>(null);
-  const [error, setError] = useState<WrapError | null>(null);
+  const [error, setError] = useState<WarpError | null>(null);
 
   const signalingRef = useRef<SignalingClient | null>(null);
-  /** One WrapPeer per remote device id (full mesh). */
-  const peersRef = useRef<Map<string, WrapPeer>>(new Map());
+  /** One WarpPeer per remote device id (full mesh). */
+  const peersRef = useRef<Map<string, WarpPeer>>(new Map());
   /** Files staged by the sender to offer each peer the moment its channel opens. */
   const pendingFilesRef = useRef<File[] | null>(null);
   /** Every File handed to sendFiles this session — the pool salvage draws on to
@@ -202,7 +202,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
     [code],
   );
 
-  const fail = useCallback((kind: WrapError["kind"], message?: string) => {
+  const fail = useCallback((kind: WarpError["kind"], message?: string) => {
     setError({ kind, message: message ?? ERROR_MESSAGES[kind] });
     setStatus("error");
   }, []);
@@ -230,7 +230,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   }, []);
 
   /** Every peer whose data channel is currently open. */
-  const connectedPeers = useCallback((): WrapPeer[] => {
+  const connectedPeers = useCallback((): WarpPeer[] => {
     return Array.from(peersRef.current.values()).filter((p) => p.isConnected);
   }, []);
 
@@ -242,7 +242,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
   /** Wire one per-remote peer's events into hook state, stamping its peerId. */
   const bindPeer = useCallback(
-    (peerId: string, peer: WrapPeer) => {
+    (peerId: string, peer: WarpPeer) => {
       peer.on("connected", () => {
         // Any open channel means the session is live — even from a terminal
         // error screen (a device coming back late self-heals the session).
@@ -303,7 +303,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   const addInitiator = useCallback(
     (sig: SignalingClient, peerId: string) => {
       if (peersRef.current.has(peerId)) return;
-      const peer = new WrapPeer(sig, peerId, true);
+      const peer = new WarpPeer(sig, peerId, true);
       peersRef.current.set(peerId, peer);
       bindPeer(peerId, peer);
       refreshConnections();
@@ -316,7 +316,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
   const addResponder = useCallback(
     (sig: SignalingClient, peerId: string) => {
       if (peersRef.current.has(peerId)) return peersRef.current.get(peerId)!;
-      const peer = new WrapPeer(sig, peerId, false);
+      const peer = new WarpPeer(sig, peerId, false);
       peersRef.current.set(peerId, peer);
       bindPeer(peerId, peer);
       refreshConnections();
@@ -374,7 +374,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
       sig.on("peer-joined", (peerId) => {
         setPeers((p) => (p.includes(peerId) ? p : [...p, peerId]));
-        // We were here first -> responder. The WrapPeer is created LAZILY when
+        // We were here first -> responder. The WarpPeer is created LAZILY when
         // its first signal frame arrives (see the "signal" handler), so a device
         // that joins but never handshakes doesn't leave a ghost entry.
       });
@@ -397,7 +397,7 @@ export function useWrapTransfer(joinCode?: string): UseWrapTransfer {
 
       sig.on("signal", ({ from, data }: { from: string; data: SignalData }) => {
         // A responder may receive its first offer before `peer-joined` was
-        // processed into a WrapPeer; lazily construct one for `from`.
+        // processed into a WarpPeer; lazily construct one for `from`.
         const peer = peersRef.current.get(from) ?? addResponder(sig, from);
         peer.handleSignal(from, data).catch(() => fail("channel-error"));
       });

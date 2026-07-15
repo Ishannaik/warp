@@ -81,11 +81,11 @@ export default function Hero() {
     >
       {/* hover styles (source style-hover attributes) */}
       <style>{`
-        .wrap-nav-link:hover{color:#efe9da}
-        .wrap-launch:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.12)}
-        .wrap-cta-primary:hover{background:#6470ff}
-        .wrap-cta-secondary:hover{background:rgba(239,233,218,.05);border-color:rgba(239,233,218,.55)}
-        .wrap-footer-link:hover{color:#efe9da}
+        .warp-nav-link:hover{color:#efe9da}
+        .warp-launch:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.12)}
+        .warp-cta-primary:hover{background:#6470ff}
+        .warp-cta-secondary:hover{background:rgba(239,233,218,.05);border-color:rgba(239,233,218,.55)}
+        .warp-footer-link:hover{color:#efe9da}
       `}</style>
 
       {/* corner crosshairs */}
@@ -163,7 +163,7 @@ export default function Hero() {
           >
             <a
               href="/how"
-              className="wrap-nav-link"
+              className="warp-nav-link"
               style={navLink}
               onClick={(e) => {
                 e.preventDefault();
@@ -174,7 +174,7 @@ export default function Hero() {
             </a>
             <a
               href="/receive"
-              className="wrap-nav-link"
+              className="warp-nav-link"
               style={navLink}
               onClick={(e) => {
                 e.preventDefault();
@@ -183,18 +183,18 @@ export default function Hero() {
             >
               RECEIVE
             </a>
-            <a href="#trust" className="wrap-nav-link" style={navLink}>
+            <a href="#trust" className="warp-nav-link" style={navLink}>
               SECURITY
             </a>
-            <a href="#compare" className="wrap-nav-link" style={navLink}>
+            <a href="#compare" className="warp-nav-link" style={navLink}>
               COMPARE
             </a>
-            <a href="#faq" className="wrap-nav-link" style={navLink}>
+            <a href="#faq" className="warp-nav-link" style={navLink}>
               FAQ
             </a>
             <a
               href="https://github.com/Ishannaik/warp"
-              className="wrap-nav-link"
+              className="warp-nav-link"
               style={navLink}
               target="_blank"
               rel="noopener noreferrer"
@@ -206,7 +206,7 @@ export default function Hero() {
         {isMobile && (
           <a
             href="/receive"
-            className="wrap-nav-link"
+            className="warp-nav-link"
             style={{ ...navLink, fontFamily: MONO, fontSize: "12px", letterSpacing: ".05em" }}
             onClick={(e) => {
               e.preventDefault();
@@ -218,7 +218,7 @@ export default function Hero() {
         )}
         <a
           href="/send"
-          className="wrap-launch"
+          className="warp-launch"
           onClick={(e) => {
             e.preventDefault();
             navigate("/send");
@@ -263,7 +263,7 @@ export default function Hero() {
         <div style={{ maxWidth: isMobile ? "100%" : "560px" }}>
           <div
             style={{
-              animation: "wrapFade .8s ease both",
+              animation: "warpFade .8s ease both",
               display: "inline-flex",
               alignItems: "center",
               gap: "11px",
@@ -280,7 +280,7 @@ export default function Hero() {
                 width: "7px",
                 height: "7px",
                 background: "var(--amb)",
-                animation: "wrapBlink 1.4s steps(1) infinite",
+                animation: "warpBlink 1.4s steps(1) infinite",
               }}
             />
             Free forever · no upload · no size cap
@@ -300,7 +300,7 @@ export default function Hero() {
               <span
                 style={{
                   display: "inline-block",
-                  animation: "wrapRise .7s cubic-bezier(.2,.8,.2,1) both",
+                  animation: "warpRise .7s cubic-bezier(.2,.8,.2,1) both",
                 }}
               >
                 Send it
@@ -311,7 +311,7 @@ export default function Hero() {
                 style={{
                   display: "inline-block",
                   color: "var(--acc)",
-                  animation: "wrapRise .7s cubic-bezier(.2,.8,.2,1) .09s both",
+                  animation: "warpRise .7s cubic-bezier(.2,.8,.2,1) .09s both",
                 }}
               >
                 straight
@@ -321,7 +321,7 @@ export default function Hero() {
               <span
                 style={{
                   display: "inline-block",
-                  animation: "wrapRise .7s cubic-bezier(.2,.8,.2,1) .18s both",
+                  animation: "warpRise .7s cubic-bezier(.2,.8,.2,1) .18s both",
                 }}
               >
                 through.
@@ -330,7 +330,7 @@ export default function Hero() {
           </h1>
           <p
             style={{
-              animation: "wrapFade .8s ease .5s both",
+              animation: "warpFade .8s ease .5s both",
               fontSize: isMobile ? "16px" : "18.5px",
               lineHeight: 1.55,
               color: "#a8a293",
@@ -343,7 +343,7 @@ export default function Hero() {
           </p>
           <div
             style={{
-              animation: "wrapFade .8s ease .65s both",
+              animation: "warpFade .8s ease .65s both",
               display: "flex",
               flexDirection: isMobile ? "column" : "row",
               gap: "14px",
@@ -352,7 +352,7 @@ export default function Hero() {
           >
             <a
               href="/send"
-              className="wrap-cta-primary"
+              className="warp-cta-primary"
               onClick={(e) => {
                 e.preventDefault();
                 navigate("/send");
@@ -377,7 +377,7 @@ export default function Hero() {
             </a>
             <a
               href="/receive"
-              className="wrap-cta-secondary"
+              className="warp-cta-secondary"
               onClick={(e) => {
                 e.preventDefault();
                 navigate("/receive");
@@ -404,13 +404,13 @@ export default function Hero() {
           </div>
           <a
             href="/how"
-            className="wrap-footer-link"
+            className="warp-footer-link"
             onClick={(e) => {
               e.preventDefault();
               navigate("/how");
             }}
             style={{
-              animation: "wrapFade .8s ease .72s both",
+              animation: "warpFade .8s ease .72s both",
               display: "inline-block",
               fontFamily: MONO,
               fontSize: "11.5px",
@@ -424,7 +424,7 @@ export default function Hero() {
           </a>
           <div
             style={{
-              animation: "wrapFade .8s ease .8s both",
+              animation: "warpFade .8s ease .8s both",
               fontFamily: MONO,
               fontSize: "11px",
               letterSpacing: ".08em",
@@ -463,7 +463,7 @@ export default function Hero() {
           style={{
             display: "inline-flex",
             whiteSpace: "nowrap",
-            animation: "wrapMarquee 30s linear infinite",
+            animation: "warpMarquee 30s linear infinite",
           }}
         >
           <span style={tickerTrack}>{tickerItems}</span>

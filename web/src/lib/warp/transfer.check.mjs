@@ -2,7 +2,7 @@
  * Runnable check for the resume identity helpers in transfer.ts (no test runner;
  * matches peer.check.mjs style — transpiles the TS on the fly via esbuild).
  *
- * Run:  node src/lib/wrap/transfer.check.mjs   (from web/)
+ * Run:  node src/lib/warp/transfer.check.mjs   (from web/)
  */
 
 import assert from "node:assert";

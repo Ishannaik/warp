@@ -4,7 +4,7 @@
  * order, that finalize reassembles / closes, and that a rejecting write POISONS
  * the sink instead of silently advancing the offset.
  *
- * Run:  node src/lib/wrap/receiveController.check.mjs   (from web/)
+ * Run:  node src/lib/warp/receiveController.check.mjs   (from web/)
  */
 
 import assert from "node:assert";

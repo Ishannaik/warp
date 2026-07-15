@@ -17,8 +17,8 @@
 
 import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { formatBytes, type OfferItem, type TransferItem } from "../lib/wrap/transfer";
-import type { Connection } from "../lib/wrap/useWrapTransfer";
+import { formatBytes, type OfferItem, type TransferItem } from "../lib/warp/transfer";
+import type { Connection } from "../lib/warp/useWarpTransfer";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -200,7 +200,7 @@ function ItemRow({
           {transferring && (
             <button
               type="button"
-              className="wrap-rowbtn"
+              className="warp-rowbtn"
               onClick={() => onCancel(item.id)}
               aria-label="Cancel transfer"
               style={iconBtn}
@@ -211,7 +211,7 @@ function ItemRow({
           {canDownload && (
             <button
               type="button"
-              className="wrap-cta"
+              className="warp-cta"
               onClick={() => onDownload(item.id)}
               style={{
                 padding: "8px 14px",
@@ -275,7 +275,7 @@ function ItemRow({
           </div>
           <button
             type="button"
-            className="wrap-share"
+            className="warp-share"
             onClick={copyText}
             style={{
               alignSelf: "flex-start",
@@ -412,10 +412,10 @@ function Composer({
       <div style={{ padding: isMobile ? "14px" : "16px 15px", display: "flex", flexDirection: "column", gap: "14px" }}>
         {/* file pickers */}
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: "10px" }}>
-          <button type="button" className="wrap-ghost" onClick={pickFiles} style={composerBtn(isMobile)}>
+          <button type="button" className="warp-ghost" onClick={pickFiles} style={composerBtn(isMobile)}>
             ＋ {staging ? "Add files" : "Send files"}
           </button>
-          <button type="button" className="wrap-ghost" onClick={pickFolder} style={composerBtn(isMobile)}>
+          <button type="button" className="warp-ghost" onClick={pickFolder} style={composerBtn(isMobile)}>
             ▤ {staging ? "Add a folder" : "Send a folder"}
           </button>
         </div>
@@ -460,7 +460,7 @@ function Composer({
           />
           <button
             type="button"
-            className={text.trim() ? "wrap-cta" : undefined}
+            className={text.trim() ? "warp-cta" : undefined}
             onClick={submitText}
             disabled={!text.trim()}
             style={{
@@ -600,7 +600,7 @@ function PendingTray({
             </span>
             <button
               type="button"
-              className="wrap-rowbtn"
+              className="warp-rowbtn"
               onClick={() => onRemovePending(p.id)}
               aria-label={`Remove ${p.file.name}`}
               style={{ ...iconBtn, flexShrink: 0 }}
@@ -613,7 +613,7 @@ function PendingTray({
 
       <button
         type="button"
-        className="wrap-cta"
+        className="warp-cta"
         onClick={onSendPending}
         disabled={count === 0}
         style={{
@@ -703,7 +703,7 @@ function Tray({
         {receivedFiles > 0 && (
           <button
             type="button"
-            className="wrap-share"
+            className="warp-share"
             onClick={onDownloadAll}
             style={{
               padding: "7px 14px",
@@ -752,7 +752,7 @@ function Tray({
 
 /* --------------------------------------------------------------- accept modal */
 
-// Mirrors LARGE_THRESHOLD in useWrapTransfer: large batches stream straight to
+// Mirrors LARGE_THRESHOLD in useWarpTransfer: large batches stream straight to
 // disk via a folder/file picker instead of accumulating in memory.
 const LARGE_THRESHOLD = 256 * 1024 * 1024;
 
@@ -794,7 +794,7 @@ export function AcceptModal({
         background: "rgba(10,10,14,.55)",
         backdropFilter: "blur(10px)",
         WebkitBackdropFilter: "blur(10px)",
-        animation: "wrapFade .18s ease both",
+        animation: "warpFade .18s ease both",
         fontFamily: "'Archivo',system-ui,sans-serif",
         color: "#efe9da",
       }}
@@ -806,7 +806,7 @@ export function AcceptModal({
           background: "#15140f",
           border: "1px solid rgba(239,233,218,.18)",
           boxShadow: "0 40px 120px -30px rgba(0,0,0,.85)",
-          animation: "wrapRise .35s cubic-bezier(.2,.8,.2,1) both",
+          animation: "warpRise .35s cubic-bezier(.2,.8,.2,1) both",
           maxHeight: "90vh",
           display: "flex",
           flexDirection: "column",
@@ -906,7 +906,7 @@ export function AcceptModal({
         >
           <button
             type="button"
-            className="wrap-share"
+            className="warp-share"
             onClick={onDecline}
             style={{
               order: isMobile ? 1 : 0,
@@ -926,7 +926,7 @@ export function AcceptModal({
           </button>
           <button
             type="button"
-            className="wrap-cta"
+            className="warp-cta"
             onClick={onAccept}
             style={{
               order: isMobile ? 0 : 1,
@@ -976,7 +976,7 @@ function DeviceChip({ label, connected }: { label: string; connected: boolean })
           flexShrink: 0,
           borderRadius: "50%",
           background: connected ? "var(--acc)" : "#6f6a5d",
-          animation: connected ? "wrapBlink 1.6s steps(1) infinite" : undefined,
+          animation: connected ? "warpBlink 1.6s steps(1) infinite" : undefined,
         }}
       />
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1046,7 +1046,7 @@ export function SessionView({
     : undefined;
 
   return (
-    <div style={{ animation: "wrapFade .5s ease both", display: "flex", flexDirection: "column", gap: "18px" }}>
+    <div style={{ animation: "warpFade .5s ease both", display: "flex", flexDirection: "column", gap: "18px" }}>
       {/* connected header */}
       <div
         style={{
@@ -1065,7 +1065,7 @@ export function SessionView({
             flexShrink: 0,
             marginTop: multiDevice ? "4px" : 0,
             background: "var(--acc)",
-            animation: "wrapBlink 1.6s steps(1) infinite",
+            animation: "warpBlink 1.6s steps(1) infinite",
           }}
         />
         <span style={{ minWidth: 0, flex: 1 }}>

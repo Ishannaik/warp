@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
  *   code segment is decoded and exposed as `code`; otherwise `code` is null.
  */
 
-const EVENT = "wrap:navigate";
+const EVENT = "warp:navigate";
 
 export function navigate(path: string): void {
   if (path === window.location.pathname + window.location.search) return;

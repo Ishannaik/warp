@@ -167,12 +167,12 @@ interface IncomingState {
 }
 
 /**
- * Where an in-flight file's bytes go. WrapPeer is sink-agnostic: it asks the host
+ * Where an in-flight file's bytes go. WarpPeer is sink-agnostic: it asks the host
  * to `begin` a sink for a file and reads/writes through it, so the OWNER of the
  * bytes can live OUTSIDE the peer (the hook, in a registry keyed by file identity)
  * and survive a peer rebuild on a reconnect — the key to disk resume.
  *
- * When no host is injected, WrapPeer uses DefaultReceiveHost (below), preserving
+ * When no host is injected, WarpPeer uses DefaultReceiveHost (below), preserving
  * the standalone memory/disk behaviour the check harness exercises.
  */
 export interface ReceiveHost {
@@ -242,7 +242,7 @@ export class DefaultReceiveHost implements ReceiveHost {
   }
 }
 
-export class WrapPeer {
+export class WarpPeer {
   private pc: RTCPeerConnection;
   private channel: RTCDataChannel | null = null;
   private signaling: SignalingClient;
@@ -306,7 +306,7 @@ export class WrapPeer {
 
     if (initiator) {
       // Initiator owns the channel.
-      const ch = this.pc.createDataChannel("wrap", { ordered: true });
+      const ch = this.pc.createDataChannel("warp", { ordered: true });
       this.attachChannel(ch);
     } else {
       // Responder waits for the remote's channel.

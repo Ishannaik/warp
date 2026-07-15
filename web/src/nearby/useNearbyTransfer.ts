@@ -1,13 +1,13 @@
 /**
  * Session-state layer for LAN-discovery transfers.
  *
- * Discovery + the WebRTC transport are owned by `useNearby` (src/lib/wrap/useNearby):
+ * Discovery + the WebRTC transport are owned by `useNearby` (src/lib/warp/useNearby):
  * it keeps one persistent announced socket, exposes the live `nearby` snapshot, and
- * hands back primed `WrapPeer`s — `connectTo(peerId)` for outbound sends (an already-
+ * hands back primed `WarpPeer`s — `connectTo(peerId)` for outbound sends (an already-
  * started initiator) and `onIncoming(cb)` for inbound offers (a responder already fed
  * the SDP offer). See useNearby.ts.
  *
- * Review-before-receive redesign: this hook now mirrors `useWrapTransfer`'s session
+ * Review-before-receive redesign: this hook now mirrors `useWarpTransfer`'s session
  * model so the LAN flow funnels into the SAME session UI + accept modal:
  *   - ONE live session per active nearby peer; the data channel stays OPEN after a
  *     batch, so either device can keep sending / send back without re-pairing.
@@ -23,11 +23,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zipSync, type Zippable } from "fflate";
-import { useNearby, type IncomingConnection, type NearbyDevice } from "../lib/wrap/useNearby";
-import type { WrapPeer } from "../lib/wrap/peer";
-import { type OfferItem, type TransferItem } from "../lib/wrap/transfer";
+import { useNearby, type IncomingConnection, type NearbyDevice } from "../lib/warp/useNearby";
+import type { WarpPeer } from "../lib/warp/peer";
+import { type OfferItem, type TransferItem } from "../lib/warp/transfer";
 
-export type { NearbyDevice } from "../lib/wrap/useNearby";
+export type { NearbyDevice } from "../lib/warp/useNearby";
 
 /** A live discovery session (symmetric — both peers can send & receive). */
 export interface NearbySession {
@@ -99,7 +99,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
   const [incoming, setIncoming] = useState<IncomingRequest | null>(null);
 
   /** The peer backing the active session (so dismiss can close it). */
-  const peerRef = useRef<WrapPeer | null>(null);
+  const peerRef = useRef<WarpPeer | null>(null);
   /** Items kept in a ref too, so downloadOne/All resolve blobs without re-binding. */
   const itemsRef = useRef<TransferItem[]>([]);
   /** Name of the active session peer, for the accept prompt. */
@@ -126,7 +126,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
   /** Bind a peer's lifecycle events into the active session. */
   const bindPeer = useCallback(
-    (peer: WrapPeer) => {
+    (peer: WarpPeer) => {
       peer.on("connected", () =>
         setSession((prev) => (prev ? { ...prev, connected: true } : prev)),
       );
@@ -153,7 +153,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
   /** Spin up a fresh session around a peer (or replace the current one). */
   const openSession = useCallback(
-    (peer: WrapPeer, peerId: string, peerName: string) => {
+    (peer: WarpPeer, peerId: string, peerName: string) => {
       if (peerRef.current && peerRef.current !== peer) peerRef.current.close();
       peerRef.current = peer;
       peerNameRef.current = peerName;

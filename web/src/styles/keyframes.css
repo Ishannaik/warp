@@ -1,6 +1,6 @@
 /* All @keyframes ported verbatim from the Wrap design source. Do not redefine elsewhere. */
 
-@keyframes wrapRise {
+@keyframes warpRise {
   from {
     opacity: 0;
     transform: translateY(46px);
@@ -11,7 +11,7 @@
   }
 }
 
-@keyframes wrapFade {
+@keyframes warpFade {
   from {
     opacity: 0;
   }
@@ -20,7 +20,7 @@
   }
 }
 
-@keyframes wrapBlink {
+@keyframes warpBlink {
   0%,
   100% {
     opacity: 1;
@@ -30,7 +30,7 @@
   }
 }
 
-@keyframes wrapScan {
+@keyframes warpScan {
   0% {
     left: -18%;
   }
@@ -39,13 +39,13 @@
   }
 }
 
-@keyframes wrapSpin {
+@keyframes warpSpin {
   to {
     transform: translate(-50%, -50%) rotate(360deg);
   }
 }
 
-@keyframes wrapShimmer {
+@keyframes warpShimmer {
   0% {
     transform: translateX(-130%);
   }
@@ -55,7 +55,7 @@
   }
 }
 
-@keyframes wrapMarquee {
+@keyframes warpMarquee {
   from {
     transform: translateX(0);
   }
@@ -64,7 +64,7 @@
   }
 }
 
-@keyframes wrapMeteor {
+@keyframes warpMeteor {
   0% {
     transform: rotate(24deg) translateY(-180px);
     opacity: 0;
@@ -81,7 +81,7 @@
   }
 }
 
-@keyframes wrapLamp {
+@keyframes warpLamp {
   0%,
   100% {
     opacity: 0.4;
@@ -91,14 +91,14 @@
   }
 }
 
-@keyframes wrapFlow {
+@keyframes warpFlow {
   to {
     background-position: 32px 0;
   }
 }
 
 /* Pairing ping (Transfer flow, Step 02). Added by the Build phase. */
-@keyframes wrapPing {
+@keyframes warpPing {
   0% {
     transform: scale(0.35);
     opacity: 0.65;
@@ -114,7 +114,7 @@
    * a11y-safe pattern: never remove entrance animations (that would strand
    * elements at their opacity:0 / translateY start frame and blank the page).
    * Instead, collapse all animations/transitions to ~instant and force them to
-   * hold their final frame, so wrapRise/wrapFade settle at opacity:1 immediately.
+   * hold their final frame, so warpRise/warpFade settle at opacity:1 immediately.
    */
   *,
   *::before,

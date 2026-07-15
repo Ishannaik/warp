@@ -87,7 +87,7 @@ export default function TransferWindow() {
     <div
       style={{
         position: "relative",
-        animation: "wrapFade .9s ease .35s both",
+        animation: "warpFade .9s ease .35s both",
         ...(isMobile ? { width: "100%", maxWidth: "100%" } : null),
       }}
     >
@@ -112,7 +112,7 @@ export default function TransferWindow() {
             transform: "translate(-50%,-50%)",
             background:
               "conic-gradient(from 0deg,transparent 0 66%,rgba(var(--acc-rgb),0) 66%,var(--acc) 82%,#aab2ff 89%,var(--amb) 95%,transparent 99%)",
-            animation: "wrapSpin var(--beam-dur,6s) linear infinite",
+            animation: "warpSpin var(--beam-dur,6s) linear infinite",
           }}
         />
       </div>
@@ -371,7 +371,7 @@ export default function TransferWindow() {
                       width: "40px",
                       background:
                         "linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent)",
-                      animation: "wrapScan 2.2s linear infinite",
+                      animation: "warpScan 2.2s linear infinite",
                     }}
                   />
                 </span>
@@ -546,7 +546,7 @@ function PeerRow({ name, meta, tag, tagColor, dotBorder, dotBg, dotBlink }: Peer
             width: "8px",
             height: "8px",
             background: dotBg,
-            animation: dotBlink ? "wrapBlink 1s steps(1) infinite" : undefined,
+            animation: dotBlink ? "warpBlink 1s steps(1) infinite" : undefined,
           }}
         />
       </div>
