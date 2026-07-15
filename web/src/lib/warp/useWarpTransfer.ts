@@ -38,6 +38,7 @@ import {
   type ReceiveHost,
 } from "./peer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
+import { estimateFits, gcOrphanStaging, idbSink } from "./idbStage";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 
 /**
@@ -113,7 +114,7 @@ export interface Connection {
 }
 
 export interface WarpError {
-  kind: PeerErrorKind | "signaling" | "no-files";
+  kind: PeerErrorKind | "signaling" | "no-files" | "too-large";
   message: string;
 }
 
@@ -168,6 +169,7 @@ const ERROR_MESSAGES: Record<WarpError["kind"], string> = {
   "channel-error": "The data channel hit an error.",
   signaling: "Lost contact with the signaling server.",
   "no-files": "Add at least one file before opening a channel.",
+  "too-large": "This device can't receive a file this large. Try a desktop browser (Chrome/Edge).",
 };
 
 /** How long "reconnecting" may last before we surface an honest failure. */
@@ -721,6 +723,22 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       }
     }
 
+    // Large but NO disk target (no FS Access API, or the picker was cancelled): fall
+    // back to IndexedDB staging — but GATE it so we don't OOM-crash the tab. If the
+    // device genuinely can't hold it (iOS memory ceiling / no storage room), refuse
+    // honestly (decline the offer) instead of crashing (Fable M3/M4).
+    let useIdb = false;
+    if (large && !target) {
+      const fit = await estimateFits(total);
+      if (!fit.ok) {
+        setIncoming(null);
+        peer.declineOffer(off.batchId);
+        fail("too-large", fit.reason);
+        return;
+      }
+      useIdb = true;
+    }
+
     // Build a durable registry entry + sink per file BEFORE accepting, so the
     // received bytes live in a place the HOOK owns and thus survive a peer rebuild
     // on reconnect (the key to resume). Disk => stream to the chosen target (names
@@ -739,6 +757,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         savedName = target.fileHandle.name || it.name;
         const fh = target.fileHandle;
         sink = diskSink(async () => fh.createWritable());
+      } else if (useIdb) {
+        sink = idbSink(it.id, it.mime); // large, no FS Access -> IDB staging (bounded RAM)
       } else {
         sink = memorySink(it.mime);
       }
@@ -909,6 +929,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       void sentinel?.release().catch(() => {});
     };
   }, [transferring]);
+
+  // Prune abandoned IDB staging rows from crashed sessions once on mount (best-effort).
+  useEffect(() => {
+    void gcOrphanStaging();
+  }, []);
 
   // Receiver: auto-join the room from the URL on mount.
   useEffect(() => {
