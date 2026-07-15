@@ -94,6 +94,25 @@ async function run() {
   sendj(d, { type: 'join', room: 'ZZZZZZ' });
   assert.equal((await next(d, (m) => m.type === 'error')).error, 'room-not-found', 'rejects missing room');
 
+  // 7. Reclaim window (H6=A): when BOTH devices drop at once (a shared tunnel), the
+  //    code is reserved ~3 min so a rejoin resurrects the SAME room instead of a
+  //    room-not-found — the piece that lets a dual-drop resume.
+  const r1 = await connect();
+  sendj(r1, { type: 'join' });
+  const reclaimCode = (await next(r1, (m) => m.type === 'joined')).room;
+  const r2 = await connect();
+  sendj(r2, { type: 'join', room: reclaimCode });
+  await next(r2, (m) => m.type === 'joined');
+  r1.close(); // one leaves — room still has r2, so NOT reserved yet
+  r2.close(); // last one out — now the code is reserved
+  await delay(500); // let the close handlers persist the reclaim record
+  const r3 = await connect();
+  sendj(r3, { type: 'join', room: reclaimCode });
+  const r3j = await next(r3, (m) => m.type === 'joined');
+  assert.equal(r3j.room, reclaimCode, 'a both-sides drop can rejoin the SAME code within the reclaim window');
+  assert.deepEqual(r3j.peers, [], 'reclaimed room starts empty — a fresh handshake, no stale server state');
+  r3.close();
+
   for (const ws of [a, c, d]) ws.close();
 }
 

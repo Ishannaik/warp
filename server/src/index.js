@@ -7,6 +7,7 @@ const MAX_DISCOVER = 8;                                    // >this many sockets
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no ambiguous 0/O/1/I/L
 const CODE_LEN = 6;
 const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
+const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
 
 export default {
   async fetch(request, env) {
@@ -85,7 +86,7 @@ export class SignalingRoom {
     return this.send(ws, { type: 'error', error: 'unknown-type', message: msg.type });
   }
 
-  handleJoin(ws, msg) {
+  async handleJoin(ws, msg) {
     const prev = ws.deserializeAttachment();
     if (prev && prev.room != null) this.notifyLeft(ws, prev); // one room per socket; ignore an ip-only attachment
 
@@ -95,7 +96,17 @@ export class SignalingRoom {
     } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
     } else if (!this.roomExists(code)) {
-      return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+      // Room has no live sockets — but if it was reserved within the reclaim window
+      // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
+      // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
+      // (an alarm can be delayed/coalesced). No transfer state is restored — the
+      // client registry + resumeToken carry the file resume; the server only owes
+      // the same rendezvous code.
+      const rec = await this.state.storage.get('reclaim:' + code);
+      if (!rec || rec.expiresAt < Date.now()) {
+        return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+      }
+      await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
     } else if (this.sockets(code, null).length >= MAX_PEERS) {
       return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
     }
@@ -167,20 +178,41 @@ export class SignalingRoom {
     for (const p of this.sockets(a.room, ws)) this.send(p, { type: 'peer-left', peerId: a.peerId });
   }
 
-  handleGone(ws) {
+  async handleGone(ws) {
     const a = ws.deserializeAttachment();
     if (!a) return;
-    if (a.room != null) this.notifyLeft(ws, a);           // room flow: tell peers it left
+    if (a.room != null) {
+      this.notifyLeft(ws, a);                             // room flow: tell peers it left
+      // If this was the LAST socket in the room, reserve the code for ~3 min so a
+      // both-sides drop can rejoin the SAME code and resume (H6=A). The DO isn't
+      // evicted mid-storage-op (output gate holds it until the put is durable), so
+      // awaiting here is safe and avoids losing the record to hibernation.
+      if (this.sockets(a.room, ws).length === 0) {
+        const expiresAt = Date.now() + RECLAIM_MS;
+        await this.state.storage.put('reclaim:' + a.room, { code: a.room, expiresAt });
+        await this.state.storage.setAlarm(expiresAt);
+      }
+    }
     // The socket is closing, so it's already excluded from getWebSockets() by the time
     // the recompute runs; broadcasting on its IP refreshes the rest of the nearby group.
     if (a.discoverable) this.broadcastNearby(a.ip);
   }
 
+  // GC expired reclaim records. The alarm is best-effort (can be delayed/coalesced),
+  // so reads also re-validate expiry — this just stops stale reservations piling up.
+  async alarm() {
+    const now = Date.now();
+    const recs = await this.state.storage.list({ prefix: 'reclaim:' });
+    for (const [k, v] of recs) {
+      if (!v || v.expiresAt <= now) await this.state.storage.delete(k);
+    }
+  }
+
   async webSocketClose(ws) {
-    this.handleGone(ws);
+    await this.handleGone(ws);
   }
 
   async webSocketError(ws) {
-    this.handleGone(ws);
+    await this.handleGone(ws);
   }
 }
