@@ -857,12 +857,21 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     }
   }, [mode, joinCode, code, connect, createRoom]);
 
-  // Watchdog: "reconnecting" must not spin forever. If nothing comes back
-  // within the window, surface an honest, retryable failure. (A late recovery
-  // still self-heals: any channel opening clears the error.)
+  // Watchdog: a mid-transfer drop must NEVER hard-fail while there's something to
+  // resume — signaling now retries for the life of the tab and the partials are
+  // durable, so we stay "reconnecting" (the banner tells the user it'll resume).
+  // Only when there is nothing unfinished to preserve do we surface an honest,
+  // retryable failure after the window. Any channel opening self-heals either way.
   useEffect(() => {
     if (status !== "reconnecting") return;
-    const t = setTimeout(() => fail("disconnected"), RECONNECT_WATCHDOG_MS);
+    const t = setTimeout(() => {
+      const resumable = itemsRef.current.some(
+        (it) =>
+          it.kind === "file" &&
+          (it.status === "transferring" || it.status === "reconnecting" || it.status === "offered"),
+      );
+      if (!resumable) fail("disconnected");
+    }, RECONNECT_WATCHDOG_MS);
     return () => clearTimeout(t);
   }, [status, fail]);
 

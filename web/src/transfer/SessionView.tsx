@@ -97,7 +97,7 @@ const STATUS_COPY: Record<TransferItem["status"], string> = {
 
 function statusColor(status: TransferItem["status"]): string {
   if (status === "done") return "var(--acc)";
-  if (status === "transferring") return "var(--amb)";
+  if (status === "transferring" || status === "reconnecting") return "var(--amb)";
   if (status === "declined" || status === "cancelled" || status === "error") return "#6f6a5d";
   return "#908a7b";
 }
@@ -118,7 +118,10 @@ function ItemRow({
 }) {
   const [copied, setCopied] = useState(false);
   const col = statusColor(item.status);
-  const transferring = item.status === "transferring";
+  // "reconnecting" holds the bar at its last % and shows RESUMING; it's still an
+  // active, cancellable transfer, so it renders like transferring but labeled.
+  const active = item.status === "transferring" || item.status === "reconnecting";
+  const reconnecting = item.status === "reconnecting";
   const isText = item.kind === "text";
   // Items streamed straight to disk have no in-memory blob — they're already
   // saved, so they show a "saved to disk" badge instead of a Download button.
@@ -197,7 +200,7 @@ function ItemRow({
 
         {/* row actions */}
         <span style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-          {transferring && (
+          {active && (
             <button
               type="button"
               className="warp-rowbtn"
@@ -296,7 +299,7 @@ function ItemRow({
       )}
 
       {/* progress bar while transferring */}
-      {transferring && (
+      {active && (
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span
             style={{
@@ -320,12 +323,13 @@ function ItemRow({
             style={{
               fontFamily: MONO,
               fontSize: "10.5px",
-              color: "#a8a293",
-              width: "34px",
+              color: reconnecting ? "var(--amb)" : "#a8a293",
+              width: reconnecting ? "auto" : "34px",
+              whiteSpace: "nowrap",
               textAlign: "right",
             }}
           >
-            {item.progress}%
+            {reconnecting ? `⟳ ${item.progress}%` : `${item.progress}%`}
           </span>
         </div>
       )}

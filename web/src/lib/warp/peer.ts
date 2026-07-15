@@ -955,11 +955,13 @@ export class WarpPeer {
     // Durable count is the single source of truth (Fable H1): for disk it advances
     // as writes resolve, so progress is conservative, never ahead of what's on disk.
     inc.item.transferred = inc.sink.bytesWritten;
-    inc.item.progress = Math.min(
-      100,
-      Math.round((inc.item.transferred / Math.max(1, inc.item.size)) * 100),
-    );
-    this.emit("transfer", { ...inc.item });
+    const p = Math.min(100, Math.round((inc.item.transferred / Math.max(1, inc.item.size)) * 100));
+    // Throttle UI emits to ~1% deltas (Fable L2) — the byte ledger above still
+    // updates every chunk, so a resume offset is never stale.
+    if (p !== inc.item.progress) {
+      inc.item.progress = p;
+      this.emit("transfer", { ...inc.item });
+    }
   }
 
   /**
