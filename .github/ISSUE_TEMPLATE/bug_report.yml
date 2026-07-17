@@ -1,34 +1,100 @@
-name: Bug report
+name: 🐛 Bug report
 description: Something isn't working
+title: "bug: "
 labels: [bug]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! A few minutes of detail here saves hours of guessing.
+        Transfers involve **two** devices — if the problem happened mid-transfer, tell us about both sides where you can.
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
       description: What did you expect, and what happened instead?
+      placeholder: "I sent a 2 GB zip from my laptop to my phone; it froze at 40% with no error."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps. Include rough file size/count if it's a transfer bug.
+      placeholder: |
+        1. Open warp.ishannaik.com/send on device A
+        2. ...
     validations:
       required: true
   - type: dropdown
     id: area
     attributes:
-      label: Where?
+      label: Where does it happen?
       options:
-        - web app (frontend)
-        - signaling server
-        - not sure
+        - Transfer engine (sending/receiving files)
+        - Connecting / pairing (codes, QR, nearby devices)
+        - UI / layout (web app pages)
+        - Signaling server
+        - Docs / other
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser (the device where you saw the problem)
+      options:
+        - Chrome / Chromium
+        - Edge
+        - Firefox
+        - Safari (macOS)
+        - Safari (iOS / iPadOS)
+        - Samsung Internet
+        - Brave
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device type
+      options:
+        - Desktop / laptop
+        - Phone
+        - Tablet
+        - Mixed (one of each — describe below)
     validations:
       required: true
   - type: input
     id: env
     attributes:
-      label: Browser / OS
-      placeholder: e.g. Chrome 140 on Windows 11
+      label: OS + browser versions (both devices if a transfer bug)
+      placeholder: "e.g. sender: Chrome 140 / Windows 11 · receiver: Safari / iOS 19"
     validations:
       required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network setup (transfer/connection bugs)
+      description: Warp is STUN-only by design — knowing the network helps separate real bugs from expected NAT failures.
+      options:
+        - Both devices on the same Wi-Fi / LAN
+        - Different networks (e.g. Wi-Fi to cellular)
+        - One or both on cellular / hotspot
+        - VPN or corporate network involved
+        - Don't know / not a transfer bug
+    validations:
+      required: false
   - type: textarea
     id: console
     attributes:
       label: Console / network errors
-      description: Paste any errors from the browser console or the server logs.
+      description: Open DevTools (F12) → Console and paste anything red. Screenshots welcome too.
       render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this isn't a duplicate
+          required: true

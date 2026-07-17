@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question / idea
+  - name: 💬 Question / idea / show & tell
     url: https://github.com/Ishannaik/warp/discussions
-    about: Ask questions and share ideas in Discussions.
+    about: Ask questions, float ideas, and share what you built in Discussions.
+  - name: 🤝 Contributing guide
+    url: https://github.com/Ishannaik/warp/blob/main/CONTRIBUTING.md
+    about: Dev setup, architecture pointers, hard constraints, and a first-PR walkthrough.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/Ishannaik/warp/blob/main/SECURITY.md
+    about: Please report security issues privately — not as public issues.

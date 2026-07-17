@@ -1,0 +1,69 @@
+name: ✨ Feature request
+description: Suggest an idea or improvement
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are very welcome! Before you write it up, a quick sanity check against Warp's hard constraints
+        (see [CONTRIBUTING.md](https://github.com/Ishannaik/warp/blob/main/CONTRIBUTING.md#hard-constraints-the-soul-of-the-project)):
+
+        - **$0 forever** — nothing that needs paid infrastructure or a credit card.
+        - **STUN-only, no relay** — no TURN servers, no proxying file bytes through anything.
+        - **Dumb signaling** — the server must never see or understand file contents.
+        - **Mobile-first** — it has to work at ~360–430px.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the itch, not (yet) the scratch. What's annoying, missing, or slow today?
+      placeholder: "When I send files to 3 devices at once, I can't tell which device declined."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you imagine it working? Sketches, mock-ups, and half-formed ideas are all fine.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Warp?
+      options:
+        - Transfer engine (web/src/lib/warp)
+        - UI / design (web app)
+        - Signaling server (Cloudflare Worker + DO)
+        - Docs
+        - Other / not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraint check
+      description: These keep Warp free, private, and honest. Features that break them can't be merged as-is — but say so and we can often find a constraint-shaped version together.
+      options:
+        - label: This works with **STUN-only** connectivity — it doesn't require a TURN relay or routing file bytes through a server
+          required: true
+        - label: This needs **no paid infrastructure** (no databases, storage buckets, paid APIs, or anything with a card on file)
+          required: true
+        - label: The signaling server stays a **dumb relay** — it still never sees or stores file contents
+          required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you use today, or other shapes this could take?
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to build it?
+      options:
+        - Yes — I'd like to open a PR for this
+        - Maybe, with some pointers
+        - No — just suggesting
+    validations:
+      required: false

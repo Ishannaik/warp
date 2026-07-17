@@ -35,6 +35,27 @@ Peer-to-peer file transfer that **never touches a server**. Pick a file, share a
 
 ---
 
+## ⭐ Star Warp · 🛠 Contribute
+
+<div align="center">
+
+[![GitHub stars](https://img.shields.io/github/stars/Ishannaik/warp?style=flat&logo=github&color=5360ff)](https://github.com/Ishannaik/warp/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/Ishannaik/warp?style=flat&logo=github&color=5360ff)](https://github.com/Ishannaik/warp/network/members)
+[![GitHub issues](https://img.shields.io/github/issues/Ishannaik/warp?color=ef6a3d)](https://github.com/Ishannaik/warp/issues)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-1f9d55.svg)](./CONTRIBUTING.md)
+[![License: MIT](https://img.shields.io/github/license/Ishannaik/warp?color=5360ff)](./LICENSE)
+[![Made with TypeScript + React](https://img.shields.io/badge/made%20with-TypeScript%20%2B%20React%2019-5360ff?logo=typescript&logoColor=white)](./web)
+
+</div>
+
+Warp is open source and **we welcome PRs** — from a one-line typo fix to engine work, every contribution counts.
+
+- ⭐ **[Star the repo](https://github.com/Ishannaik/warp)** — it's how more people find serverless, $0 file transfer.
+- 🛠 **[Read CONTRIBUTING.md](./CONTRIBUTING.md)** — dev setup in two commands, an architecture tour ([docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)), and a friendly first-PR walkthrough.
+- 🌱 **[Grab a good first issue](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22)** — scoped, self-contained, and picked for newcomers.
+
+---
+
 ## Why it's different
 
 - 🔒 **End-to-end encrypted by default** — every transfer rides DTLS on the WebRTC data channel; the keys live only in the two browsers. Your ISP, the café Wi-Fi, and Warp itself all see nothing but ciphertext.
