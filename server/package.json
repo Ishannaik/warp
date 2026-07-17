@@ -11,6 +11,6 @@
     "test": "node test.js"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.111.0"
   }
 }
