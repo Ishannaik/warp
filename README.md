@@ -116,7 +116,7 @@ pnpm --filter @warp/server test   # signaling e2e
   pnpm --filter @warp/server run deploy
   ```
 
-Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` URL.
+Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` URL (see [`web/.env.example`](./web/.env.example)). Vite inlines it at build time — rebuild after changing it.
 
 ## Architecture & protocol
 
