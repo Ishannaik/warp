@@ -141,9 +141,11 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
         .warp-remove:hover{color:var(--amb) !important}
         .warp-exit:hover{color:#efe9da !important}
         .warp-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
+        .warp-share{background:none;border:0;font:inherit;cursor:pointer;color:inherit;padding:0}
         .warp-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
         .warp-cta:hover{filter:brightness(1.08)}
         .warp-rowbtn:hover{border-color:var(--amb) !important;color:var(--amb) !important}
+        button.warp-remove,button.warp-cta{font:inherit}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
       `}</style>
 
@@ -454,7 +456,8 @@ function QueueList({
             <span style={{ fontFamily: MONO, fontSize: "11.5px", color: "#908a7b" }}>
               {formatBytes(q.file.size)}
             </span>
-            <span
+            <button
+              type="button"
               className="warp-remove"
               onClick={(e) => {
                 e.stopPropagation();
@@ -466,10 +469,14 @@ function QueueList({
                 color: "#6f6a5d",
                 textAlign: "center",
                 cursor: "pointer",
+                background: "none",
+                border: 0,
+                padding: 0,
               }}
+              aria-label={`Remove ${q.file.name}`}
             >
               ✕
-            </span>
+            </button>
           </div>
         ))
       )}
@@ -586,13 +593,16 @@ function SelectStep({
         >
           Files stay on your device until a peer accepts.
         </span>
-        <span
+        <button
+          type="button"
           className={files.length ? "warp-cta" : undefined}
           onClick={onOpenChannel}
+          disabled={!files.length}
           style={{
             display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
             background: files.length ? "var(--acc)" : "rgba(239,233,218,.12)",
+            border: 0,
             color: "#fff",
             fontFamily: MONO,
             fontSize: "12.5px",
@@ -604,7 +614,7 @@ function SelectStep({
           }}
         >
           Open secure channel &nbsp;→
-        </span>
+        </button>
       </div>
     </div>
   );
@@ -853,21 +863,23 @@ function PairStep({
               marginTop: "26px",
             }}
           >
-            <span
+            <button
+              type="button"
               className="warp-share"
               onClick={copy}
               style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
             >
               {copied ? "✓ copied!" : "⧉ Copy link"}
-            </span>
+            </button>
             {canShare && (
-              <span
+              <button
+                type="button"
                 className="warp-share"
                 onClick={share}
                 style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
               >
                 ↗ Share
-              </span>
+              </button>
             )}
           </div>
 
@@ -1024,13 +1036,15 @@ function ErrorPanel({
           alignItems: isMobile ? "stretch" : undefined,
         }}
       >
-        <span
+        <button
+          type="button"
           className="warp-cta"
           onClick={onRetry}
           style={{
             display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
             background: "var(--acc)",
+            border: 0,
             color: "#fff",
             fontFamily: MONO,
             fontSize: "12.5px",
@@ -1042,7 +1056,7 @@ function ErrorPanel({
           }}
         >
           Try again
-        </span>
+        </button>
         <a
           href="/"
           onClick={(e) => {
