@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
 
@@ -52,6 +53,12 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path !== "/") {
+    return {
+      title: "Page not found · Warp",
+      description: "This Warp URL doesn’t match a known page.",
+    };
+  }
   return {
     title: "Warp — Send files directly between devices",
     description:
@@ -65,6 +72,7 @@ export default function App() {
   const { title, description } = seoForRoute(path);
   useDocumentSeo(title, description);
 
+  if (path === "/") return <Landing />;
   if (path === "/send") return <TransferFlow />;
   if (path === "/receive") return <ReceiveEntry />;
   if (path.startsWith("/r/") && code) return <TransferFlow joinCode={code} />;
@@ -73,5 +81,5 @@ export default function App() {
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
 
-  return <Landing />;
+  return <NotFound />;
 }
