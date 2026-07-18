@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
+import { CODE_LEN, VALID_RE, sanitize } from "../lib/warp/roomCode";
 
 /**
  * ReceiveEntry — the "/receive" page. The second device needs a way to *enter*
@@ -17,21 +18,14 @@ const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
 const HAIR = "rgba(239,233,218,.14)";
 
-const CODE_LEN = 6;
-// Server alphabet: A-Z minus I,L,O + digits 2-9.
-const VALID_RE = /^[A-HJ-KM-NP-Z2-9]{6}$/;
-const ALLOWED_CHARS = /[A-HJ-KM-NP-Z2-9]/g;
-
-/** Strip whitespace/dashes, uppercase, drop disallowed chars, cap at 6. */
-function sanitize(raw: string): string {
-  const upper = raw.toUpperCase();
-  const kept = upper.match(ALLOWED_CHARS)?.join("") ?? "";
-  return kept.slice(0, CODE_LEN);
-}
-
-export default function ReceiveEntry() {
+export default function ReceiveEntry({
+  initialCode = "",
+}: {
+  /** Prefill from a malformed `/r/:code` deep link (already sanitized). */
+  initialCode?: string;
+}) {
   const isMobile = useIsMobile();
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => sanitize(initialCode));
 
   const valid = useMemo(() => VALID_RE.test(code), [code]);
   // Only nag once they've typed a full-length code that still doesn't match.
