@@ -3,7 +3,7 @@ import { AbsoluteFill, Audio, Series, interpolate, staticFile, useCurrentFrame }
 import { loadFont as loadBricolage } from "@remotion/google-fonts/BricolageGrotesque";
 import { loadFont as loadArchivo } from "@remotion/google-fonts/Archivo";
 import { loadFont as loadJetBrains } from "@remotion/google-fonts/JetBrainsMono";
-import { BG } from "./shared/theme";
+import { BG, INK } from "./shared/theme";
 import Crosshairs from "./shared/Crosshairs";
 import S1LogoOpen from "./scenes/S1LogoOpen";
 import S2Drop from "./scenes/S2Drop";
@@ -78,6 +78,7 @@ export const WarpPromo: FC = () => {
     <AbsoluteFill
       style={{
         backgroundColor: BG,
+        color: INK,
         fontFamily: `${bricolageFamily}, ${archivoFamily}, ${jetbrainsFamily}, sans-serif`,
       }}
     >
