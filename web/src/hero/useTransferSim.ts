@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "../lib/useReducedMotion";
 
 /**
  * Live-mode transfer simulation (the "ShareX queue" behaviour).
@@ -15,6 +16,10 @@ import { useEffect, useRef, useState } from "react";
  * entrance animations live on the OUTER window wrapper (owned by Hero) and on
  * static chrome — the per-row markup carries no entrance animation, so these
  * sim re-renders never restart any `warpRise`/`warpFade` etc.
+ *
+ * Under `prefers-reduced-motion: reduce`, the interval never starts and the UI
+ * shows a settled finished batch. The interval also pauses while the tab is
+ * hidden (`document.visibilityState !== "visible"`).
  */
 
 export type RowStatus = "up" | "done" | "queued";
@@ -58,6 +63,15 @@ const INITIAL_ROWS: SimRow[] = [
   { name: "site-backup.tar", size: "880 MB", bytes: 880, pct: 100, status: "done" },
   { name: "contract-v3.pdf", size: "1.2 MB", bytes: 2, pct: 100, status: "done" },
   { name: "render-proxy.mp4", size: "420 MB", bytes: 420, pct: 0, status: "queued" },
+];
+
+/** Static finished batch for prefers-reduced-motion (nothing stuck at 0%). */
+const SETTLED_ROWS: SimRow[] = [
+  { name: "keynote-final.key", size: "2.4 GB", bytes: 2400, pct: 100, status: "done" },
+  { name: "shoot-raws.zip", size: "6.1 GB", bytes: 6100, pct: 100, status: "done" },
+  { name: "site-backup.tar", size: "880 MB", bytes: 880, pct: 100, status: "done" },
+  { name: "contract-v3.pdf", size: "1.2 MB", bytes: 2, pct: 100, status: "done" },
+  { name: "render-proxy.mp4", size: "420 MB", bytes: 420, pct: 100, status: "done" },
 ];
 
 function cloneRows(rows: SimRow[]): SimRow[] {
@@ -118,18 +132,47 @@ function nextThroughput(): string {
 }
 
 export function useTransferSim(): TransferSim {
-  const [rows, setRows] = useState<SimRow[]>(() => cloneRows(INITIAL_ROWS));
+  const reduced = useReducedMotion();
+  const [rows, setRows] = useState<SimRow[]>(() =>
+    cloneRows(reduced ? SETTLED_ROWS : INITIAL_ROWS),
+  );
   const [throughput, setThroughput] = useState<string>("2.41 GB/s");
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setRows((prev) => advance(prev));
-      setThroughput(nextThroughput());
-    }, TICK_MS);
-    return () => window.clearInterval(id);
-  }, []);
+    if (reduced) {
+      setRows(cloneRows(SETTLED_ROWS));
+      setThroughput("2.41 GB/s");
+      return;
+    }
+
+    let id: number | undefined;
+    const clear = () => {
+      if (id !== undefined) {
+        window.clearInterval(id);
+        id = undefined;
+      }
+    };
+    const start = () => {
+      if (document.hidden || id !== undefined) return;
+      id = window.setInterval(() => {
+        setRows((prev) => advance(prev));
+        setThroughput(nextThroughput());
+      }, TICK_MS);
+    };
+
+    start();
+    const onVisibility = () => {
+      if (document.hidden) clear();
+      else start();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clear();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [reduced]);
 
   return { rows, throughput, totals: computeTotals(rows) };
 }
