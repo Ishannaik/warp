@@ -1,0 +1,70 @@
+name: Self-assign issues
+
+# When someone comments "/assign", "/take", or "I'd like to work on this" on an
+# open issue, assign it to them automatically — zero maintainer toil. Uses only
+# the built-in GITHUB_TOKEN (no external actions, $0).
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  self-assign:
+    # Only real issues (not PR comments), and only open ones.
+    if: ${{ !github.event.issue.pull_request && github.event.issue.state == 'open' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = (context.payload.comment.body || '').toLowerCase();
+            const user = context.payload.comment.user.login;
+            const issue_number = context.payload.issue.number;
+            const { owner, repo } = context.repo;
+            const goodFirst = `https://github.com/${owner}/${repo}/issues?q=is:open+label:%22good%20first%20issue%22`;
+            const assignees = (context.payload.issue.assignees || []).map((a) => a.login);
+
+            // --- unassign ---
+            const unassignTriggers = ['/unassign', 'unassign me', 'remove me'];
+            if (unassignTriggers.some((t) => body.includes(t))) {
+              if (assignees.includes(user)) {
+                await github.rest.issues.removeAssignees({ owner, repo, issue_number, assignees: [user] });
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number,
+                  body: `Opened back up — thanks for the honesty, @${user}. 👋 Anyone else can now grab it with \`/assign\`.`,
+                });
+              }
+              return;
+            }
+
+            // --- assign ---
+            const triggers = [
+              '/assign', '/take', 'assign me', 'assign it to me', 'assign this to me',
+              "i'd like to work on this", 'i would like to work on this',
+              'can i work on this', 'i want to work on this', 'let me take this',
+              'i can take this', "i'll take this",
+            ];
+            if (!triggers.some((t) => body.includes(t))) return;
+
+            if (assignees.length && !assignees.includes(user)) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: `Thanks @${user}! This one's already claimed by @${assignees[0]}. Grab another from the [good first issues](${goodFirst}) and comment \`/assign\` there. 🙌`,
+              });
+              return;
+            }
+            if (assignees.includes(user)) return; // already theirs — no-op
+
+            await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [user] });
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner, repo, comment_id: context.payload.comment.id, content: 'rocket',
+              });
+            } catch (e) { /* reactions are best-effort */ }
+            await github.rest.issues.createComment({
+              owner, repo, issue_number,
+              body: `You're on it, @${user}! 🚀 Assigned.\n\n- Dev setup is two commands — see [CONTRIBUTING.md](https://github.com/${owner}/${repo}/blob/main/CONTRIBUTING.md).\n- Tag this issue in your PR (\`Closes #${issue_number}\`).\n- Stuck or the scope's unclear? Just comment here.\n\nIf you're no longer able to work on it, comment \`/unassign\` and it opens back up.`,
+            });
