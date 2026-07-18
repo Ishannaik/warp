@@ -171,6 +171,13 @@ export default function ReceiveEntry() {
             className="rcv-input"
             value={code}
             onChange={(e) => setCode(sanitize(e.target.value))}
+            onPaste={(e) => {
+              e.preventDefault();
+              const next = sanitize(e.clipboardData.getData("text"));
+              setCode(next);
+              // Full valid paste → connect immediately (typing the 6th char does not).
+              if (VALID_RE.test(next)) navigate("/r/" + next);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") connect();
             }}
