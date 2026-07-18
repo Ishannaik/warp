@@ -147,14 +147,6 @@ export function formatBytes(b: number): string {
   return b + " B";
 }
 
-/** Crockford-ish room code: WRAP-XXXX-XX. */
-export function generateCode(): string {
-  const alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const pick = (n: number) =>
-    Array.from({ length: n }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
-  return `WRAP-${pick(4)}-${pick(2)}`;
-}
-
 /** Stable id for a file or batch. */
 export function fileId(): string {
   return Math.random().toString(36).slice(2, 10);
