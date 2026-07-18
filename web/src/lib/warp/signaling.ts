@@ -19,8 +19,10 @@
  *   { type: 'error', error }                  server-side failure
  */
 
+// Optional-chain `import.meta.env` so the module still loads outside Vite
+// (the *.check.mjs harnesses bundle it under plain Node, where env is undefined).
 const SIGNALING_URL =
-  import.meta.env.VITE_SIGNALING_URL ?? "wss://warp-signaling.ishannaik7.workers.dev";
+  import.meta.env?.VITE_SIGNALING_URL ?? "wss://warp-signaling.ishannaik7.workers.dev";
 
 /**
  * Opaque WebRTC handshake payload (SDP offer/answer or ICE candidate), PLUS an
