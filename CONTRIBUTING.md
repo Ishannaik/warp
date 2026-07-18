@@ -42,7 +42,7 @@ pnpm dev:server   # signaling server (wrangler dev, local workerd) on :8787
 pnpm dev          # web app (vite) on :5173
 ```
 
-Open `http://localhost:5173` in **two browser tabs** (or two devices on your LAN) to try a transfer end-to-end. The deployed frontend talks to the live signaling server, so the web app works standalone too — you only need `pnpm dev:server` when changing the server.
+Open `http://localhost:5173` in **two browser tabs** (or two devices on your LAN) to try a transfer end-to-end. By default the web app talks to the live signaling server. To point it at your local `pnpm dev:server` instead, copy [`web/.env.example`](./web/.env.example) to `web/.env` (or set `VITE_SIGNALING_URL=ws://localhost:8787`) and restart `pnpm dev` — Vite inlines `import.meta.env` at startup.
 
 ### Checks — run these before every PR
 
