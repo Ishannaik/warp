@@ -128,8 +128,22 @@ export interface TransferItem {
 /** Human-readable byte formatter matching the design's `fmt()`. */
 export function formatBytes(b: number): string {
   if (b >= 1e9) return (b / 1e9).toFixed(1) + " GB";
-  if (b >= 1e6) return (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + " MB";
-  if (b >= 1e3) return (b / 1e3).toFixed(0) + " KB";
+
+  if (b >= 1e6) {
+    const decimals = b >= 1e8 ? 0 : 1;
+    const mb = Number((b / 1e6).toFixed(decimals));
+    // Rounding can push just-under-1GB sizes to "1000 MB" — promote to GB.
+    if (mb >= 1000) return (b / 1e9).toFixed(1) + " GB";
+    return mb.toFixed(decimals) + " MB";
+  }
+
+  if (b >= 1e3) {
+    const kb = Math.round(b / 1e3);
+    // Rounding can push just-under-1MB sizes to "1000 KB" — promote to MB.
+    if (kb >= 1000) return (b / 1e6).toFixed(1) + " MB";
+    return kb + " KB";
+  }
+
   return b + " B";
 }
 

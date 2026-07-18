@@ -29,7 +29,7 @@ try {
   process.exit(0);
 }
 
-const { fileKey, newResumeToken } = mod;
+const { fileKey, newResumeToken, formatBytes } = mod;
 
 // --- fileKey: stable per (name,size,mtime); changes when any of them changes ---
 const a = { name: "clip.mp4", size: 1234, lastModified: 42 };
@@ -49,4 +49,15 @@ const t2 = newResumeToken();
 assert.ok(/^[a-z0-9]{10,}$/.test(t1), "token is a non-trivial lowercase-alnum id");
 assert.notEqual(t1, t2, "tokens are unique per call");
 
-console.log("OK: transfer.ts resume identity helpers (fileKey stability + token uniqueness)");
+// --- formatBytes: never show 1000 of a smaller unit at boundaries ---
+assert.equal(formatBytes(999), "999 B", "bytes stay in B below 1 KB");
+assert.equal(formatBytes(1000), "1 KB", "exact KB boundary");
+assert.equal(formatBytes(999_499), "999 KB", "just under rounded KB→MB boundary");
+assert.equal(formatBytes(999_950), "1.0 MB", "999_950 must not render as 1000 KB");
+assert.equal(formatBytes(999_999), "1.0 MB", "999_999 must not render as 1000 KB");
+assert.equal(formatBytes(1_400_000), "1.4 MB", "ordinary MB with one decimal");
+assert.equal(formatBytes(120_000_000), "120 MB", "large MB uses zero decimals");
+assert.equal(formatBytes(999_999_999), "1.0 GB", "999_999_999 must not render as 1000 MB");
+assert.equal(formatBytes(1_000_000_000), "1.0 GB", "exact GB boundary");
+
+console.log("OK: transfer.ts resume identity helpers (fileKey stability + token uniqueness) + formatBytes boundaries");
