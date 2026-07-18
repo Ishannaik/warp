@@ -4,3 +4,6 @@
   X-Frame-Options: SAMEORIGIN
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Permissions-Policy: geolocation=(), microphone=(), camera=(self)
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
