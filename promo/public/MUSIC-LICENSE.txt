@@ -1,9 +1,7 @@
-music.mp3 — "Voxel Revolution" by Kevin MacLeod (incompetech.com)
-Licensed under Creative Commons: By Attribution 4.0 License
-http://creativecommons.org/licenses/by/4.0/
-Source: https://incompetech.com/music/royalty-free/
+music.mp3 — "Better Times are Coming" (Synthpop) via Mixkit
+Licensed under the Mixkit Free License — free for commercial use,
+NO ATTRIBUTION REQUIRED. https://mixkit.co/license/#musicFree
+Source: https://mixkit.co/free-stock-music/ (asset 173)
 
-REQUIRED CREDIT (put in the video description / launch post):
-  Music: "Voxel Revolution" — Kevin MacLeod (incompetech.com) — CC BY 4.0
-
-Backup track (same author, same license): "Dreamer" — Kevin MacLeod.
+This track needs no credit line. (Alternate free options staged during
+build: "Kodama Night Town" / "Pop Track 03", same Mixkit Free License.)

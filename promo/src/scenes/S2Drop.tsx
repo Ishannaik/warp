@@ -94,7 +94,7 @@ export default function S2Drop() {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "40px 1fr 120px 1.4fr 140px",
+                    gridTemplateColumns: "40px 2fr 110px 1fr 130px",
                     gap: 14,
                     padding: "12px 6px",
                     borderBottom: `1px solid ${HAIRLINE}`,
@@ -114,7 +114,7 @@ export default function S2Drop() {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "40px 1fr 120px 1.4fr 140px",
+                    gridTemplateColumns: "40px 2fr 110px 1fr 130px",
                     gap: 14,
                     alignItems: "center",
                     padding: "18px 6px",
@@ -135,7 +135,16 @@ export default function S2Drop() {
                     >
                       <span style={{ width: 8, height: 8, background: MUTED }} />
                     </span>
-                    <span style={{ fontSize: 20, fontWeight: 500, whiteSpace: "nowrap" }}>
+                    <span
+                      style={{
+                        fontSize: 20,
+                        fontWeight: 500,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        minWidth: 0,
+                      }}
+                    >
                       album-masters.zip
                     </span>
                   </span>

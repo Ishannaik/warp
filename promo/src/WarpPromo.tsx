@@ -46,6 +46,27 @@ function musicVolume(frame: number): number {
   return Math.max(0, v);
 }
 
+// 16:9 landscape variant (YouTube / Show HN): the scenes are laid out for a
+// 1080x1080 stage (S4's device row + SVG are anchored to that width), so rather
+// than restretch every scene we center the square stage inside a 1920x1080
+// frame and let the brand bg fill the sides — reads as a deliberately framed
+// widescreen card, same content, zero per-scene reflow.
+export const WarpPromoWide: FC = () => {
+  return (
+    <AbsoluteFill
+      style={{
+        backgroundColor: BG,
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
+      <div style={{ position: "relative", width: 1080, height: 1080, overflow: "hidden" }}>
+        <WarpPromo />
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 export const WarpPromo: FC = () => {
   const frame = useCurrentFrame();
   const crosshairOpacity = interpolate(frame, [0, 20], [0, 0.45], {

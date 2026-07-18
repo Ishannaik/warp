@@ -56,6 +56,7 @@ export default function S4Direct() {
           top: 110,
           left: "50%",
           transform: "translateX(-50%)",
+          width: 980,
           textAlign: "center",
         }}
       >

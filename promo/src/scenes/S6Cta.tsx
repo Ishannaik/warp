@@ -44,7 +44,7 @@ export default function S6Cta({ durationInFrames }: { durationInFrames: number }
     extrapolateRight: "clamp",
   });
 
-  const urlChars = Math.max(0, Math.min(URL_TEXT.length, Math.floor((frame - 40) / 2)));
+  const urlChars = Math.max(0, Math.min(URL_TEXT.length, Math.floor((frame - 34) / 1.5)));
   const urlText = URL_TEXT.slice(0, urlChars);
 
   const tagOpacity = interpolate(frame, [70, 88], [0, 1], {
