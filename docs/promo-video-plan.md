@@ -137,7 +137,7 @@ Each `<Series.Sequence>` resets `useCurrentFrame()` to 0 for its scene — all s
 - `staticFile()` — music + QR asset from `promo/public/`.
 - Counters: derive text from frame math (`Math.round(interpolate(...))`), render in JetBrains Mono with `fontVariantNumeric: "tabular-nums"` so digits don't jitter layout.
 
-**QR code:** do **not** render a QR library inside components per-frame. Generate once ahead of build — `npx qrcode -o public/qr.png -w 512 "https://warp.ishannaik.com/r/K7XW2Q"` (the `qrcode` npm CLI) or reuse the site's QR generation — commit the PNG/SVG to `promo/public/`, recolor via CSS filter or generate with `--color` options to `#efe9da` on `#15140f`, and place it with `<Img src={staticFile("qr.png")}/>`.
+**QR code — ALREADY STAGED:** a 512×512 on-brand QR (ink `#efe9da` modules on panel `#15140f`, high error correction) is already committed at `promo/public/qr.png` encoding `https://warp.ishannaik.com/r/K7XW2Q`. Just place it with `<Img src={staticFile("qr.png")}/>` — do **not** render a QR library at runtime and do **not** regenerate it.
 
 **Preview loop:** `npx remotion studio` for scrub-preview while building; check every scene at frame boundaries.
 
@@ -145,15 +145,15 @@ Each `<Series.Sequence>` resets `useCurrentFrame()` to 0 for its scene — all s
 
 ## 3 · Music
 
-**Vibe:** clean modern electronic — bright synth chords, tight percussive pulse, forward momentum, zero corporate-cheese ukulele/whistle. Future-bass/electronica energy suits "warp speed" without being aggressive.
+**Vibe:** clean modern electronic — bright synth, tight percussive pulse, forward momentum. Driving "warp speed" energy without being aggressive.
 
-**Primary track (verified real, license-clear):**
+**Primary track — ALREADY STAGED, do not re-download:**
 
-> **"Bright Energetic Electronica" — penguinmusic** (Pixabay Music)
-> https://pixabay.com/music/future-bass-penguinmusic-bright-energetic-electronica-12635/
-> Future bass · 1:26 · **Pixabay Content License** — free for commercial use, no attribution required, cleared for social posting. Download the MP3 from that page into `promo/public/music.mp3` (Pixabay also lets you download a license confirmation from the track page — save it next to the file as `music-license.pdf` for the record).
+> **"Voxel Revolution" — Kevin MacLeod** (incompetech.com) · driving electronic · 2:10 (we take the first 26s).
+> **The MP3 is already committed at `promo/public/music.mp3`** — just reference it with `staticFile("music.mp3")`. (Pixabay was the original pick but it bot-blocks headless downloads, so we switched to a source that's reliably fetchable and license-clean.)
+> **License: Creative Commons BY 4.0** — free for commercial + social use, **attribution required**. The required credit line lives in `promo/public/MUSIC-LICENSE.txt`; it must appear in the video description / launch post (NOT necessarily on-screen): `Music: "Voxel Revolution" — Kevin MacLeod (incompetech.com) — CC BY 4.0`.
 
-**Backup (same artist, same license, calmer):** "Modern Chillout (Future Calm)" — penguinmusic, https://pixabay.com/music/upbeat-penguinmusic-modern-chillout-future-calm-12641/ — use if the primary feels too hot against the reconnect beat.
+**Backup (same author, same CC-BY license):** "Dreamer" — Kevin MacLeod. Swap only if Voxel Revolution feels too hot against the reconnect beat.
 
 **Audio timing** (`<Audio>` `volume` as a frame function):
 
