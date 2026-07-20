@@ -97,7 +97,7 @@ const ITEMS: Item[] = [
   },
   {
     q: "What if the direct connection fails?",
-    a: "Warp falls back to an encrypted relay so the transfer still completes. The bytes stay encrypted end-to-end the whole way — the relay only forwards ciphertext.",
+    a: "There isn’t a relay to fall back to, on purpose. Warp connects the two devices directly, so nothing routes through a server. Most networks hole-punch fine. If both devices sit behind strict or symmetric NAT (some corporate or carrier setups), Warp can’t open a path and tells you plainly instead of sending your file through a middleman. Keeping your bytes off our infrastructure is the whole point, even when a relay would be easier.",
   },
   {
     q: "Is it actually free?",
