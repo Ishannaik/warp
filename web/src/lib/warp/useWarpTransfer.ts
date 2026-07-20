@@ -801,7 +801,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       }
 
       // Route to the peer that owns the item; the item carries its peerId.
-      const item = items.find((t) => t.id === id);
+      // Reads itemsRef (kept in sync with `items`) instead of closing over
+      // `items` directly, so this callback's identity stays stable across
+      // progress ticks — otherwise every ItemRow using it as a prop would
+      // re-render on every tick regardless of React.memo.
+      const item = itemsRef.current.find((t) => t.id === id);
       const peer = item?.peerId ? peersRef.current.get(item.peerId) : undefined;
       if (peer) {
         peer.cancel(id);
@@ -811,17 +815,19 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       // no-op because they don't own the id.
       for (const p of peersRef.current.values()) p.cancel(id);
     },
-    [items],
+    [],
   );
 
   const downloadOne = useCallback(
     (id: string) => {
-      const item = items.find((t) => t.id === id);
+      // Same reasoning as cancel(): read itemsRef, not items, to keep this
+      // callback's reference stable across progress ticks.
+      const item = itemsRef.current.find((t) => t.id === id);
       // savedToDisk items are already on disk (no blob) -> nothing to download.
       if (!item || item.savedToDisk || !item.blob) return;
       saveBlob(item.blob, item.name);
     },
-    [items],
+    [],
   );
 
   const downloadAll = useCallback(() => {

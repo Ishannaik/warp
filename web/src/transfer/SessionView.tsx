@@ -15,7 +15,7 @@
  * the global keyframes media query.
  */
 
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { formatBytes, type OfferItem, type TransferItem } from "../lib/warp/transfer";
 import type { Connection } from "../lib/warp/useWarpTransfer";
@@ -102,7 +102,11 @@ function statusColor(status: TransferItem["status"]): string {
   return "#908a7b";
 }
 
-function ItemRow({
+// Memoized: upsertItem preserves object identity for untouched items, so a
+// progress tick on one item re-renders only that item's row, not the whole
+// tray. onCancel/onDownload are useCallback-wrapped upstream, isMobile is a
+// primitive, and peerLabel is a primitive string — all memo-safe as-is.
+const ItemRow = memo(function ItemRow({
   item,
   onCancel,
   onDownload,
@@ -335,7 +339,7 @@ function ItemRow({
       )}
     </div>
   );
-}
+});
 
 const iconBtn: CSSProperties = {
   width: "30px",
