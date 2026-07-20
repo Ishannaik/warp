@@ -37,10 +37,12 @@ import {
   fileKey,
   newResumeToken,
   type ControlMessage,
+  type Direction,
   type OfferItem,
   type TransferItem,
 } from "./transfer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
+import { createHashSession, type HashSession } from "./hash";
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -143,6 +145,13 @@ export interface PeerEvents {
   declined: (info: { batchId: string }) => void;
   /** A file in flight was cancelled by either side. */
   cancelled: (info: { id: string }) => void;
+  /** SHA-256 hex digest of a completed file's session bytes. Emitted once per
+   *  successfully-transferred file (both send and receive) that hashed a whole
+   *  session — resumed transfers (startOffset > 0 on send, resume offset > 0 on
+   *  receive) are skipped since their hash would only cover the tail. The
+   *  digest is computed off the main thread (see `hashWorker.ts`); consumers
+   *  are expected to arrive with the manifest-carried expected hash from #6. */
+  "hash-computed": (info: { id: string; direction: Direction; digest: string }) => void;
   error: (kind: PeerErrorKind) => void;
 }
 
@@ -168,6 +177,10 @@ interface IncomingState {
    *  bytesWritten is the single source of truth for how many bytes are durable —
    *  used both for progress and as the resume offset the receiver reports. */
   sink: ReceiveSink;
+  /** SHA-256 session, computed off the main thread. Present only when the
+   *  receive started at offset 0 (a resumed receive's hash would only cover
+   *  the tail, so we skip rather than emit a misleading digest). */
+  hash: HashSession | null;
 }
 
 /**
@@ -264,6 +277,7 @@ export class WarpPeer {
     "text-received": new Set(),
     declined: new Set(),
     cancelled: new Set(),
+    "hash-computed": new Set(),
     error: new Set(),
   };
 
@@ -718,6 +732,7 @@ export class WarpPeer {
     if (this.incoming && this.incoming.item.id === id) {
       const inc = this.incoming;
       this.incoming = null;
+      inc.hash?.dispose();
       void inc.sink.abort();
       this.host.end(id);
     }
@@ -757,45 +772,66 @@ export class WarpPeer {
     startOffset = 0,
   ): Promise<boolean> {
     const sendChunk = this.sendChunkSize();
+    // Integrity hash runs in a Web Worker (issue #88). Tapped at the 4 MiB
+    // block boundary: each block we just read is posted to the worker before
+    // we slice it for the wire. Skipped on a resumed send (startOffset > 0)
+    // because the hash would only cover the tail we actually stream — a lie
+    // for #6's manifest-verify use case. The worker gets a structured-clone
+    // copy via postMessage; the caller's block stays intact for the send pump.
+    const hash = startOffset === 0 ? createHashSession() : null;
+    let finishedClean = false;
     // Resume: begin reading at startOffset (the receiver already holds [0,startOffset)).
     let offset = startOffset;
-    while (offset < file.size) {
-      if (this.cancelledIds.has(item.id)) {
-        this.cancelledIds.delete(item.id);
-        return false;
-      }
-
-      // Read one large block, then slice it into sendChunk-sized SCTP messages.
-      const block = await file.slice(offset, offset + READ_BLOCK).arrayBuffer();
-      let pos = 0;
-      while (pos < block.byteLength) {
+    try {
+      while (offset < file.size) {
         if (this.cancelledIds.has(item.id)) {
           this.cancelledIds.delete(item.id);
           return false;
         }
-        // Backpressure: wait until the send buffer drains below the high-water
-        // mark. Counts the chunk we're ABOUT to send, so we can never push
-        // bufferedAmount toward the browser's hard cap and blow up send().
-        while (ch.bufferedAmount + sendChunk > SEND_HIGH_WATER) {
-          await this.waitForDrain(ch);
+
+        // Read one large block, then slice it into sendChunk-sized SCTP messages.
+        const block = await file.slice(offset, offset + READ_BLOCK).arrayBuffer();
+        hash?.update(block);
+        let pos = 0;
+        while (pos < block.byteLength) {
+          if (this.cancelledIds.has(item.id)) {
+            this.cancelledIds.delete(item.id);
+            return false;
+          }
+          // Backpressure: wait until the send buffer drains below the high-water
+          // mark. Counts the chunk we're ABOUT to send, so we can never push
+          // bufferedAmount toward the browser's hard cap and blow up send().
+          while (ch.bufferedAmount + sendChunk > SEND_HIGH_WATER) {
+            await this.waitForDrain(ch);
+            if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+          }
           if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+
+          const end = Math.min(pos + sendChunk, block.byteLength);
+          // slice() copies; fine and avoids retaining the whole 4 MiB block per send.
+          ch.send(block.slice(pos, end));
+          offset += end - pos;
+          pos = end;
         }
-        if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
 
-        const end = Math.min(pos + sendChunk, block.byteLength);
-        // slice() copies; fine and avoids retaining the whole 4 MiB block per send.
-        ch.send(block.slice(pos, end));
-        offset += end - pos;
-        pos = end;
+        // Emit progress once per block (~4 MiB) rather than per chunk, to avoid
+        // flooding the UI with re-renders while the bytes fly.
+        item.transferred = offset;
+        item.progress = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
+        this.emit("transfer", { ...item });
       }
-
-      // Emit progress once per block (~4 MiB) rather than per chunk, to avoid
-      // flooding the UI with re-renders while the bytes fly.
-      item.transferred = offset;
-      item.progress = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
-      this.emit("transfer", { ...item });
+      finishedClean = true;
+      return true;
+    } finally {
+      if (hash) {
+        if (finishedClean) {
+          const digest = await hash.finalize();
+          this.emit("hash-computed", { id: item.id, direction: "send", digest });
+        } else {
+          hash.dispose();
+        }
+      }
     }
-    return true;
   }
 
   /**
@@ -941,7 +977,11 @@ export class WarpPeer {
       return;
     }
 
-    this.incoming = { item, sink };
+    // Integrity hash runs in a Web Worker (issue #88). Only for a fresh receive
+    // (offset === 0): a resumed receive already holds [0,offset) whose bytes we
+    // never see, so hashing from here would produce a digest of the tail alone.
+    const hash = offset === 0 ? createHashSession() : null;
+    this.incoming = { item, sink, hash };
     item.status = "transferring";
     item.transferred = sink.bytesWritten;
     item.progress = Math.min(100, Math.round((item.transferred / Math.max(1, item.size)) * 100));
@@ -952,6 +992,10 @@ export class WarpPeer {
     const inc = this.incoming;
     if (!inc) return; // no active incoming file (cancelled / not accepted)
     inc.sink.append(buf);
+    // Feed the same chunk into the off-thread hash worker. postMessage clones
+    // (no transfer list), so the sink's reference is not detached out from
+    // under it. Skipped on a resumed receive (see startIncoming).
+    inc.hash?.update(buf);
     // Durable count is the single source of truth (Fable H1): for disk it advances
     // as writes resolve, so progress is conservative, never ahead of what's on disk.
     inc.item.transferred = inc.sink.bytesWritten;
@@ -992,6 +1036,7 @@ export class WarpPeer {
     await inc.sink.quiesce();
     const bytes = inc.sink.bytesWritten;
     if (bytes !== inc.item.size || inc.sink.failed) {
+      inc.hash?.dispose();
       await inc.sink.abort();
       this.host.end(id);
       this.markStatus(id, "error");
@@ -1001,7 +1046,10 @@ export class WarpPeer {
     const blob = await inc.sink.finalize(); // memory -> Blob; disk -> null (writable closed)
     const savedName = this.host.savedName(id);
     this.host.end(id);
-    if (this.disposed) return;
+    if (this.disposed) {
+      inc.hash?.dispose();
+      return;
+    }
 
     inc.item.status = "done";
     inc.item.transferred = inc.item.size;
@@ -1015,6 +1063,10 @@ export class WarpPeer {
       if (savedName) inc.item.name = savedName;
       this.emit("transfer", { ...inc.item });
       this.emit("file-received", { id, name: inc.item.name, mime: inc.item.mime, savedToDisk: true });
+    }
+    if (inc.hash) {
+      const digest = await inc.hash.finalize();
+      if (!this.disposed) this.emit("hash-computed", { id, direction: "receive", digest });
     }
   }
 
