@@ -9,6 +9,7 @@ import Legal from "./legal/Legal";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
+import { VALID_RE, sanitize } from "./lib/warp/roomCode";
 
 const CHANNEL_DESC =
   "Open a secure peer-to-peer channel and send files straight to another device.";
@@ -75,7 +76,14 @@ export default function App() {
   if (path === "/") return <Landing />;
   if (path === "/send") return <TransferFlow />;
   if (path === "/receive") return <ReceiveEntry />;
-  if (path.startsWith("/r/") && code) return <TransferFlow joinCode={code} />;
+  if (path.startsWith("/r/") && code) {
+    const cleaned = sanitize(code);
+    if (VALID_RE.test(cleaned)) {
+      return <TransferFlow joinCode={cleaned} />;
+    }
+    // Malformed deep link — show the receive form with a hint, no WebSocket yet.
+    return <ReceiveEntry initialCode={cleaned} />;
+  }
   if (path === "/how") return <Theory />;
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
