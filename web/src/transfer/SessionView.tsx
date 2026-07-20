@@ -18,6 +18,7 @@
 import { memo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { formatBytes, type OfferItem, type TransferItem } from "../lib/warp/transfer";
+import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection } from "../lib/warp/useWarpTransfer";
 
 const MONO = "'JetBrains Mono',monospace";
@@ -121,6 +122,7 @@ const ItemRow = memo(function ItemRow({
   peerLabel?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const col = statusColor(item.status);
   // "reconnecting" holds the bar at its last % and shows RESUMING; it's still an
   // active, cancellable transfer, so it renders like transferring but labeled.
@@ -140,12 +142,15 @@ const ItemRow = memo(function ItemRow({
 
   const copyText = async () => {
     if (!item.text) return;
-    try {
-      await navigator.clipboard.writeText(item.text);
+    const ok = await copyToClipboard(item.text);
+    if (ok) {
       setCopied(true);
+      setCopyFailed(false);
       setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* clipboard blocked */
+    } else {
+      setCopyFailed(true);
+      setCopied(false);
+      setTimeout(() => setCopyFailed(false), 2200);
     }
   };
 
@@ -289,7 +294,7 @@ const ItemRow = memo(function ItemRow({
               padding: "7px 14px",
               background: "rgba(239,233,218,.03)",
               border: `1px solid ${HAIRLINE}`,
-              color: copied ? "var(--acc)" : "#a8a293",
+              color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : "#a8a293",
               fontFamily: MONO,
               fontSize: "11px",
               letterSpacing: ".06em",
@@ -297,7 +302,7 @@ const ItemRow = memo(function ItemRow({
               cursor: "pointer",
             }}
           >
-            {copied ? "✓ copied" : "⧉ copy"}
+            {copyFailed ? "✕ copy failed" : copied ? "✓ copied" : "⧉ copy"}
           </button>
         </div>
       )}
