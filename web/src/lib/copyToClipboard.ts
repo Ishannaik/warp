@@ -46,7 +46,8 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     textarea.focus();
     textarea.select();
     textarea.setSelectionRange(0, textarea.value.length);
-    // eslint-disable-next-line deprecation/deprecation -- only fallback left for insecure origins
+    // execCommand is deprecated but remains the only working fallback on
+    // insecure origins where the Clipboard API is unavailable.
     const ok = document.execCommand("copy");
     return ok;
   } catch {
