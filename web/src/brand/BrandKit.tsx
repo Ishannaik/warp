@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
+import { copyToClipboard } from "../lib/copyToClipboard";
 
 /**
  * BrandKit — the "/brand" press / brand-kit page.
@@ -299,16 +300,19 @@ const SWATCHES: { name: string; hex: string }[] = [
 
 function Swatch({ name, hex }: { name: string; hex: string }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const copy = () => {
-    const res = navigator.clipboard?.writeText(hex);
-    if (res) {
-      res
-        .then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1200);
-        })
-        .catch(() => {});
-    }
+    void copyToClipboard(hex).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setCopyFailed(false);
+        window.setTimeout(() => setCopied(false), 1200);
+      } else {
+        setCopyFailed(true);
+        setCopied(false);
+        window.setTimeout(() => setCopyFailed(false), 1800);
+      }
+    });
   };
   return (
     <button
@@ -336,11 +340,11 @@ function Swatch({ name, hex }: { name: string; hex: string }) {
             fontSize: "12px",
             letterSpacing: ".04em",
             textTransform: "uppercase",
-            color: copied ? "var(--acc)" : "#6f6a5d",
+            color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : "#6f6a5d",
             marginTop: "4px",
           }}
         >
-          {copied ? "Copied ✓" : hex}
+          {copyFailed ? "copy failed" : copied ? "Copied ✓" : hex}
         </div>
       </div>
     </button>

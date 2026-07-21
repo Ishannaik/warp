@@ -6,6 +6,7 @@ import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection } from "../lib/warp/useWarpTransfer";
 import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
+import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
 
 /**
@@ -650,6 +651,7 @@ function PairStep({
   isMobile: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [qrSvg, setQrSvg] = useState<string>("");
   const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 
@@ -670,12 +672,15 @@ function PairStep({
 
   const copy = async () => {
     if (!shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
+    const ok = await copyToClipboard(shareUrl);
+    if (ok) {
       setCopied(true);
+      setCopyFailed(false);
       setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* clipboard blocked */
+    } else {
+      setCopyFailed(true);
+      setCopied(false);
+      setTimeout(() => setCopyFailed(false), 2400);
     }
   };
 
@@ -867,9 +872,21 @@ function PairStep({
               type="button"
               className="warp-share"
               onClick={copy}
-              style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
+              style={
+                isMobile
+                  ? {
+                      ...shareBtn,
+                      display: "block",
+                      textAlign: "center",
+                      color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : shareBtn.color,
+                    }
+                  : {
+                      ...shareBtn,
+                      color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : shareBtn.color,
+                    }
+              }
             >
-              {copied ? "✓ copied!" : "⧉ Copy link"}
+              {copyFailed ? "✕ copy failed" : copied ? "✓ copied!" : "⧉ Copy link"}
             </button>
             {canShare && (
               <button
