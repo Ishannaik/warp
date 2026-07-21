@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
@@ -26,7 +26,36 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 export default function NearbyDevices() {
   const isMobile = useIsMobile();
   const nearby = useNearbyTransfer();
-  const { devices, crowded, deviceName, session, incoming } = nearby;
+  const { devices, crowded, deviceName, session, incoming, rename } = nearby;
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftName, setDraftName] = useState(deviceName);
+  const isSavingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftName(deviceName);
+    }
+  }, [deviceName, isEditing]);
+
+  const handleStartEdit = () => {
+    setDraftName(deviceName);
+    isSavingRef.current = false;
+    setIsEditing(true);
+  };
+
+  const handleSave = () => {
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    rename(draftName);
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    isSavingRef.current = true;
+    setDraftName(deviceName);
+    setIsEditing(false);
+  };
 
   const sendToDevice = (peerId: string, list: FileList | File[] | null) => {
     if (!list || !("length" in list) || !list.length) return;
@@ -51,6 +80,7 @@ export default function NearbyDevices() {
         .nearby-link:hover{color:#efe9da !important}
         .nearby-cta:hover{filter:brightness(1.08)}
         .nearby-ghost:hover{border-color:rgba(239,233,218,.45) !important;color:#efe9da !important}
+        .nearby-edit-btn:hover{color:var(--acc) !important}
         .warp-ghost:hover{background:rgba(var(--acc-rgb),.16) !important;border-color:var(--acc) !important}
         .warp-share:hover{border-color:var(--acc) !important;color:#efe9da !important}
         .warp-cta:hover{filter:brightness(1.08)}
@@ -90,16 +120,96 @@ export default function NearbyDevices() {
               On your network
             </span>
           </div>
-          <span
-            style={{
-              fontFamily: MONO,
-              fontSize: "11px",
-              letterSpacing: ".06em",
-              color: "#6f6a5d",
-            }}
-          >
-            You appear as <span style={{ color: "#a8a293" }}>{deviceName}</span>
-          </span>
+          {isEditing ? (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontFamily: MONO,
+                fontSize: "11px",
+                letterSpacing: ".06em",
+                color: "#6f6a5d",
+              }}
+            >
+              <span>You appear as</span>
+              <input
+                ref={(el) => el?.focus()}
+                type="text"
+                value={draftName}
+                maxLength={40}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={handleSave}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSave();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    handleCancel();
+                  }
+                }}
+                style={{
+                  fontFamily: MONO,
+                  fontSize: "11px",
+                  color: "#efe9da",
+                  background: "rgba(239,233,218,.06)",
+                  border: "1px solid var(--acc)",
+                  padding: "2px 6px",
+                  outline: "none",
+                  width: "140px",
+                }}
+              />
+            </div>
+          ) : (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontFamily: MONO,
+                fontSize: "11px",
+                letterSpacing: ".06em",
+                color: "#6f6a5d",
+              }}
+            >
+              <span>You appear as</span>
+              <span style={{ color: "#a8a293" }}>{deviceName}</span>
+              <button
+                type="button"
+                className="nearby-edit-btn"
+                onClick={handleStartEdit}
+                title="Rename device"
+                aria-label="Rename device"
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: "0 2px",
+                  cursor: "pointer",
+                  color: "#6f6a5d",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "color .15s ease",
+                  font: "inherit",
+                }}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+              </button>
+            </span>
+          )}
         </div>
 
         <h2

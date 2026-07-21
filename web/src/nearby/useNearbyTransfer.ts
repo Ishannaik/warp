@@ -69,9 +69,12 @@ export interface UseNearbyTransfer {
   downloadOne: (id: string) => void;
   /** Zip all received, done file-items into nearby-files.zip and download. */
   downloadAll: () => void;
+  /** Rename this device; empty input falls back to "Device". */
+  rename: (name: string) => void;
   /** Close the active session panel and tear the peer down. */
   dismissSession: () => void;
 }
+
 
 const PEER_ERROR_COPY: Record<string, string> = {
   "nat-failed": "Couldn't open a direct channel. One device may be on a restrictive network.",
@@ -93,7 +96,7 @@ function saveBlob(blob: Blob, filename: string): void {
 
 export function useNearbyTransfer(): UseNearbyTransfer {
   const nearby = useNearby();
-  const { selfId, devices, crowded, deviceName, connectTo, onIncoming } = nearby;
+  const { selfId, devices, crowded, deviceName, connectTo, onIncoming, rename } = nearby;
 
   const [session, setSession] = useState<NearbySession | null>(null);
   const [incoming, setIncoming] = useState<IncomingRequest | null>(null);
@@ -313,6 +316,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       cancel,
       downloadOne,
       downloadAll,
+      rename,
       dismissSession,
     }),
     [
@@ -329,6 +333,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       cancel,
       downloadOne,
       downloadAll,
+      rename,
       dismissSession,
     ],
   );
