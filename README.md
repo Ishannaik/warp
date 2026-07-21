@@ -7,7 +7,7 @@
 
 ### Send it straight through.
 
-Peer-to-peer file transfer that **never touches a server**. Pick a file, share a code, and your bytes stream **device-to-device** over an encrypted WebRTC channel — no uploads, no accounts, no size limits, no cloud.
+Peer-to-peer file transfer that **never touches a server**. Pick a file, share a code, and your bytes stream **device-to-device** over an encrypted WebRTC channel. No uploads, no accounts, no size limits, no cloud.
 
 <p>
 <a href="https://warp.ishannaik.com"><b>⚡ warp.ishannaik.com</b></a>
@@ -48,48 +48,48 @@ Peer-to-peer file transfer that **never touches a server**. Pick a file, share a
 
 </div>
 
-Warp is open source and **we welcome PRs** — from a one-line typo fix to engine work, every contribution counts.
+Warp is open source and **we welcome PRs**, from a one-line typo fix to engine work.
 
-- ⭐ **[Star the repo](https://github.com/Ishannaik/warp)** — it's how more people find serverless, $0 file transfer.
-- 🛠 **[Read CONTRIBUTING.md](./CONTRIBUTING.md)** — dev setup in two commands, an architecture tour ([docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)), and a friendly first-PR walkthrough.
-- 🌱 **[Grab a good first issue](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22)** — scoped, self-contained, and picked for newcomers.
+- ⭐ **[Star the repo](https://github.com/Ishannaik/warp)**. It helps more people find serverless, $0 file transfer.
+- 🛠 **[Read CONTRIBUTING.md](./CONTRIBUTING.md)**. Dev setup in two commands, an architecture tour ([docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)), and a first-PR walkthrough.
+- 🌱 **[Grab a good first issue](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22)**. Each one is scoped, self-contained, and picked for newcomers.
 
 ---
 
 ## Why it's different
 
-- 🔒 **End-to-end encrypted by default** — every transfer rides DTLS on the WebRTC data channel; the keys live only in the two browsers. Your ISP, the café Wi-Fi, and Warp itself all see nothing but ciphertext.
-- 🛰️ **No server in the path** — the signaling server only *introduces* two peers, then steps aside. It never sees, stores, or relays a single file byte.
-- ⚡ **Fast** — 256 KB SCTP chunks with backpressure push the channel toward your real link rate. Multi-GB games and zips **stream straight to disk** instead of buffering in RAM.
-- 🌐 **True multi-device** — a room is a full mesh. **Fan one file out to every device at once**, or send back the other way. The channel stays open for more.
-- ✋ **You stay in control** — the receiver gets a **review → accept → tray** flow. Nothing auto-downloads; you choose what to save, per file or as a zip. Cancel mid-transfer and it stops **instantly** (the cancel rides the signaling socket, jumping the byte queue).
-- 💸 **$0 and no credit card** — Cloudflare's free tier + public STUN. There's no paid relay anywhere, so nothing can ever bill you.
+- 🔒 **End-to-end encrypted by default.** Every transfer rides DTLS on the WebRTC data channel, and the keys live only in the two browsers. Your ISP, the café Wi-Fi, and Warp itself all see nothing but ciphertext.
+- 🛰️ **No server in the path.** The signaling server only *introduces* two peers, then steps aside. It never sees, stores, or relays a single file byte.
+- ⚡ **Fast.** 256 KB SCTP chunks with backpressure push the channel toward your real link rate. Multi-GB games and zips **stream straight to disk** instead of buffering in RAM.
+- 🌐 **True multi-device.** A room is a full mesh. **Fan one file out to every device at once**, or send back the other way. The channel stays open for more.
+- ✋ **You stay in control.** The receiver gets a **review → accept → tray** flow. Nothing auto-downloads, so you choose what to save, per file or as a zip. Cancel mid-transfer and it stops **instantly** (the cancel rides the signaling socket, jumping the byte queue).
+- 💸 **$0 and no credit card.** Warp runs on Cloudflare's free tier plus public STUN. No paid relay sits anywhere in the stack, so nothing can bill you.
 
-> 📖 **Want the deep version?** The [**theory page**](https://warp.ishannaik.com/how) walks the whole stack — NAT, STUN, DTLS, chunking, backpressure — then descends layer by layer through *why a relay can never be truly free*, all the way down to thermodynamics. It's the most fun page in the repo.
+> 📖 The [**theory page**](https://warp.ishannaik.com/how) walks the whole stack (NAT, STUN, DTLS, chunking, backpressure), then works down layer by layer through *why a relay can never be free*, all the way to thermodynamics.
 
 ## How it works
 
 Warp is two small pieces:
 
-- **`web/`** — the app + landing page (Vite + React 19 + TypeScript + Tailwind v4). Runs entirely in the browser.
-- **`server/`** — a **Cloudflare Worker + Durable Object** doing WebSocket **signaling**. It brokers the connection handshake and **hibernates when idle** (so it costs nothing between transfers).
+- **`web/`** is the app plus landing page (Vite + React 19 + TypeScript + Tailwind v4). It runs entirely in the browser.
+- **`server/`** is a **Cloudflare Worker + Durable Object** doing WebSocket **signaling**. It brokers the connection handshake and **hibernates when idle**, so it costs nothing between transfers.
 
 ```
   Browser A  ──handshake──▶   signaling (introduce only)   ◀──handshake──  Browser B
       └──────────────  encrypted WebRTC data channel · your files  ──────────────┘
 ```
 
-1. You open a room — the server mints a short code.
-2. A friend joins with the code (or scans the QR) — the server introduces you.
+1. You open a room, and the server mints a short code.
+2. A friend joins with the code (or scans the QR), and the server introduces you.
 3. The browsers connect directly (STUN for NAT discovery) and files stream **peer-to-peer, end-to-end encrypted**.
 
-Devices on the **same network** also discover each other automatically (grouped by public IP, à la Snapdrop). Multiple peers can share one room — a mesh, up to `MAX_PEERS`.
+Devices on the **same network** also discover each other, grouped by public IP à la Snapdrop. Multiple peers can share one room as a mesh, up to `MAX_PEERS`.
 
 ### Deliberate non-goals
 
-- **No TURN relay.** If both peers are behind strict/symmetric NATs and can't punch through, Warp shows an **honest error** instead of quietly paying to relay your bytes. Same Wi-Fi always works; most networks connect fine via STUN.
-- **No cloud storage.** Nothing is uploaded — there's nothing to leak, expire, or get billed for.
-- **No paid infrastructure.** Signaling is a free hibernating Worker; STUN is public; file bytes go straight peer-to-peer.
+- **No TURN relay.** If both peers sit behind strict or symmetric NATs and can't punch through, Warp shows an **honest error** instead of paying to relay your bytes. Same Wi-Fi always works, and most networks connect fine via STUN.
+- **No cloud storage.** Warp uploads nothing, so there's nothing to leak, expire, or get billed for.
+- **No paid infrastructure.** Signaling is a free hibernating Worker, STUN is public, and file bytes go straight peer-to-peer.
 
 ## Quickstart
 
@@ -111,24 +111,24 @@ pnpm --filter @warp/server test   # signaling e2e
   ```bash
   cd web && wrangler pages deploy dist --project-name=<your-project>
   ```
-- **Signaling** → a **Cloudflare Worker + Durable Object** — genuinely free on the Workers Free plan, no credit card, hibernates when idle:
+- **Signaling** → a **Cloudflare Worker + Durable Object**, free on the Workers Free plan, no credit card, hibernates when idle:
   ```bash
   pnpm --filter @warp/server run deploy
   ```
 
-Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` URL (see [`web/.env.example`](./web/.env.example)). Vite inlines it at build time — rebuild after changing it.
+Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` URL (see [`web/.env.example`](./web/.env.example)). Vite inlines it at build time, so rebuild after changing it.
 
 ## Architecture & protocol
 
-See [`server/README.md`](./server/README.md) for the signaling protocol — message contract, room lifecycle, and mesh rules.
+See [`server/README.md`](./server/README.md) for the signaling protocol: message contract, room lifecycle, and mesh rules.
 
 ## Brand
 
-Logo marks live in [`web/public/brand/`](./web/public/brand) — SVG + PNG, a universal accent tile plus transparent light/dark glyphs.
+Logo marks live in [`web/public/brand/`](./web/public/brand) as SVG and PNG: a universal accent tile plus transparent light/dark glyphs.
 
 ## Contributing
 
-PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Found a security issue? See [SECURITY.md](./SECURITY.md).
+PRs welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md). Found a security issue? See [SECURITY.md](./SECURITY.md).
 
 ## License
 
