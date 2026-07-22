@@ -161,9 +161,9 @@ type Listener<K extends keyof PeerEvents> = PeerEvents[K];
 interface OutgoingBatch {
   batchId: string;
   files: File[];
-  /** Resolves (with the receiver's per-file resume offsets) on accept; rejects on decline. */
+  /** Resolves on accept; rejects when the receiver declines or the channel closes. */
   resolve: (resume?: Record<string, number>) => void;
-  reject: (reason: "declined") => void;
+  reject: (reason: "declined" | Error) => void;
   /** Set true the moment the receiver responds, so a late dup is ignored. */
   settled: boolean;
   /** Per-file resumeToken (id -> token) so a re-offer reuses the same token. */
@@ -476,12 +476,14 @@ export class WarpPeer {
 
     ch.addEventListener("open", () => this.emit("connected"));
     ch.addEventListener("error", () => {
+      this.rejectPendingOffers();
       if (!this.disposed) this.emit("error", "channel-error");
     });
     // SCTP is gone for good once the channel closes (an ICE restart can't revive
     // a closed channel). Surface it so the hook can salvage + rebuild the peer.
     ch.addEventListener("close", () => {
       this.clearRestartTimer();
+      this.rejectPendingOffers();
       if (!this.disposed) this.emit("error", "disconnected");
     });
     ch.addEventListener("message", (ev) => this.onMessage(ev.data));
@@ -550,6 +552,10 @@ export class WarpPeer {
       this.emit("transfer", { ...item });
     }
 
+    // Thumbnail generation above is asynchronous. The channel may have closed
+    // before this batch could register, after its final close/error event.
+    if (ch.readyState !== "open") throw new Error("channel-closed");
+
     // Register the pending batch BEFORE sending, so an instant accept/decline finds it.
     const accepted = new Promise<Record<string, number> | undefined>((resolve, reject) => {
       this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false, tokens });
@@ -560,8 +566,10 @@ export class WarpPeer {
     let resume: Record<string, number> | undefined;
     try {
       resume = await accepted;
-    } catch {
-      // Declined: mark every item declined and bail (channel stays open).
+    } catch (reason) {
+      // A real decline is terminal for this offer. Channel closure stays
+      // salvageable: leave the items unfinished and reject to the hook.
+      if (reason !== "declined") throw reason;
       for (const id of ids) this.markStatus(id, "declined");
       return;
     }
@@ -858,6 +866,16 @@ export class WarpPeer {
     ch.send(JSON.stringify(msg));
   }
 
+  /** Reject every still-pending local offer exactly once on transport death. */
+  private rejectPendingOffers(): void {
+    for (const [batchId, batch] of this.outgoing) {
+      if (batch.settled) continue;
+      batch.settled = true;
+      this.outgoing.delete(batchId);
+      batch.reject(new Error("channel-closed"));
+    }
+  }
+
   /** Update an item's status by id and re-emit. */
   private markStatus(id: string, status: TransferItem["status"]): void {
     const item = this.items.get(id);
@@ -1073,6 +1091,7 @@ export class WarpPeer {
   // ---- teardown ------------------------------------------------------------
 
   close(): void {
+    this.rejectPendingOffers();
     this.disposed = true;
     this.clearRestartTimer();
     try {
