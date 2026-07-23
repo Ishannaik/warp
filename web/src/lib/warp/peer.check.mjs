@@ -32,7 +32,9 @@ class FakeChannel extends EventTarget {
     });
   }
   close() {
+    if (this.readyState === "closed") return;
     this.readyState = "closed";
+    this.dispatchEvent(new Event("close"));
   }
 }
 
@@ -247,4 +249,120 @@ await receiver.handleSignal("A", { kind: "cancel", id: liveId });
 assert.equal(cancelledCount, 1, "a redundant cancel (in-band/out-of-band dup) is a no-op");
 await send4; // sender resolves even though the item was cancelled
 
-console.log("OK: offer/accept stream + decline gating + disk-stream + instant-cancel round-trip passed");
+// --- channel closes while an offer is awaiting accept/decline -------------
+// The public promise must reject promptly so useWarpTransfer's existing catch
+// can stage the files for salvage/re-offer. A timeout is the historical bug.
+const droppedSender = new WarpPeer(sig, "D", true);
+const droppedReceiver = new WarpPeer(sig, "C", false);
+const droppedSenderChannel = droppedSender.pc.localChannel;
+const droppedReceiverChannel = new FakeChannel();
+droppedSenderChannel.peer = droppedReceiverChannel;
+droppedReceiverChannel.peer = droppedSenderChannel;
+droppedReceiver.pc.dispatchEvent(
+  Object.assign(new Event("datachannel"), { channel: droppedReceiverChannel }),
+);
+
+const droppedOfferSeen = waitFor(droppedReceiver, "incoming-offer");
+const droppedOffer = droppedSender.offerFiles([file]);
+await droppedOfferSeen; // proves the batch is registered and awaiting a response
+droppedSenderChannel.close();
+const droppedOutcome = await Promise.race([
+  droppedOffer.then(
+    () => ({ kind: "resolved" }),
+    (reason) => ({ kind: "rejected", reason }),
+  ),
+  new Promise((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 100)),
+]);
+assert.equal(
+  droppedOutcome.kind,
+  "rejected",
+  "offerFiles rejects instead of hanging when the channel closes before accept/decline",
+);
+assert.equal(droppedOutcome.reason?.message, "channel-closed", "channel closure stays distinct from decline");
+
+async function checkPendingOfferTrigger(label, trigger) {
+  const triggerSender = new WarpPeer(sig, `${label}-remote`, true);
+  const triggerReceiver = new WarpPeer(sig, `${label}-local`, false);
+  const triggerSenderChannel = triggerSender.pc.localChannel;
+  const triggerReceiverChannel = new FakeChannel();
+  triggerSenderChannel.peer = triggerReceiverChannel;
+  triggerReceiverChannel.peer = triggerSenderChannel;
+  triggerReceiver.pc.dispatchEvent(
+    Object.assign(new Event("datachannel"), { channel: triggerReceiverChannel }),
+  );
+  const triggerOfferSeen = waitFor(triggerReceiver, "incoming-offer");
+  const triggerOffer = triggerSender.offerFiles([file]);
+  await triggerOfferSeen;
+  trigger(triggerSender, triggerSenderChannel);
+  const outcome = await Promise.race([
+    triggerOffer.then(
+      () => ({ kind: "resolved" }),
+      (reason) => ({ kind: "rejected", reason }),
+    ),
+    new Promise((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 100)),
+  ]);
+  assert.equal(outcome.kind, "rejected", `${label} rejects a pending offer`);
+  assert.equal(outcome.reason?.message, "channel-closed", `${label} uses channel-closed`);
+}
+
+await checkPendingOfferTrigger("channel error", (_peer, channel) => {
+  channel.dispatchEvent(new Event("error"));
+});
+await checkPendingOfferTrigger("explicit close", (peer) => {
+  peer.close();
+});
+
+// The channel can also die while an image thumbnail is being prepared, before
+// the batch enters `outgoing`. Registration must notice that already-dead state
+// instead of waiting for an error/close event that has already happened.
+const savedDocument = globalThis.document;
+const savedCreateImageBitmap = globalThis.createImageBitmap;
+let thumbnailStarted;
+const thumbnailStartedPromise = new Promise((resolve) => {
+  thumbnailStarted = resolve;
+});
+let finishThumbnail;
+globalThis.document = {
+  createElement() {
+    return {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage() {} }),
+      toDataURL: () => "data:image/jpeg;base64,AA==",
+    };
+  },
+};
+globalThis.createImageBitmap = async () => {
+  thumbnailStarted();
+  return await new Promise((resolve) => {
+    finishThumbnail = () => resolve({ width: 1, height: 1, close() {} });
+  });
+};
+
+const delayedSender = new WarpPeer(sig, "F", true);
+const image = new Blob(["pixels"], { type: "image/png" });
+image.name = "pixel.png";
+image.slice = Blob.prototype.slice;
+const delayedOffer = delayedSender.offerFiles([image]);
+await thumbnailStartedPromise;
+delayedSender.pc.localChannel.close();
+finishThumbnail();
+const delayedOutcome = await Promise.race([
+  delayedOffer.then(
+    () => ({ kind: "resolved" }),
+    (reason) => ({ kind: "rejected", reason }),
+  ),
+  new Promise((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 100)),
+]);
+globalThis.document = savedDocument;
+globalThis.createImageBitmap = savedCreateImageBitmap;
+assert.equal(
+  delayedOutcome.kind,
+  "rejected",
+  "offerFiles rejects when the channel closes before pending-batch registration",
+);
+assert.equal(delayedOutcome.reason?.message, "channel-closed", "registration-time closure uses channel-closed");
+
+console.log(
+  "OK: offer/accept stream + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection passed",
+);
