@@ -650,8 +650,8 @@ function PairStep({
   onRemove: (id: string) => void;
   isMobile: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
+  const [copied, setCopied] = useState<"link" | "code" | null>(null);
+  const [copyFailed, setCopyFailed] = useState<"link" | "code" | null>(null);
   const [qrSvg, setQrSvg] = useState<string>("");
   const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 
@@ -670,17 +670,32 @@ function PairStep({
     };
   }, [shareUrl]);
 
+
   const copy = async () => {
     if (!shareUrl) return;
     const ok = await copyToClipboard(shareUrl);
     if (ok) {
-      setCopied(true);
-      setCopyFailed(false);
-      setTimeout(() => setCopied(false), 1800);
+      setCopied("link");
+      setCopyFailed(null);
+      setTimeout(() => setCopied((cur) => (cur === "link" ? null : cur)), 1500);
     } else {
-      setCopyFailed(true);
-      setCopied(false);
-      setTimeout(() => setCopyFailed(false), 2400);
+      setCopyFailed("link");
+      setCopied(null);
+      setTimeout(() => setCopyFailed((cur) => (cur === "link" ? null : cur)), 2400);
+    }
+  };
+
+  const copyCode = async () => {
+    if (!code) return;
+    const ok = await copyToClipboard(code);
+    if (ok) {
+      setCopied("code");
+      setCopyFailed(null);
+      setTimeout(() => setCopied((cur) => (cur === "code" ? null : cur)), 1500);
+    } else {
+      setCopyFailed("code");
+      setCopied(null);
+      setTimeout(() => setCopyFailed((cur) => (cur === "code" ? null : cur)), 2400);
     }
   };
 
@@ -872,27 +887,50 @@ function PairStep({
               type="button"
               className="warp-share"
               onClick={copy}
+              disabled={!shareUrl}
               style={
                 isMobile
                   ? {
                       ...shareBtn,
                       display: "block",
                       textAlign: "center",
-                      color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : shareBtn.color,
+                      color: copyFailed === "link" ? "var(--amb)" : copied === "link" ? "var(--acc)" : shareBtn.color,
                     }
                   : {
                       ...shareBtn,
-                      color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : shareBtn.color,
+                      color: copyFailed === "link" ? "var(--amb)" : copied === "link" ? "var(--acc)" : shareBtn.color,
                     }
               }
             >
-              {copyFailed ? "✕ copy failed" : copied ? "✓ copied!" : "⧉ Copy link"}
+              {copyFailed === "link" ? "✕ copy failed" : copied === "link" ? "✓ copied!" : "⧉ Copy link"}
+            </button>
+            <button
+              type="button"
+              className="warp-share"
+              onClick={copyCode}
+              disabled={!code}
+              style={
+                isMobile
+                  ? {
+                      ...shareBtn,
+                      display: "block",
+                      textAlign: "center",
+                      color: copyFailed === "code" ? "var(--amb)" : copied === "code" ? "var(--acc)" : shareBtn.color,
+                    }
+                  : {
+                      ...shareBtn,
+                      color: copyFailed === "code" ? "var(--amb)" : copied === "code" ? "var(--acc)" : shareBtn.color,
+                    }
+              }
+            >
+              {copyFailed === "code" ? "✕ copy failed" : copied === "code" ? "✓ copied!" : "⬚ Copy code"}
             </button>
             {canShare && (
               <button
                 type="button"
                 className="warp-share"
                 onClick={share}
+                disabled={!shareUrl}
                 style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
               >
                 ↗ Share
