@@ -22,6 +22,13 @@ export const CHUNK_SIZE = 16 * 1024;
 
 /** Text snippets stay as one JSON control frame; keep them below old SCTP caps. */
 export const TEXT_SNIPPET_MAX_BYTES = 64 * 1024;
+const TEXT_SNIPPET_SIZE_PROBE_ID = "xxxxxxxx";
+const TEXT_FRAME_ENCODER = new TextEncoder();
+
+/** Serialized UTF-8 size of the actual text control frame sent on the wire. */
+export function textSnippetFrameBytes(text: string, id = TEXT_SNIPPET_SIZE_PROBE_ID): number {
+  return TEXT_FRAME_ENCODER.encode(JSON.stringify({ t: "text", id, text })).byteLength;
+}
 
 /**
  * bufferedAmount high-water mark. When the channel's send buffer exceeds this

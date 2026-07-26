@@ -138,21 +138,62 @@ assert.equal(text, "hello wrap world", "received blob reassembles to the sent by
 
 await sendPromise; // sender resolves only after streaming completes
 
-// text snippets stay inline, but oversized snippets must never hit send().
+// text snippets stay inline, but oversized serialized frames must never hit send().
+const TEXT_SNIPPET_MAX_BYTES = 64 * 1024;
+const frameBytes = (id, text) => new TextEncoder().encode(JSON.stringify({ t: "text", id, text })).byteLength;
+const frameRoomForText = (id) => TEXT_SNIPPET_MAX_BYTES - frameBytes(id, "");
+const fixedRandom = () => 0.123456789;
+const fixedTextId = fixedRandom().toString(36).slice(2, 10);
+function withFixedIds(fn) {
+  const savedRandom = Math.random;
+  Math.random = fixedRandom;
+  try {
+    return fn();
+  } finally {
+    Math.random = savedRandom;
+  }
+}
+
 let textSendTransfer = null;
 const offTextTransfer = sender.on("transfer", (item) => {
   if (item.kind === "text" && item.direction === "send") textSendTransfer = item;
 });
 const textSeen = waitFor(receiver, "text-received");
+const textFrames = [];
+const rawTextSend = sCh.send.bind(sCh);
+sCh.send = (d) => {
+  if (typeof d === "string") {
+    const msg = JSON.parse(d);
+    if (msg.t === "text") textFrames.push(d);
+  }
+  return rawTextSend(d);
+};
 sender.sendText("short note");
 const textReceived = await textSeen;
 assert.equal(textReceived.text, "short note", "text snippets arrive over the data channel");
 assert.equal(textSendTransfer?.size, new Blob(["short note"]).size, "text send item records byte size");
 offTextTransfer();
+assert.ok(
+  new TextEncoder().encode(textFrames.at(-1)).byteLength <= TEXT_SNIPPET_MAX_BYTES,
+  "normal text frame stays within the 64 KiB wire cap",
+);
 
+const boundarySeen = waitFor(receiver, "text-received");
+const boundaryText = "x".repeat(frameRoomForText(fixedTextId));
+withFixedIds(() => sender.sendText(boundaryText));
+const boundaryReceived = await boundarySeen;
+const boundaryFrame = textFrames.at(-1);
+assert.equal(boundaryReceived.text.length, boundaryText.length, "boundary-size text is still delivered");
+assert.equal(
+  new TextEncoder().encode(boundaryFrame).byteLength,
+  TEXT_SNIPPET_MAX_BYTES,
+  "boundary-size text serializes to exactly the 64 KiB wire cap",
+);
+sCh.send = rawTextSend;
+
+// Backslash-heavy text can be raw-small but JSON-large; guard the serialized frame.
 let oversizedSent = false;
 let oversizedTransfer = false;
-const rawTextSend = sCh.send.bind(sCh);
 sCh.send = (d) => {
   oversizedSent = true;
   return rawTextSend(d);
@@ -161,9 +202,14 @@ const offOversizedTransfer = sender.on("transfer", (item) => {
   if (item.kind === "text") oversizedTransfer = true;
 });
 assert.throws(
-  () => sender.sendText("x".repeat(64 * 1024 + 1)),
+  () => withFixedIds(() => sender.sendText("x".repeat(frameRoomForText(fixedTextId) + 1))),
   /text-too-large/,
-  "oversized text snippets are refused before sending",
+  "one byte over the serialized frame cap is refused before sending",
+);
+assert.throws(
+  () => sender.sendText("\\".repeat(Math.ceil(TEXT_SNIPPET_MAX_BYTES / 2))),
+  /text-too-large/,
+  "JSON-escaped text is capped by serialized frame bytes, not raw text bytes",
 );
 offOversizedTransfer();
 sCh.send = rawTextSend;

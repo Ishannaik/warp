@@ -17,7 +17,13 @@
 
 import { memo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { TEXT_SNIPPET_MAX_BYTES, formatBytes, type OfferItem, type TransferItem } from "../lib/warp/transfer";
+import {
+  TEXT_SNIPPET_MAX_BYTES,
+  formatBytes,
+  textSnippetFrameBytes,
+  type OfferItem,
+  type TransferItem,
+} from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection } from "../lib/warp/useWarpTransfer";
 
@@ -396,8 +402,8 @@ function Composer({
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
   const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
   const trimmedText = text.trim();
-  const textBytes = new Blob([trimmedText]).size;
-  const textTooLarge = textBytes > TEXT_SNIPPET_MAX_BYTES;
+  const frameBytes = textSnippetFrameBytes(trimmedText);
+  const textTooLarge = frameBytes > TEXT_SNIPPET_MAX_BYTES;
   const canSendText = !!trimmedText && !textTooLarge;
 
   const pickFiles = () => fileInput.current?.click();
@@ -405,7 +411,7 @@ function Composer({
 
   const submitText = () => {
     const t = text.trim();
-    if (!t || new Blob([t]).size > TEXT_SNIPPET_MAX_BYTES) return;
+    if (!t || textSnippetFrameBytes(t) > TEXT_SNIPPET_MAX_BYTES) return;
     onSendText(t);
     setText("");
   };
@@ -489,7 +495,7 @@ function Composer({
                 overflowWrap: "anywhere",
               }}
             >
-              Too long to send as text ({formatBytes(textBytes)}). Save it as a .txt file and send that instead.
+              Too long to send as text ({formatBytes(frameBytes)}). Save it as a .txt file and send that instead.
             </div>
           )}
           <button
