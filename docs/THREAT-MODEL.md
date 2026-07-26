@@ -1,3 +1,4 @@
+# Threat Model
 ## Signaling Server Trust Boundary
 
 ### What the signaling server can see
@@ -8,15 +9,13 @@ The signaling server only processes the information required to establish a peer
 - Peer IDs
 - WebRTC signaling data (`signal.data`), including SDP and ICE messages
 - Connection and disconnection timing
-<<<<<<< HEAD
-=======
 - The connecting public IP address (grouped to a /64 prefix for IPv6 to support nearby device discovery)
 
 The signaling server relays signaling messages between peers without interpreting or modifying their contents.
 
 ### What the signaling server cannot see
 
-After the WebRTC connection is established, file data is transferred directly between peers over an encrypted `RTCDataChannel`. The signaling server is not part of the data path and does not receive the transferred file bytes.
+After the WebRTC connection is established, file data is transferred directly between peers over an encrypted `RTCDataChannel`. The signaling server is not part of the data path and never receives or stores transferred file bytes.
 
 As a result, the signaling server cannot inspect:
 
