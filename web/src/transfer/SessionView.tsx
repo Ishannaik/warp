@@ -410,9 +410,8 @@ function Composer({
   const pickFolder = () => folderInput.current?.click();
 
   const submitText = () => {
-    const t = text.trim();
-    if (!t || textSnippetFrameBytes(t) > TEXT_SNIPPET_MAX_BYTES) return;
-    onSendText(t);
+    if (!canSendText) return;
+    onSendText(trimmedText);
     setText("");
   };
 
