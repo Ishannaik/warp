@@ -1,6 +1,7 @@
 # Security Policy
 
 Warp moves people's files, so security reports are taken seriously.
+For the system trust boundaries and what the signaling server can and cannot access, see [Threat Model](./docs/THREAT-MODEL.md).
 
 ## Reporting a vulnerability
 
