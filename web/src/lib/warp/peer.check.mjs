@@ -138,6 +138,38 @@ assert.equal(text, "hello wrap world", "received blob reassembles to the sent by
 
 await sendPromise; // sender resolves only after streaming completes
 
+// text snippets stay inline, but oversized snippets must never hit send().
+let textSendTransfer = null;
+const offTextTransfer = sender.on("transfer", (item) => {
+  if (item.kind === "text" && item.direction === "send") textSendTransfer = item;
+});
+const textSeen = waitFor(receiver, "text-received");
+sender.sendText("short note");
+const textReceived = await textSeen;
+assert.equal(textReceived.text, "short note", "text snippets arrive over the data channel");
+assert.equal(textSendTransfer?.size, new Blob(["short note"]).size, "text send item records byte size");
+offTextTransfer();
+
+let oversizedSent = false;
+let oversizedTransfer = false;
+const rawTextSend = sCh.send.bind(sCh);
+sCh.send = (d) => {
+  oversizedSent = true;
+  return rawTextSend(d);
+};
+const offOversizedTransfer = sender.on("transfer", (item) => {
+  if (item.kind === "text") oversizedTransfer = true;
+});
+assert.throws(
+  () => sender.sendText("x".repeat(64 * 1024 + 1)),
+  /text-too-large/,
+  "oversized text snippets are refused before sending",
+);
+offOversizedTransfer();
+sCh.send = rawTextSend;
+assert.equal(oversizedSent, false, "oversized text does not call channel.send()");
+assert.equal(oversizedTransfer, false, "oversized text does not create a transfer item");
+
 // decline gating: a second offer that gets declined must send no item to done.
 const offer2Seen = waitFor(receiver, "incoming-offer");
 const send2 = sender.offerFiles([file]);
@@ -364,5 +396,5 @@ assert.equal(
 assert.equal(delayedOutcome.reason?.message, "channel-closed", "registration-time closure uses channel-closed");
 
 console.log(
-  "OK: offer/accept stream + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection passed",
 );

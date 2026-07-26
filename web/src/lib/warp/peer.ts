@@ -33,6 +33,7 @@
 import type { SignalData, SignalingClient } from "./signaling";
 import {
   LOW_WATER_MARK,
+  TEXT_SNIPPET_MAX_BYTES,
   fileId,
   fileKey,
   newResumeToken,
@@ -629,6 +630,7 @@ export class WarpPeer {
     const id = fileId();
     const batchId = fileId();
     const bytes = new Blob([text]).size;
+    if (bytes > TEXT_SNIPPET_MAX_BYTES) throw new Error("text-too-large");
     const item: TransferItem = {
       id,
       batchId,

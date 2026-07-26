@@ -20,6 +20,9 @@
 /** 16 KiB chunk size — the SCTP-friendly sweet spot used across the design copy. */
 export const CHUNK_SIZE = 16 * 1024;
 
+/** Text snippets stay as one JSON control frame; keep them below old SCTP caps. */
+export const TEXT_SNIPPET_MAX_BYTES = 64 * 1024;
+
 /**
  * bufferedAmount high-water mark. When the channel's send buffer exceeds this
  * we stop pumping and wait for `bufferedamountlow` before resuming, so we never
