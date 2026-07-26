@@ -10,7 +10,7 @@ The signaling server only processes the information required to establish a peer
 - WebRTC signaling data (`signal.data`), including SDP and ICE messages
 - Connection and disconnection timing
 - The connecting public IP address (grouped to a /64 prefix for IPv6 to support nearby device discovery)
-
+- Device display names (when devices use nearby discovery)
 The signaling server relays signaling messages between peers without interpreting or modifying their contents.
 
 ### What the signaling server cannot see
@@ -23,7 +23,7 @@ As a result, the signaling server cannot inspect:
 - File contents
 - Data transferred over the WebRTC data channel
 
-For additional background on the networking model, see `docs/theory-content.md`.
+For additional background on the networking model, see [theory-content.md](./theory-content.md).
 
 ---
 
