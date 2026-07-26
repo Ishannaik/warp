@@ -12,6 +12,9 @@ The signaling server only processes the information required to establish a peer
 - Peer IDs
 - WebRTC signaling data (`signal.data`), including SDP and ICE messages
 - Connection and disconnection timing
+<<<<<<< HEAD
+=======
+- The connecting public IP address (grouped to a /64 prefix for IPv6 to support nearby device discovery)
 
 The signaling server relays signaling messages between peers without interpreting or modifying their contents.
 
