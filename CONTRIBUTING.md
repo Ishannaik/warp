@@ -4,6 +4,8 @@ First off — thanks! Warp is a small, deliberately-lean project, and that's exa
 
 Never contributed to open source before? Warp is a friendly place to start. Read the ["Your first PR"](#your-first-pr-a-walkthrough) walkthrough below, pick a [`good first issue`](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22), and don't be shy about opening a draft PR early — we'd rather help you mid-flight than review a finished thing that went sideways.
 
+**Want to talk before you build?** [Join the Discord](https://discord.gg/KKvtRhQvRv). Ask which issue suits you, sanity-check an approach, or say hi. Many of the larger issues carry a Mermaid diagram of the flow they touch, so start there if you want to see how a piece fits before writing code.
+
 ## What Warp is
 
 Peer-to-peer file transfer in the browser. Pick a file, share a 6-character code, and bytes stream device-to-device over an encrypted WebRTC data channel. **No uploads, no accounts, no size limits, no cloud** — and no server ever touches a file byte.

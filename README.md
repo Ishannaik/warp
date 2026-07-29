@@ -15,10 +15,13 @@ Peer-to-peer file transfer that **never touches a server**. Pick a file, share a
 <a href="https://warp.ishannaik.com/how">How it works</a>
 &nbsp;·&nbsp;
 <a href="https://github.com/Ishannaik/warp/issues">Issues</a>
+&nbsp;·&nbsp;
+<a href="https://discord.gg/KKvtRhQvRv">Discord</a>
 </p>
 
 [![CI](https://github.com/Ishannaik/warp/actions/workflows/ci.yml/badge.svg)](https://github.com/Ishannaik/warp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-5360ff.svg)](./LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/KKvtRhQvRv)
 ![Built with WebRTC](https://img.shields.io/badge/WebRTC-P2P-5360ff)
 ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers-ef6a3d)
 ![Cost](https://img.shields.io/badge/cost-%240%20%C2%B7%20no%20card-1f9d55)
