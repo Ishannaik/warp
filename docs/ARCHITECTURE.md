@@ -1,5 +1,7 @@
 # Warp architecture
 
+For the security trust boundary of the signaling server, see [Threat Model](./THREAT-MODEL.md).
+
 How a file gets from one browser to another without any server ever touching it. This is the deep tour for new contributors — everything here cites the real files and functions, so you can read along in the code.
 
 **The one-paragraph version:** a tiny Cloudflare Worker introduces two browsers to each other over WebSocket (the *signaling* plane), the browsers negotiate a direct, encrypted WebRTC data channel (the *data* plane), and files stream peer-to-peer over that channel using a small JSON-control + binary-chunk wire protocol with backpressure, accept-gating, instant cancel, and byte-exact resume. The server never sees a file byte — it can't, by construction.
