@@ -9,3 +9,6 @@ contact_links:
   - name: 🔒 Report a security vulnerability
     url: https://github.com/Ishannaik/warp/blob/main/SECURITY.md
     about: Please report security issues privately — not as public issues.
+  - name: 💬 Chat on Discord
+    url: https://discord.gg/KKvtRhQvRv
+    about: Ask a question, sanity-check an approach, or claim an issue before you start.

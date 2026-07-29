@@ -32,3 +32,7 @@ Closes #<!-- issue number, if any -->
 ## Screenshots / recordings
 
 <!-- For UI changes: desktop + ~390px mobile. For transfer changes: a quick note on what you tested (file size, browsers, devices). -->
+
+---
+
+Stuck on a review comment or want to talk through an approach? [Discord](https://discord.gg/KKvtRhQvRv).
