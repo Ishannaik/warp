@@ -1,6 +1,10 @@
 version: 2
 updates:
   # One npm entry covers the whole pnpm workspace (root pnpm-lock.yaml).
+  # Minor/patch only: a grouped major bump lands eslint, typescript, vite and
+  # globals in one 1000-line PR, and when the web build goes red there is no
+  # way to tell which of the four did it. Majors get taken by hand, one at a
+  # time, so a break is attributable.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -8,8 +12,20 @@ updates:
     groups:
       npm:
         patterns: ["*"]
-  # Keeps the SHA-pinned actions in ci.yml current.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Keeps the SHA-pinned actions in ci.yml current. Same rule: a major jump on
+  # an action used by both ci.yml and self-assign.yml can break the workflow
+  # outright, so those are handled by hand.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
