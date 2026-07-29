@@ -17,7 +17,13 @@
 
 import { memo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { formatBytes, type OfferItem, type TransferItem } from "../lib/warp/transfer";
+import {
+  TEXT_SNIPPET_MAX_BYTES,
+  formatBytes,
+  textSnippetFrameBytes,
+  type OfferItem,
+  type TransferItem,
+} from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection } from "../lib/warp/useWarpTransfer";
 
@@ -395,14 +401,17 @@ function Composer({
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
   const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
+  const trimmedText = text.trim();
+  const frameBytes = textSnippetFrameBytes(trimmedText);
+  const textTooLarge = frameBytes > TEXT_SNIPPET_MAX_BYTES;
+  const canSendText = !!trimmedText && !textTooLarge;
 
   const pickFiles = () => fileInput.current?.click();
   const pickFolder = () => folderInput.current?.click();
 
   const submitText = () => {
-    const t = text.trim();
-    if (!t) return;
-    onSendText(t);
+    if (!canSendText) return;
+    onSendText(trimmedText);
     setText("");
   };
 
@@ -447,6 +456,8 @@ function Composer({
         {/* text snippet */}
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           <textarea
+            aria-invalid={textTooLarge}
+            aria-describedby={textTooLarge ? "text-size-hint" : undefined}
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="…or paste a link / note to send as text"
@@ -471,23 +482,38 @@ function Composer({
               lineHeight: 1.5,
             }}
           />
+          {textTooLarge && (
+            <div
+              id="text-size-hint"
+              role="status"
+              style={{
+                color: "#ef6a3d",
+                fontFamily: MONO,
+                fontSize: "11px",
+                lineHeight: 1.45,
+                overflowWrap: "anywhere",
+              }}
+            >
+              Too long to send as text ({formatBytes(frameBytes)}). Save it as a .txt file and send that instead.
+            </div>
+          )}
           <button
             type="button"
-            className={text.trim() ? "warp-cta" : undefined}
+            className={canSendText ? "warp-cta" : undefined}
             onClick={submitText}
-            disabled={!text.trim()}
+            disabled={!canSendText}
             style={{
               alignSelf: isMobile ? "stretch" : "flex-end",
               padding: "11px 22px",
-              background: text.trim() ? "var(--acc)" : "rgba(239,233,218,.12)",
-              color: text.trim() ? "#fff" : "#6f6a5d",
+              background: canSendText ? "var(--acc)" : "rgba(239,233,218,.12)",
+              color: canSendText ? "#fff" : "#6f6a5d",
               border: "none",
               fontFamily: MONO,
               fontSize: "11.5px",
               fontWeight: 600,
               letterSpacing: ".07em",
               textTransform: "uppercase",
-              cursor: text.trim() ? "pointer" : "not-allowed",
+              cursor: canSendText ? "pointer" : "not-allowed",
             }}
           >
             Send text{fanout} →

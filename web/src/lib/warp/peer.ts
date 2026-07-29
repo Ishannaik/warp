@@ -33,9 +33,11 @@
 import type { SignalData, SignalingClient } from "./signaling";
 import {
   LOW_WATER_MARK,
+  TEXT_SNIPPET_MAX_BYTES,
   fileId,
   fileKey,
   newResumeToken,
+  textSnippetFrameBytes,
   type ControlMessage,
   type Direction,
   type OfferItem,
@@ -627,8 +629,9 @@ export class WarpPeer {
     const ch = this.channel;
     if (!ch || ch.readyState !== "open") throw new Error("channel-not-open");
     const id = fileId();
-    const batchId = fileId();
+    if (textSnippetFrameBytes(text, id) > TEXT_SNIPPET_MAX_BYTES) throw new Error("text-too-large");
     const bytes = new Blob([text]).size;
+    const batchId = fileId();
     const item: TransferItem = {
       id,
       batchId,
