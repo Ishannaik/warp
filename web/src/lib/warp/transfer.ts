@@ -31,11 +31,13 @@ export function textSnippetFrameBytes(text: string, id = TEXT_SNIPPET_SIZE_PROBE
 }
 
 /**
- * bufferedAmount high-water mark. When the channel's send buffer exceeds this
- * we stop pumping and wait for `bufferedamountlow` before resuming, so we never
- * balloon memory on a fast disk / slow link.
+ * bufferedAmount backpressure resumes at this low-water mark (`bufferedAmountLowThreshold`
+ * in peer.ts): the send pump pauses above its high-water mark and waits for
+ * `bufferedamountlow` before refilling. The high-water mark itself lives next to
+ * the pump it gates — `SEND_HIGH_WATER` in peer.ts — so the two limits that are
+ * easy to conflate with the SCTP size caps (see the peer.ts header) stay in one
+ * place each.
  */
-export const HIGH_WATER_MARK = 8 * 1024 * 1024; // 8 MiB
 export const LOW_WATER_MARK = 1 * 1024 * 1024; // 1 MiB
 
 /** A single file's descriptor inside a batch manifest. */

@@ -187,11 +187,27 @@ export function idbSink(fileId: string, mime?: string): ReceiveSink {
   };
 }
 
-/** Delete every staging row for one file. */
+/**
+ * Delete every staging row for one file. Walks a cursor over the file's exact
+ * prefix range and deletes in place — scoped to this file's rows (no full-store
+ * scan) and without materializing a key array for a multi-GB file's thousands
+ * of chunks.
+ */
 async function clearFile(db: IDBDatabase, fileId: string): Promise<void> {
   const store = tx(db, "readwrite");
-  const rows = (await reqDone(store.getAllKeys(fileRange(fileId)))) as Array<[string, number]>;
-  await Promise.all(rows.map((k) => reqDone(store.delete(k))));
+  await new Promise<void>((resolve, reject) => {
+    const req = store.openCursor(fileRange(fileId));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      cursor.delete();
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
 }
 
 /**
