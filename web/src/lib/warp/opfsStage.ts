@@ -21,9 +21,15 @@
  * chunk, which caps receive throughput far below the link rate on real phones;
  * batching keeps the sync handle's speed advantage. This is the same model as the
  * File System Access disk sink, whose `write()` also resolves once the bytes are
- * handed to the OS and only `close()` guarantees persistence. The resume offset
- * this sink reports is consumed within the same tab session (the hook's registry
- * is in-memory), so OS-level durability granularity is not on the resume path.
+ * handed to the OS and only `close()` guarantees persistence.
+ *
+ * Reload-resume caveat (#169): because flushes are batched, after an UNCLEAN close
+ * (tab reload / crash) the file's real length can lag the sink's acked
+ * `bytesWritten` by up to ~FLUSH_BYTES. A reload therefore never trusts the ledger
+ * offset alone — the hook reconciles it against the file's actual durable length
+ * (`opfsDurableLength`) and reconstructs the sink at `min(real, ledger)`, so a
+ * resumed receive never starts past a hole. Within a live tab session the in-memory
+ * registry's offset is exact, so this only matters across a reload.
  *
  * Correctness invariants (mirror receiveController/idbStage — Fable H1):
  *   - `bytesWritten` advances ONLY after the worker acks a write — never at
@@ -49,7 +55,8 @@ const STAGE_PREFIX = "warp-stage-";
  * with the real API).
  */
 interface OpfsSyncAccessHandle {
-  write(buf: ArrayBuffer | Uint8Array): number;
+  write(buf: ArrayBuffer | Uint8Array, opts?: { at?: number }): number;
+  truncate(size: number): void;
   flush(): void;
   close(): void;
 }
@@ -118,27 +125,47 @@ const OPFS_WORKER_SRC = `
 const FLUSH_BYTES = 16 * 1024 * 1024;
 let handle = null;
 let sinceFlush = 0;
+let position = 0;
 self.onmessage = (e) => {
   const m = e.data;
   try {
     if (m.t === "open") {
+      const start = m.startOffset || 0;
       navigator.storage.getDirectory()
         .then((root) => root.getFileHandle(m.name, { create: true }))
         .then((fh) => fh.createSyncAccessHandle())
-        .then((h) => { handle = h; sinceFlush = 0; self.postMessage({ t: "opened" }); })
+        .then((h) => {
+          handle = h;
+          // Reload-resume (#169): a reconstructed sink over a partial that SURVIVED
+          // a reload begins at the durable end, not 0. The caller reconciles 'start'
+          // to min(real file length, ledger offset) BEFORE constructing the sink, so
+          // start <= the file's true length and truncate() only ever SHORTENS (or
+          // no-ops) — it drops any un-flushed tail the ledger acked but the disk
+          // didn't persist, so resumed writes never land past a hole. Position then
+          // advances from 'start', so new chunks append after the surviving prefix.
+          if (start > 0) handle.truncate(start);
+          position = start;
+          sinceFlush = 0;
+          self.postMessage({ t: "opened" });
+        })
         .catch((err) => self.postMessage({ t: "error", message: String((err && err.message) || err) }));
     } else if (m.t === "write") {
       let view = new Uint8Array(m.buf);
+      let at = position;
       while (view.byteLength > 0) {
-        const n = handle.write(view);
+        // Explicit { at } (not the handle's implicit cursor) so a short write and
+        // its retry land contiguously even if an engine doesn't advance the cursor.
+        const n = handle.write(view, { at });
         if (n <= 0) throw new Error("OPFS write made no progress");
         sinceFlush += n;
+        at += n;
         view = view.subarray(n);
       }
+      position = at;
       if (sinceFlush >= FLUSH_BYTES) { handle.flush(); sinceFlush = 0; }
       self.postMessage({ t: "wrote" });
     } else if (m.t === "close") {
-      if (handle) { handle.flush(); handle.close(); handle = null; sinceFlush = 0; }
+      if (handle) { handle.flush(); handle.close(); handle = null; sinceFlush = 0; position = 0; }
       self.postMessage({ t: "closed" });
     }
   } catch (err) {
@@ -169,7 +196,7 @@ async function opfsRoot(): Promise<OpfsDirHandle> {
  * closed). Requests are chained one at a time by the sink, so a single
  * outstanding-reply slot is enough.
  */
-function workerWriter(name: string): OpfsWriter {
+function workerWriter(name: string, startOffset: number): OpfsWriter {
   const worker = new Worker(opfsWorkerUrl(), { name: "warp-opfs" });
   let pending: { resolve: () => void; reject: (e: Error) => void } | null = null;
   let dead = false;
@@ -211,7 +238,7 @@ function workerWriter(name: string): OpfsWriter {
       worker.postMessage(msg, transfer ?? []);
     });
 
-  const open = (): Promise<void> => (openP ??= rpc({ t: "open", name }));
+  const open = (): Promise<void> => (openP ??= rpc({ t: "open", name, startOffset }));
 
   return {
     async write(buf) {
@@ -260,15 +287,25 @@ function workerWriter(name: string): OpfsWriter {
  * the worker acks a flushed (durable) write; any failure poisons the sink. The
  * `makeWriter` seam defaults to the Worker-backed writer and is injectable for the
  * check harness.
+ *
+ * `startOffset` (reload-resume, issue #169): a reconstructed sink over a partial
+ * that SURVIVED a tab reload begins at the durable end instead of 0, mirroring
+ * `idbSink(fileId, mime, startOffset)` from #36. The caller reconciles startOffset
+ * to the file's real durable length first (see `opfsDurableLength`), so the worker's
+ * open truncates to it and appends new chunks after the surviving prefix;
+ * `bytesWritten` reports from startOffset, so the receiver resumes at a byte that is
+ * really there (H1). Defaults to 0 (a fresh receive), so existing callers are
+ * unchanged.
  */
 export function opfsSink(
   fileId: string,
   mime?: string,
-  makeWriter: (name: string) => OpfsWriter = workerWriter,
+  startOffset = 0,
+  makeWriter: (name: string, startOffset: number) => OpfsWriter = workerWriter,
 ): ReceiveSink {
   const name = STAGE_PREFIX + fileId;
-  const writer = makeWriter(name);
-  let bytes = 0;
+  const writer = makeWriter(name, startOffset);
+  let bytes = startOffset;
   let failed = false;
   let chain: Promise<void> = Promise.resolve();
 
@@ -336,6 +373,27 @@ export function opfsSink(
       }
     },
   };
+}
+
+/**
+ * The real durable length of a staging file, or `undefined` if it's missing or
+ * unreadable (reload-resume, issue #169). The hook reconciles a ledger row's
+ * `bytesWritten` against this before reconstructing an `opfsSink`: batched flushes
+ * mean up to ~FLUSH_BYTES of acked bytes may not have reached disk after an unclean
+ * close, so the file's true length — not the ledger — is the trustworthy offset.
+ * `undefined` tells the caller to fall back to an honest restart (accept modal)
+ * rather than resume onto a file it can't measure. Best-effort: never throws.
+ */
+export async function opfsDurableLength(fileId: string): Promise<number | undefined> {
+  try {
+    if (!opfsSupported()) return undefined;
+    const root = await opfsRoot();
+    const fh = await root.getFileHandle(STAGE_PREFIX + fileId); // no create: probe only
+    const file = await fh.getFile();
+    return file.size;
+  } catch {
+    return undefined; // missing / OPFS unavailable -> honest restart upstream
+  }
 }
 
 /**

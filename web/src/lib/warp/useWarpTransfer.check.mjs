@@ -464,21 +464,32 @@ await handleOffer(rp.remoteId, { batchId: "re7", items: [{ id: "s1", key: "sick|
 assert(incoming && incoming.batchId === "re7", "a re-offer onto a POISONED sink surfaces the modal, not auto-resume");
 assert(rp.accepted.length === 0, "a poisoned-sink re-offer is NOT auto-accepted");
 
-// 7. Reload-resume (issue #36): the registry is repopulated from the durable ledger
-// on mount, and the EXISTING auto-resume path then continues from the staged offset.
-// hydrateFromLedger mirrors the hook 1:1: only IDB rows with a sane, incomplete
-// offset become entries; OPFS / complete / corrupt rows are skipped (honest restart).
-function hydrateFromLedger(rows) {
+// 7. Reload-resume (issue #36, extended to OPFS by #169): the registry is repopulated
+// from the durable ledger on mount, and the EXISTING auto-resume path then continues
+// from the staged offset. hydrateFromLedger mirrors the hook 1:1: IDB rows with a
+// sane, incomplete offset become entries directly; OPFS rows ALSO rehydrate, but only
+// after reconciling the ledger offset against the file's real durable length
+// (opfsDurableLength) — resume at min(real, ledger), never the ledger alone (H1). An
+// OPFS row whose length can't be read (undefined) is dropped for an honest restart;
+// complete / corrupt rows are always skipped.
+function hydrateFromLedger(rows, opfsLength) {
   const hydrated = [];
   for (const row of rows) {
-    if (row.sinkKind !== "idb") continue;
+    if (row.sinkKind !== "idb" && row.sinkKind !== "opfs") continue;
     if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) continue;
     if (receiveReg.has(row.key)) continue;
+    let offset = row.bytesWritten;
+    if (row.sinkKind === "opfs") {
+      const real = opfsLength(row.fileId);
+      if (real === undefined) continue; // length unreadable -> honest restart
+      offset = Math.min(real, row.bytesWritten);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) continue;
+    }
     receiveReg.set(row.key, {
       key: row.key,
       size: row.size,
       resumeToken: row.resumeToken,
-      sink: fakeSink(row.bytesWritten),
+      sink: fakeSink(offset),
       active: false,
       target: undefined,
     });
@@ -487,19 +498,31 @@ function hydrateFromLedger(rows) {
   return hydrated;
 }
 
+// The durable OPFS lengths a reload would measure: img-stage holds 40 bytes (the
+// ledger acked 50, so reconciliation must pull the offset back to 40); vid-stage is
+// absent, so its length reads undefined (file gone / unreadable -> honest restart).
+const opfsFiles = { "img-stage": 40 };
+const opfsLength = (fileId) => (fileId in opfsFiles ? opfsFiles[fileId] : undefined);
+
 const ledgerRows = [
   { key: "big.bin|100|7", sinkKind: "idb", resumeToken: "tok-R", size: 100, bytesWritten: 60 },
-  { key: "vid.mp4|50|8", sinkKind: "opfs", resumeToken: "tok-S", size: 50, bytesWritten: 20 },
+  { key: "img.iso|80|11", sinkKind: "opfs", fileId: "img-stage", resumeToken: "tok-V", size: 80, bytesWritten: 50 },
+  { key: "vid.mp4|50|8", sinkKind: "opfs", fileId: "vid-stage", resumeToken: "tok-S", size: 50, bytesWritten: 20 },
   { key: "done.bin|30|9", sinkKind: "idb", resumeToken: "tok-T", size: 30, bytesWritten: 30 },
   { key: "bad.bin|40|10", sinkKind: "idb", resumeToken: "tok-U", size: 40, bytesWritten: -5 },
 ];
-const hydrated = hydrateFromLedger(ledgerRows);
+const hydrated = hydrateFromLedger(ledgerRows, opfsLength);
 assert(
-  hydrated.length === 1 && hydrated[0] === "big.bin|100|7",
-  "hydration rebuilds ONLY the sane, incomplete IDB partial",
+  hydrated.length === 2 && hydrated.includes("big.bin|100|7") && hydrated.includes("img.iso|80|11"),
+  "hydration rebuilds the sane IDB partial AND a readable OPFS partial",
 );
 assert(receiveReg.has("big.bin|100|7"), "the IDB partial is back in the registry after reload");
-assert(!receiveReg.has("vid.mp4|50|8"), "an OPFS partial is not rehydrated yet (honest restart)");
+assert(receiveReg.has("img.iso|80|11"), "a readable OPFS partial is rehydrated after reload (#169)");
+assert(
+  receiveReg.get("img.iso|80|11").sink.bytesWritten === 40,
+  "the OPFS resume offset is reconciled to min(durable length, ledger) — 40, not the 50 the ledger acked",
+);
+assert(!receiveReg.has("vid.mp4|50|8"), "an OPFS partial with an unreadable length is dropped (honest restart)");
 assert(!receiveReg.has("done.bin|30|9"), "a complete row is dropped, not resumed");
 assert(!receiveReg.has("bad.bin|40|10"), "a corrupt (negative) offset is dropped, not trusted");
 
@@ -515,11 +538,18 @@ await handleOffer(rp2.remoteId, { batchId: "rl1", items: [{ id: "z1", key: "big.
 assert(incoming === null, "after reload, the re-offered IDB partial auto-resumes with NO modal");
 assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z1"] === 60, "reload-resume continues from the durable offset (60)");
 
-// The OPFS file was NOT rehydrated, so its re-offer is an "unknown" key -> modal
-// (an honest restart rather than a silent resume from a wrong offset).
+// The rehydrated OPFS partial (#169) likewise auto-resumes — from the RECONCILED
+// offset (40), not the 50 the ledger acked, so the sender re-sends only what's missing.
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl3", items: [{ id: "z3", key: "img.iso|80|11", size: 80, resumeToken: "tok-V" }] });
+assert(incoming === null, "after reload, the re-offered OPFS partial auto-resumes with NO modal (#169)");
+assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z3"] === 40, "OPFS reload-resume continues from the reconciled offset (40)");
+
+// The vid.mp4 OPFS row was dropped (its durable length was unreadable), so its re-offer
+// is an "unknown" key -> modal (an honest restart rather than a resume onto a hole).
 incoming = null;
 await handleOffer(rp2.remoteId, { batchId: "rl2", items: [{ id: "z2", key: "vid.mp4|50|8", size: 50, resumeToken: "tok-S" }] });
-assert(incoming && incoming.batchId === "rl2", "a non-rehydrated (OPFS) file restarts via the accept modal");
+assert(incoming && incoming.batchId === "rl2", "an OPFS file with an unreadable length restarts via the accept modal");
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

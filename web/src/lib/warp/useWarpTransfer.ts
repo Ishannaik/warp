@@ -38,7 +38,7 @@ import {
 } from "./peer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
-import { gcOrphanOpfs, opfsSink, opfsSupported } from "./opfsStage";
+import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSupported } from "./opfsStage";
 import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
 import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
 import { streamZipDownload } from "./zipDownload";
@@ -825,8 +825,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       // Reload-resume coordinates (#36): only the origin-storage sinks stage bytes
       // that survive a reload, so only they get a ledger row. `fileId` is the staging
       // name (the offer item id) so a reload reconstructs the SAME sink over the SAME
-      // IDB rows / OPFS file. OPFS is recorded for forward-compat but not yet
-      // rehydrated (its reload offset needs a file-length reconciliation — follow-up).
+      // IDB rows / OPFS file. Both IDB and OPFS rows are rehydrated on mount (#169);
+      // OPFS reconciles its offset against the file's real durable length first.
       const ledger =
         useIdb || useOpfs
           ? { fileId: it.id, sinkKind: (useIdb ? "idb" : "opfs") as LedgerSinkKind, mime: it.mime, name: it.name }
@@ -1037,18 +1037,21 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
    * key + token match. So reload-survival is just "rebuild the entries from durable
    * storage on mount"; the existing auto-resume path does the rest.
    *
-   * Only IDB rows are rehydrated today: their staged chunks are individually durable,
-   * so `idbSink(fileId, mime, bytesWritten)` reproduces the exact offset and its
-   * prefix scan reassembles prefix + tail. OPFS rows are recorded but skipped here —
-   * rehydrating them needs a file-length reconciliation after an unclean close
-   * (follow-up). Memory / disk receives have no row and restart honestly (the sender's
-   * re-offer simply shows the accept modal again).
+   * IDB rows rehydrate directly: their staged chunks are individually durable, so
+   * `idbSink(fileId, mime, bytesWritten)` reproduces the exact offset and its prefix
+   * scan reassembles prefix + tail. OPFS rows rehydrate too (#169), but their flushes
+   * are BATCHED, so after an unclean close the file's real length can lag the ledger's
+   * `bytesWritten`; we reconcile against the file's actual durable length and resume
+   * at `min(real, ledger)` — never the ledger alone (H1). If the length can't be read
+   * (file gone / OPFS unavailable) we drop the row and fall back to an honest restart.
+   * Memory / disk receives have no row and restart honestly (the sender's re-offer
+   * simply shows the accept modal again).
    */
   const hydrateFromLedger = useCallback(async (room: string) => {
     const rows = await readRxLedger(room);
     const reg = receiveRegRef.current;
     for (const row of rows) {
-      if (row.sinkKind !== "idb") continue; // OPFS / others: honest restart for now
+      if (row.sinkKind !== "idb" && row.sinkKind !== "opfs") continue; // others: honest restart
       // Trust the offset only if it's a sane, incomplete count — a corrupt or
       // already-complete row is dropped, never resumed (H1/H2).
       if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) {
@@ -1056,13 +1059,38 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         continue;
       }
       if (reg.has(row.key)) continue; // a live entry already owns this file
+      if (row.sinkKind === "idb") {
+        reg.set(row.key, {
+          key: row.key,
+          size: row.size,
+          resumeToken: row.resumeToken,
+          sink: idbSink(row.fileId, row.mime, row.bytesWritten),
+          active: false,
+          ledger: { fileId: row.fileId, sinkKind: "idb", mime: row.mime, name: row.name },
+        });
+        continue;
+      }
+      // OPFS: reconcile the ledger offset against the file's real durable length.
+      // A length we can't read means we can't prove where the durable prefix ends, so
+      // drop the row and let the sender's re-offer show the accept modal (honest
+      // restart) rather than resume onto a hole.
+      const real = await opfsDurableLength(row.fileId);
+      if (real === undefined) {
+        void removeRxLedger(row.key);
+        continue;
+      }
+      const offset = Math.min(real, row.bytesWritten);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) {
+        void removeRxLedger(row.key);
+        continue;
+      }
       reg.set(row.key, {
         key: row.key,
         size: row.size,
         resumeToken: row.resumeToken,
-        sink: idbSink(row.fileId, row.mime, row.bytesWritten),
+        sink: opfsSink(row.fileId, row.mime, offset),
         active: false,
-        ledger: { fileId: row.fileId, sinkKind: "idb", mime: row.mime, name: row.name },
+        ledger: { fileId: row.fileId, sinkKind: "opfs", mime: row.mime, name: row.name },
       });
     }
   }, []);
