@@ -530,20 +530,28 @@ export class WarpPeer {
 
     const batchId = fileId();
 
+    // Generate the whole batch's thumbnails CONCURRENTLY (issue #90): the old
+    // loop awaited makeThumb per file, serializing a decode per photo in front of
+    // the offer — the receiver's accept modal didn't appear until the sender had
+    // decoded every image. Promise.all decodes them in parallel; index alignment
+    // back into `files` keeps the manifest in the caller's order.
+    const thumbs = await Promise.all(files.map((f) => makeThumb(f)));
+
     // Build the manifest + create local send-items in lockstep so ids match.
     // Each file gets a stable `key` (identity) and a random `resumeToken` so a
     // re-offer after a drop is recognized and can only be resumed by this sender.
     const manifest: OfferItem[] = [];
     const ids: string[] = [];
     const tokens: Record<string, string> = {};
-    for (const file of files) {
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
       const id = fileId();
       ids.push(id);
       const mime = file.type || "application/octet-stream";
       const key = fileKey(file);
       const resumeToken = this.tokenForKey(key);
       tokens[id] = resumeToken;
-      const thumb = await makeThumb(file); // best-effort; undefined on non-image/failure
+      const thumb = thumbs[i]; // best-effort; undefined on non-image/failure
       manifest.push({ id, name: file.name, size: file.size, mime, key, resumeToken, ...(thumb ? { thumb } : {}) });
 
       const item: TransferItem = {
@@ -1134,28 +1142,40 @@ function clampOffset(v: unknown, size: number): number {
 
 const THUMB_MAX = 64;
 
+/** Skip thumbnail decoding above this source size (issue #90): a single enormous
+ *  TIFF/PSD shouldn't stall the whole batch's offer behind one multi-second decode. */
+const THUMB_SOURCE_MAX = 50 * 1024 * 1024;
+
 /**
  * Best-effort image thumbnail as a small low-quality JPEG data URL. Returns
  * undefined for non-images or any failure (decode error, no canvas, etc.) — the
  * caller treats a missing thumb as fine.
+ *
+ * Decodes AT thumbnail scale: `createImageBitmap` is handed `resizeWidth` so the
+ * browser downscales DURING decode instead of materializing the full image (a
+ * 12 MP phone photo is ~45 MB of RGBA) just to throw it away on a 64 px canvas
+ * (issue #90). One resize dimension preserves aspect ratio — a portrait comes
+ * out THUMB_MAX wide and proportionally tall, which the tray's fixed display box
+ * constrains anyway.
  */
 async function makeThumb(file: File): Promise<string | undefined> {
   if (!file.type.startsWith("image/")) return undefined;
+  if (file.size > THUMB_SOURCE_MAX) return undefined;
   if (typeof document === "undefined" || typeof createImageBitmap !== "function") return undefined;
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, THUMB_MAX / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * scale));
-    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const bitmap = await createImageBitmap(file, {
+      resizeWidth: THUMB_MAX,
+      resizeQuality: "low",
+    });
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       bitmap.close();
       return undefined;
     }
-    ctx.drawImage(bitmap, 0, 0, w, h);
+    ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
     return canvas.toDataURL("image/jpeg", 0.5);
   } catch {
