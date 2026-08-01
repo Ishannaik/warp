@@ -89,6 +89,16 @@ function reqDone<T>(r: IDBRequest<T>): Promise<T> {
 }
 
 /**
+ * Inclusive key range covering every row for one file. The store's compound key is
+ * [fileId, offset]; [fileId] sorts before any [fileId, n] (prefix), and [fileId, []]
+ * sorts after it (an array outranks any numeric offset), so this is an exact prefix
+ * scan. Lets IndexedDB skip every other file's rows instead of a full-store getAll.
+ */
+function fileRange(fileId: string): IDBKeyRange {
+  return IDBKeyRange.bound([fileId], [fileId, []]);
+}
+
+/**
  * A ReceiveSink backed by IndexedDB Blob staging. bytesWritten advances only after
  * a chunk is durably put (Fable H1/M3). A QuotaExceededError poisons the sink.
  */
@@ -135,12 +145,13 @@ export function idbSink(fileId: string, mime?: string): ReceiveSink {
       await this.quiesce();
       if (failed) return new Blob([], mime ? { type: mime } : undefined);
       const d = await db();
-      const rows = (await reqDone(tx(d, "readonly").getAll())) as Array<{
+      const rows = (await reqDone(tx(d, "readonly").getAll(fileRange(fileId)))) as Array<{
         fileId: string;
         offset: number;
         blob: Blob;
       }>;
-      const mine = rows.filter((r) => r.fileId === fileId).sort((a, b) => a.offset - b.offset);
+      // Already scoped to this file and returned in key order; sort defensively.
+      const mine = rows.sort((a, b) => a.offset - b.offset);
       const blob = new Blob(
         mine.map((r) => r.blob),
         mime ? { type: mime } : undefined,
@@ -167,8 +178,8 @@ export function idbSink(fileId: string, mime?: string): ReceiveSink {
 /** Delete every staging row for one file. */
 async function clearFile(db: IDBDatabase, fileId: string): Promise<void> {
   const store = tx(db, "readwrite");
-  const rows = (await reqDone(store.getAllKeys())) as Array<[string, number]>;
-  await Promise.all(rows.filter((k) => k[0] === fileId).map((k) => reqDone(store.delete(k))));
+  const rows = (await reqDone(store.getAllKeys(fileRange(fileId)))) as Array<[string, number]>;
+  await Promise.all(rows.map((k) => reqDone(store.delete(k))));
 }
 
 /**
