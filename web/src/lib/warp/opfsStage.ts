@@ -9,15 +9,25 @@
  *     `finalize()`. That final assembly is the in-RAM step that pressures the iOS
  *     jetsam ceiling (~1.5 GB, uncatchable kill) the IDB path exists to avoid.
  *   - OPFS streams and seeks in place: a `FileSystemSyncAccessHandle` writes each
- *     chunk straight to a bucket file and `flush()`es it durable, so nothing is
- *     ever materialized as one big in-RAM Blob. `finalize()` returns a file-backed
- *     `File` (a lazy snapshot of the OPFS file), not a RAM copy.
+ *     chunk straight to a bucket file, so nothing is ever materialized as one big
+ *     in-RAM Blob. `finalize()` returns a file-backed `File` (a lazy snapshot of
+ *     the OPFS file), not a RAM copy.
  *   - The sync access handle is Worker-only (`[Exposed=DedicatedWorker]`), so the
  *     write loop lives in a small dedicated worker; the main thread just hands it
- *     ArrayBuffers and tracks the durable byte count.
+ *     ArrayBuffers and tracks the byte count.
+ *
+ * Durability is BATCHED: the worker flushes every FLUSH_BYTES (16 MiB) and once
+ * more on close — NOT per chunk. A `flush()` per 256 KiB chunk is an fsync per
+ * chunk, which caps receive throughput far below the link rate on real phones;
+ * batching keeps the sync handle's speed advantage. This is the same model as the
+ * File System Access disk sink, whose `write()` also resolves once the bytes are
+ * handed to the OS and only `close()` guarantees persistence. The resume offset
+ * this sink reports is consumed within the same tab session (the hook's registry
+ * is in-memory), so OS-level durability granularity is not on the resume path.
  *
  * Correctness invariants (mirror receiveController/idbStage — Fable H1):
- *   - `bytesWritten` advances ONLY after the worker acks a flushed write (durable).
+ *   - `bytesWritten` advances ONLY after the worker acks a write — never at
+ *     enqueue time — so a reported offset never leads what's actually in the file.
  *   - Any write/open/close failure POISONS the sink (`failed = true`); a poisoned
  *     sink stops advancing and the hook surfaces an honest error instead of
  *     committing a corrupt file.
@@ -39,7 +49,7 @@ const STAGE_PREFIX = "warp-stage-";
  * with the real API).
  */
 interface OpfsSyncAccessHandle {
-  write(buf: ArrayBuffer): number;
+  write(buf: ArrayBuffer | Uint8Array): number;
   flush(): void;
   close(): void;
 }
@@ -96,10 +106,18 @@ export function opfsSupported(): boolean {
  * The worker body, inlined as a Blob URL so this module stays bundlable by the
  * dependency-free check harness (a separate `?worker` import would break esbuild's
  * neutral bundle). The worker holds the sync access handle and services open /
- * write / close, reporting durable completion (or error) back per request.
+ * write / close, reporting completion (or error) back per request.
+ *
+ * Flush cadence: each write lands in the file (looping over any short write) and
+ * acks at once; `flush()` runs only every FLUSH_BYTES and on close. A flush per
+ * chunk would fsync thousands of times on a multi-GB receive and throttle the
+ * sink far below the channel's rate — the batched cadence keeps writes durable
+ * in 16 MiB strides without paying the sync cost per 256 KiB message.
  */
 const OPFS_WORKER_SRC = `
+const FLUSH_BYTES = 16 * 1024 * 1024;
 let handle = null;
+let sinceFlush = 0;
 self.onmessage = (e) => {
   const m = e.data;
   try {
@@ -107,14 +125,20 @@ self.onmessage = (e) => {
       navigator.storage.getDirectory()
         .then((root) => root.getFileHandle(m.name, { create: true }))
         .then((fh) => fh.createSyncAccessHandle())
-        .then((h) => { handle = h; self.postMessage({ t: "opened" }); })
+        .then((h) => { handle = h; sinceFlush = 0; self.postMessage({ t: "opened" }); })
         .catch((err) => self.postMessage({ t: "error", message: String((err && err.message) || err) }));
     } else if (m.t === "write") {
-      handle.write(m.buf);
-      handle.flush();
+      let view = new Uint8Array(m.buf);
+      while (view.byteLength > 0) {
+        const n = handle.write(view);
+        if (n <= 0) throw new Error("OPFS write made no progress");
+        sinceFlush += n;
+        view = view.subarray(n);
+      }
+      if (sinceFlush >= FLUSH_BYTES) { handle.flush(); sinceFlush = 0; }
       self.postMessage({ t: "wrote" });
     } else if (m.t === "close") {
-      if (handle) { handle.flush(); handle.close(); handle = null; }
+      if (handle) { handle.flush(); handle.close(); handle = null; sinceFlush = 0; }
       self.postMessage({ t: "closed" });
     }
   } catch (err) {
@@ -140,23 +164,30 @@ async function opfsRoot(): Promise<OpfsDirHandle> {
 
 /**
  * The production OpfsWriter: a DedicatedWorker holds the sync access handle for
- * synchronous, durable, RAM-free writes; `toBlob`/`remove` use the main-thread
- * async OPFS API (valid once the handle is closed). Requests are chained one at a
- * time by the sink, so a single outstanding-reply slot is enough.
+ * synchronous, RAM-free writes (durability batched per the module header);
+ * `toBlob`/`remove` use the main-thread async OPFS API (valid once the handle is
+ * closed). Requests are chained one at a time by the sink, so a single
+ * outstanding-reply slot is enough.
  */
 function workerWriter(name: string): OpfsWriter {
   const worker = new Worker(opfsWorkerUrl(), { name: "warp-opfs" });
   let pending: { resolve: () => void; reject: (e: Error) => void } | null = null;
   let dead = false;
+  let death: Error | null = null;
   let didOpen = false;
   let openP: Promise<void> | null = null;
+
+  const die = (err: Error) => {
+    dead = true;
+    death = err;
+    pending?.reject(err);
+    pending = null;
+  };
 
   worker.onmessage = (e: MessageEvent) => {
     const m = e.data as { t: string; message?: string };
     if (m.t === "error") {
-      dead = true;
-      pending?.reject(new Error(m.message || "OPFS worker error"));
-      pending = null;
+      die(new Error(m.message || "OPFS worker error"));
       return;
     }
     if (m.t === "opened") didOpen = true;
@@ -164,15 +195,15 @@ function workerWriter(name: string): OpfsWriter {
     pending = null;
   };
   worker.onerror = (e: ErrorEvent) => {
-    dead = true;
-    pending?.reject(new Error(e.message || "OPFS worker crashed"));
-    pending = null;
+    die(new Error(e.message || "OPFS worker crashed"));
   };
 
   const rpc = (msg: unknown, transfer?: Transferable[]): Promise<void> =>
     new Promise((resolve, reject) => {
       if (dead) {
-        reject(new Error("OPFS worker unavailable"));
+        // Reject at once with the recorded cause — posting to a dead worker
+        // would never answer and the sink would hang instead of poisoning.
+        reject(death ?? new Error("OPFS worker unavailable"));
         return;
       }
       pending = { resolve, reject };
@@ -247,7 +278,7 @@ export function opfsSink(
         if (failed) return;
         try {
           await writer.write(buf);
-          bytes += len; // durable: only after the flushed write is acked
+          bytes += len; // counted only after the worker acks — never at enqueue
         } catch {
           failed = true; // poison — never a silent hole
         }
