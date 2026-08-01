@@ -37,13 +37,11 @@ function isIOS(): boolean {
 }
 
 /**
- * Can this device receive a file of `size` bytes on the IDB path? Combines the iOS
- * hard memory cap with the storage-quota estimate. Returns an honest reason on refusal.
+ * Storage-QUOTA gate only (no memory cap): is there room in the origin's storage
+ * for `size` bytes? Shared by the IDB path and the OPFS sink (opfsStage), both of
+ * which count against the same best-effort quota. Returns an honest reason on refusal.
  */
-export async function estimateFits(size: number): Promise<{ ok: boolean; reason?: string }> {
-  if (isIOS() && size > IOS_HARD_CAP) {
-    return { ok: false, reason: "This iPhone/iPad can't receive a file this large — use a desktop browser." };
-  }
+export async function storageFits(size: number): Promise<{ ok: boolean; reason?: string }> {
   const nav = navigator as Navigator & {
     storage?: { estimate?: () => Promise<{ quota?: number; usage?: number }> };
   };
@@ -60,6 +58,20 @@ export async function estimateFits(size: number): Promise<{ ok: boolean; reason?
     /* estimate unavailable — fall through and try; the write will surface a quota error */
   }
   return { ok: true };
+}
+
+/**
+ * Can this device receive a file of `size` bytes on the IDB path? Combines the iOS
+ * hard MEMORY cap (the Blob-of-Blobs assembly materializes bytes in RAM) with the
+ * storage-quota estimate. Returns an honest reason on refusal. The OPFS sink does
+ * NOT use this — it streams in place with no assembly, so it gates on `storageFits`
+ * alone and can honestly accept larger files on iOS.
+ */
+export async function estimateFits(size: number): Promise<{ ok: boolean; reason?: string }> {
+  if (isIOS() && size > IOS_HARD_CAP) {
+    return { ok: false, reason: "This iPhone/iPad can't receive a file this large — use a desktop browser." };
+  }
+  return storageFits(size);
 }
 
 /** Open (and lazily upgrade) the warp IDB database. */
@@ -185,16 +197,29 @@ async function clearFile(db: IDBDatabase, fileId: string): Promise<void> {
 /**
  * Prune staging rows older than a TTL (crashed / abandoned sessions) so IDB quota
  * doesn't leak forever. Call once on startup. Best-effort (swallows errors).
+ *
+ * Walks a cursor instead of `getAll()`: a crashed multi-GB receive leaves thousands
+ * of Blob rows, and `getAll()` would deserialize ALL of them into RAM at once just
+ * to read each row's `ts` — the exact memory spike this module exists to avoid. The
+ * cursor holds one record at a time, so GC's peak footprint is a single chunk.
  */
 export async function gcOrphanStaging(ttlMs = 24 * 60 * 60 * 1000): Promise<void> {
   try {
     const d = await openDb();
-    const store = tx(d, "readwrite");
-    const rows = (await reqDone(store.getAll())) as Array<{ fileId: string; offset: number; ts?: number }>;
     const cutoff = Date.now() - ttlMs;
-    await Promise.all(
-      rows.filter((r) => (r.ts ?? 0) < cutoff).map((r) => reqDone(store.delete([r.fileId, r.offset]))),
-    );
+    await new Promise<void>((resolve, reject) => {
+      const req = tx(d, "readwrite").openCursor();
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        if (((cursor.value as { ts?: number }).ts ?? 0) < cutoff) cursor.delete();
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
   } catch {
     /* IDB blocked / unavailable — nothing to prune */
   }

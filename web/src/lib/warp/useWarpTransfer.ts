@@ -38,7 +38,8 @@ import {
   type ReceiveHost,
 } from "./peer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
-import { estimateFits, gcOrphanStaging, idbSink } from "./idbStage";
+import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
+import { gcOrphanOpfs, opfsSink, opfsSupported } from "./opfsStage";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 
 /**
@@ -723,20 +724,27 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       }
     }
 
-    // Large but NO disk target (no FS Access API, or the picker was cancelled): fall
-    // back to IndexedDB staging — but GATE it so we don't OOM-crash the tab. If the
-    // device genuinely can't hold it (iOS memory ceiling / no storage room), refuse
-    // honestly (decline the offer) instead of crashing (Fable M3/M4).
+    // Large but NO disk target (no FS Access API, or the picker was cancelled):
+    // stage to origin storage. PREFER OPFS — it streams chunks straight to a bucket
+    // file in place with no in-RAM Blob-of-Blobs assembly (research-2026-07 P1), so
+    // it sidesteps the iOS jetsam ceiling the IndexedDB path works around. Fall back
+    // to IndexedDB Blob staging only where OPFS sync access is unavailable. Gate on
+    // storage quota either way and refuse honestly if it won't fit (Fable M3/M4).
+    // OPFS has no assembly step, so it skips estimateFits' iOS MEMORY cap and gates
+    // on quota alone — letting iOS receive larger files than the IDB path could.
+    let useOpfs = false;
     let useIdb = false;
     if (large && !target) {
-      const fit = await estimateFits(total);
+      const opfs = opfsSupported();
+      const fit = opfs ? await storageFits(total) : await estimateFits(total);
       if (!fit.ok) {
         setIncoming(null);
         peer.declineOffer(off.batchId);
         fail("too-large", fit.reason);
         return;
       }
-      useIdb = true;
+      if (opfs) useOpfs = true;
+      else useIdb = true;
     }
 
     // Build a durable registry entry + sink per file BEFORE accepting, so the
@@ -757,8 +765,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         savedName = target.fileHandle.name || it.name;
         const fh = target.fileHandle;
         sink = diskSink(async () => fh.createWritable());
+      } else if (useOpfs) {
+        sink = opfsSink(it.id, it.mime); // large, no FS Access -> OPFS (streams in place)
       } else if (useIdb) {
-        sink = idbSink(it.id, it.mime); // large, no FS Access -> IDB staging (bounded RAM)
+        sink = idbSink(it.id, it.mime); // large, no OPFS -> IDB staging (last resort)
       } else {
         sink = memorySink(it.mime);
       }
@@ -936,9 +946,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     };
   }, [transferring]);
 
-  // Prune abandoned IDB staging rows from crashed sessions once on mount (best-effort).
+  // Prune abandoned staging (IDB rows + OPFS files) from crashed sessions once on
+  // mount (best-effort).
   useEffect(() => {
     void gcOrphanStaging();
+    void gcOrphanOpfs();
   }, []);
 
   // Receiver: auto-join the room from the URL on mount.
