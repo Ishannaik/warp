@@ -79,7 +79,7 @@ export interface UseNearbyTransfer {
 const PEER_ERROR_COPY: Record<string, string> = {
   "nat-failed": "Couldn't open a direct channel. One device may be on a restrictive network.",
   disconnected: "The other device disconnected before the transfer finished.",
-  "channel-error": "The data channel hit an error.",
+  "channel-error": "The direct link to the other device broke.",
 };
 
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
@@ -229,7 +229,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
       // Offer the files once the channel is open (offerFiles requires an open channel).
       const offer = () =>
-        activePeer.offerFiles(files).catch(() => failSession("The data channel hit an error."));
+        activePeer.offerFiles(files).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
       if (activePeer.isConnected) {
         void offer();
       } else {

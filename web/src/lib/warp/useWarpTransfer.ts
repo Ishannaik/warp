@@ -167,7 +167,7 @@ const ERROR_MESSAGES: Record<WarpError["kind"], string> = {
   "nat-failed": "Couldn't open a direct path between the devices. One side may be on a restrictive network.",
   disconnected:
     "The connection dropped and couldn't be restored. Retry to reconnect — unfinished files will be offered again.",
-  "channel-error": "The data channel hit an error.",
+  "channel-error": "The direct link between the devices hit an error. Retry to reconnect.",
   signaling: "Lost contact with the signaling server.",
   "no-files": "Add at least one file before opening a channel.",
   "too-large": "This device can't receive a file this large. Try a desktop browser (Chrome/Edge).",
