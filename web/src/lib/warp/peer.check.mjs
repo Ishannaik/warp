@@ -449,6 +449,145 @@ assert.equal(
 );
 assert.equal(delayedOutcome.reason?.message, "channel-closed", "registration-time closure uses channel-closed");
 
+// --- send-pump backpressure (SEND_HIGH_WATER) --------------------------------
+//
+// Every case above uses a FakeChannel whose bufferedAmount is ALWAYS 0, so the
+// send pump's backpressure branch —
+//     while (ch.bufferedAmount + sendChunk > SEND_HIGH_WATER) await waitForDrain(ch)
+// — and waitForDrain's resolve-on-close/error recovery were never exercised. That
+// branch is load-bearing: CLAUDE.md warns a high-water mark at/above the 16 MiB
+// send-queue cap disables backpressure entirely and kills every large transfer
+// mid-send. Pin the behaviour here with a channel that ACCUMULATES bufferedAmount
+// on each binary send and only drains when we say so, mimicking a link slower than
+// the sender.
+const SEND_HIGH_WATER = 8 * 1024 * 1024; // mirrors peer.ts; keep in sync
+
+class BackpressureChannel extends FakeChannel {
+  constructor() {
+    super();
+    this.maxBuffered = 0; // high-water mark actually reached
+    this.oversend = false; // set if a send ever pushed past the cap (it must not)
+  }
+  send(data) {
+    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+      const len = data.byteLength;
+      // The pump guards with the SAME predicate before calling send(), so this must
+      // never trip; if it does, backpressure failed to hold the buffer below the cap.
+      if (this.bufferedAmount + len > SEND_HIGH_WATER) this.oversend = true;
+      this.bufferedAmount += len;
+      if (this.bufferedAmount > this.maxBuffered) this.maxBuffered = this.bufferedAmount;
+    }
+    super.send(data); // still deliver to the peer (control frames pass through too)
+  }
+  /** Drain the whole send queue and cross the low-water mark, waking a parked pump. */
+  drainAll() {
+    if (this.bufferedAmount > 0) {
+      this.bufferedAmount = 0;
+      this.dispatchEvent(new Event("bufferedamountlow"));
+    }
+  }
+}
+class BackpressurePC extends FakePC {
+  createDataChannel() {
+    this.localChannel = new BackpressureChannel();
+    return this.localChannel;
+  }
+}
+function makeBackpressurePair() {
+  const saved = globalThis.RTCPeerConnection;
+  globalThis.RTCPeerConnection = BackpressurePC; // only the sender's created channel backs up
+  const s = new WarpPeer(sig, "bp-remote", true);
+  globalThis.RTCPeerConnection = saved;
+  const r = new WarpPeer(sig, "bp-local", false);
+  const sCh = s.pc.localChannel;
+  const rCh = new FakeChannel();
+  sCh.peer = rCh;
+  rCh.peer = sCh;
+  r.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: rCh }));
+  return { s, r, sCh };
+}
+async function waitForCondition(fn, label, timeout = 3000) {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeout) throw new Error(`timeout waiting for ${label}`);
+    await new Promise((res) => setImmediate(res));
+  }
+}
+
+// A file bigger than the high-water mark, so the pump MUST park and resume at least
+// once. Deterministic content (byte i = i & 0xff) so we can verify reassembly.
+const BIG_N = 9 * 1024 * 1024; // > SEND_HIGH_WATER (8 MiB)
+const bigBytes = new Uint8Array(BIG_N);
+for (let i = 0; i < BIG_N; i += 1) bigBytes[i] = i & 0xff;
+const bigFile = new Blob([bigBytes], { type: "application/octet-stream" });
+bigFile.name = "big.bin";
+bigFile.slice = Blob.prototype.slice;
+
+// (A) Pause + resume under backpressure, with byte-exact reassembly.
+{
+  const { s, r, sCh } = makeBackpressurePair();
+  let bigDone = false;
+  const offerSeen = waitFor(r, "incoming-offer");
+  const sendP = s.offerFiles([bigFile]);
+  const off = await offerSeen;
+  const gotBig = waitFor(r, "file-received").then((payload) => {
+    bigDone = true;
+    return payload;
+  });
+  r.acceptOffer(off.batchId);
+
+  // The link never drains on its own, so the pump fills the buffer to the cap and
+  // PARKS on waitForDrain — it must not finish while parked.
+  await waitForCondition(() => sCh.bufferedAmount >= SEND_HIGH_WATER, "backpressure to engage");
+  assert.equal(bigDone, false, "a >high-water file does NOT complete while the send queue is full (pump paused)");
+  assert.equal(sCh.oversend, false, "the pump never sends past the high-water mark");
+  assert.ok(sCh.maxBuffered <= SEND_HIGH_WATER, "bufferedAmount is held at/below the cap, never toward the 16 MiB hard limit");
+
+  // Drain in strides; each drain crosses the low-water mark and wakes the pump.
+  const drainer = setInterval(() => sCh.drainAll(), 5);
+  let recvBig;
+  try {
+    recvBig = await Promise.race([
+      gotBig,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("transfer hung under backpressure")), 5000)),
+    ]);
+  } finally {
+    clearInterval(drainer);
+  }
+  assert.equal(sCh.maxBuffered >= SEND_HIGH_WATER, true, "backpressure actually engaged (buffer reached the cap)");
+  assert.equal(recvBig.blob.size, BIG_N, "the whole >high-water file arrived");
+  const rb = new Uint8Array(await recvBig.blob.arrayBuffer());
+  assert.equal(rb[0], 0, "reassembled byte 0 is correct");
+  assert.equal(rb[4 * 1024 * 1024], (4 * 1024 * 1024) & 0xff, "a mid-file byte survived the pause/resume boundary");
+  assert.equal(rb[BIG_N - 1], (BIG_N - 1) & 0xff, "the final byte is correct (no truncation/dup on resume)");
+  await sendP;
+}
+
+// (B) The "frozen at 40%" regression: if the channel dies WHILE the pump is parked
+// on backpressure, bufferedamountlow never fires — waitForDrain must still resolve
+// (on close) so the send settles instead of hanging forever.
+{
+  const { s, r, sCh } = makeBackpressurePair();
+  let lastStatus = null;
+  const offerSeen = waitFor(r, "incoming-offer");
+  const offTransfer = s.on("transfer", (item) => {
+    if (item.direction === "send" && item.kind === "file") lastStatus = item.status;
+  });
+  const sendP = s.offerFiles([bigFile]);
+  const off = await offerSeen;
+  r.acceptOffer(off.batchId);
+  await waitForCondition(() => sCh.bufferedAmount >= SEND_HIGH_WATER, "backpressure to engage (close case)");
+
+  sCh.close(); // kill the channel while the pump is parked — no drain, no bufferedamountlow
+  const outcome = await Promise.race([
+    sendP.then(() => "settled"),
+    new Promise((res) => setTimeout(() => res("hung"), 1000)),
+  ]);
+  offTransfer();
+  assert.equal(outcome, "settled", "a channel close while parked on backpressure settles the send (no permanent hang)");
+  assert.equal(lastStatus, "error", "a send that dies mid-backpressure is marked error for salvage, not left 'transferring'");
+}
+
 console.log(
-  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure passed",
 );
