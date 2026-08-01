@@ -1,8 +1,8 @@
 /**
  * Runnable check for the OOM-prevention gate in idbStage.ts (estimateFits). This is
  * the crash-prevention core: it must refuse a file too big for the device instead of
- * letting the tab OOM-crash. (idbSink itself needs a real IndexedDB, so it's covered
- * by the build + a manual browser run, not here.)
+ * letting the tab OOM-crash. idbSink's write path is covered separately by
+ * idbStage.sink.check.mjs (issue #111), which drives it against an in-memory IDB.
  *
  * Run:  node src/lib/warp/idbStage.check.mjs   (from web/)
  */
