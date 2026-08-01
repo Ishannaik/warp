@@ -447,6 +447,154 @@ incoming = null;
 await handleOffer(rp.remoteId, { batchId: "re6", items: [{ id: "e1", key: "busy|9|9", size: 9, resumeToken: "tok-E" }] });
 assert(incoming && incoming.batchId === "re6", "a duplicate offer for an ACTIVE file is not double-accepted");
 
+// ---- 7. Filename collisions in the directory-picker path (issue #133) --------
+//
+// The hook's uniqueName, reproduced 1:1 from useWarpTransfer.ts. It de-dupes
+// against BOTH the names used earlier in this batch and the files already on
+// disk, so an existing file keeps its name and the incoming one steps aside.
+
+async function existsInDir(dir, name) {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch (err) {
+    return err?.name === "NotFoundError" ? false : "unknown";
+  }
+}
+
+async function uniqueName(used, name, dir) {
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+
+  let candidate = name;
+  for (let n = 1; ; n += 1) {
+    if (!used.has(candidate)) {
+      const onDisk = dir ? await existsInDir(dir, candidate) : false;
+      if (onDisk !== true) {
+        used.add(candidate);
+        return candidate;
+      }
+    }
+    candidate = `${stem} (${n})${ext}`;
+  }
+}
+
+/** A fake directory handle over a set of existing names. Records every probe. */
+function fakeDir(existing = [], opts = {}) {
+  const files = new Set(existing);
+  return {
+    files,
+    probes: [],
+    created: [],
+    async getFileHandle(name, options) {
+      if (options?.create) {
+        this.created.push(name);
+        files.add(name);
+        return { name };
+      }
+      this.probes.push(name);
+      if (opts.throwOnProbe) throw opts.throwOnProbe;
+      if (!files.has(name)) {
+        const e = new Error(`no such file: ${name}`);
+        e.name = "NotFoundError";
+        throw e;
+      }
+      return { name };
+    },
+  };
+}
+
+/** Resolve a whole batch the way accept() does: one shared used-set, in order. */
+async function resolveBatch(dir, names) {
+  const used = new Set();
+  const out = [];
+  for (const n of names) out.push(await uniqueName(used, n, dir));
+  return out;
+}
+
+// 7a. AC1 — a name already on disk is preserved; the incoming file steps aside.
+{
+  const dir = fakeDir(["report.pdf"]);
+  const got = await resolveBatch(dir, ["report.pdf"]);
+  assert(got[0] === "report (1).pdf", "an existing on-disk name yields 'report (1).pdf', not an overwrite");
+  assert(dir.files.has("report.pdf"), "the pre-existing file is still present (never clobbered)");
+  assert(dir.created.length === 0, "resolving a name never creates a file by itself");
+}
+
+// 7b. AC2 — three identical names in ONE batch, empty folder.
+{
+  const dir = fakeDir([]);
+  const got = await resolveBatch(dir, ["a.txt", "a.txt", "a.txt"]);
+  assert(
+    JSON.stringify(got) === JSON.stringify(["a.txt", "a (1).txt", "a (2).txt"]),
+    "three same-named files in one batch become a.txt, a (1).txt, a (2).txt",
+  );
+}
+
+// 7c. AC3 — no collision means no behaviour change.
+{
+  const dir = fakeDir(["other.txt"]);
+  const got = await resolveBatch(dir, ["fresh.txt"]);
+  assert(got[0] === "fresh.txt", "a non-colliding name is returned unchanged");
+}
+
+// 7d. On-disk AND in-batch collisions compose, continuing past both.
+{
+  const dir = fakeDir(["a.txt", "a (1).txt"]);
+  const got = await resolveBatch(dir, ["a.txt", "a.txt"]);
+  assert(
+    JSON.stringify(got) === JSON.stringify(["a (2).txt", "a (3).txt"]),
+    "disk-taken and batch-taken names are both skipped: a (2).txt then a (3).txt",
+  );
+}
+
+// 7e. The probe is CHEAP: only exact candidates, never a directory scan.
+{
+  const dir = fakeDir(["a.txt", "a (1).txt"]);
+  await resolveBatch(dir, ["a.txt"]);
+  assert(
+    JSON.stringify(dir.probes) === JSON.stringify(["a.txt", "a (1).txt", "a (2).txt"]),
+    "probes exactly the candidates it needs and stops at the first free slot",
+  );
+  assert(typeof dir.entries !== "function" && typeof dir.keys !== "function", "never enumerates the directory");
+}
+
+// 7f. An inconclusive probe (revoked permission) must NOT loop and must NOT be
+//     read as "free to overwrite something else". It yields the current
+//     candidate so the real create:true write reports the real error.
+{
+  const denied = new Error("permission denied");
+  denied.name = "NotAllowedError";
+  const dir = fakeDir(["a.txt"], { throwOnProbe: denied });
+  const got = await resolveBatch(dir, ["a.txt"]);
+  assert(got[0] === "a.txt", "an unreadable directory yields the original name and defers to the real write");
+  assert(dir.probes.length === 1, "an inconclusive probe stops probing instead of spinning for a free slot");
+}
+
+// 7g. No directory target (single-file picker / in-memory): pure in-batch
+//     behaviour, byte-identical to before, and zero probes.
+{
+  const used = new Set();
+  const a = await uniqueName(used, "a.txt", undefined);
+  const b = await uniqueName(used, "a.txt", undefined);
+  assert(a === "a.txt" && b === "a (1).txt", "with no folder target the in-batch de-dupe is unchanged");
+}
+
+// 7h. Dotfiles keep their whole name as the stem.
+{
+  const dir = fakeDir([".env"]);
+  const got = await resolveBatch(dir, [".env"]);
+  assert(got[0] === ".env (1)", "a dotfile de-dupes as '.env (1)', not ' (1).env'");
+}
+
+// 7i. Extensionless names.
+{
+  const dir = fakeDir(["README"]);
+  const got = await resolveBatch(dir, ["README"]);
+  assert(got[0] === "README (1)", "an extensionless name de-dupes as 'README (1)'");
+}
+
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
