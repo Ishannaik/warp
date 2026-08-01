@@ -26,9 +26,15 @@ class FakeChannel extends EventTarget {
     this.peer = null; // wired to the other side's channel
   }
   send(data) {
+    // A real channel delivers binary as an ArrayBuffer (binaryType) no matter
+    // whether the sender passed an ArrayBuffer or a typed-array view — normalize
+    // here so the receiver's `data instanceof ArrayBuffer` path is exercised.
+    const wire = ArrayBuffer.isView(data)
+      ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+      : data;
     // Deliver asynchronously to mimic the network and let awaits resolve.
     queueMicrotask(() => {
-      this.peer?.dispatchEvent(Object.assign(new Event("message"), { data }));
+      this.peer?.dispatchEvent(Object.assign(new Event("message"), { data: wire }));
     });
   }
   close() {
@@ -236,7 +242,9 @@ ten.slice = Blob.prototype.slice;
 let sentBinary = 0;
 const rawSend = sCh.send.bind(sCh);
 sCh.send = (d) => {
-  if (d instanceof ArrayBuffer) sentBinary += d.byteLength;
+  // The pump sends typed-array views into the read block (zero-copy); count
+  // those alongside raw ArrayBuffers.
+  if (d instanceof ArrayBuffer || ArrayBuffer.isView(d)) sentBinary += d.byteLength;
   return rawSend(d);
 };
 

@@ -828,8 +828,10 @@ export class WarpPeer {
           if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
 
           const end = Math.min(pos + sendChunk, block.byteLength);
-          // slice() copies; fine and avoids retaining the whole 4 MiB block per send.
-          ch.send(block.slice(pos, end));
+          // Send a VIEW into the block, not a slice() copy — one fewer 256 KiB
+          // memcpy per message on the send hot path. The view pins its 4 MiB
+          // block until queued, which the backpressure bound already covers.
+          ch.send(new Uint8Array(block, pos, end - pos));
           offset += end - pos;
           pos = end;
         }
