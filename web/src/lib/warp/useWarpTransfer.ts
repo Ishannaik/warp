@@ -27,7 +27,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { zipSync, type Zippable } from "fflate";
 import { SignalingClient, type SignalData } from "./signaling";
 import {
   WarpPeer,
@@ -40,6 +39,7 @@ import {
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
 import { gcOrphanOpfs, opfsSink, opfsSupported } from "./opfsStage";
+import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 
 /**
@@ -861,30 +861,13 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     );
     if (!received.length) return;
 
-    const zippable: Zippable = {};
-    const used = new Set<string>();
-    Promise.all(
-      received.map(async (t) => {
-        // De-dupe identical filenames so the zip doesn't clobber entries.
-        let name = t.name || "file";
-        if (used.has(name)) {
-          const dot = name.lastIndexOf(".");
-          const base = dot > 0 ? name.slice(0, dot) : name;
-          const ext = dot > 0 ? name.slice(dot) : "";
-          let n = 2;
-          while (used.has(`${base} (${n})${ext}`)) n += 1;
-          name = `${base} (${n})${ext}`;
-        }
-        used.add(name);
-        const buf = new Uint8Array(await t.blob!.arrayBuffer());
-        zippable[name] = buf;
-      }),
-    )
-      .then(() => {
-        const zipped = zipSync(zippable, { level: 0 }); // level 0: files are usually already compressed
-        saveBlob(new Blob([zipped], { type: "application/zip" }), "warp-files.zip");
-      })
-      .catch(() => fail("channel-error"));
+    // Stream the archive slice-by-slice (issue #28) instead of zipSync, which
+    // blocked the main thread for the whole build and held a second full copy of
+    // every blob in memory (a 1.5 GB batch peaked at ~3 GB and OOM-killed tabs).
+    void streamZipDownload(
+      received.map((t) => ({ name: t.name, blob: t.blob! })),
+      "warp-files.zip",
+    ).catch(() => fail("channel-error"));
   }, [items, fail]);
 
   const retry = useCallback(() => {

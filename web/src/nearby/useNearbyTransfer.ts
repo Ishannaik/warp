@@ -22,9 +22,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { zipSync, type Zippable } from "fflate";
 import { useNearby, type IncomingConnection, type NearbyDevice } from "../lib/warp/useNearby";
 import type { WarpPeer } from "../lib/warp/peer";
+import { streamZipDownload } from "../lib/warp/zipDownload";
 import { type OfferItem, type TransferItem } from "../lib/warp/transfer";
 
 export type { NearbyDevice } from "../lib/warp/useNearby";
@@ -269,28 +269,12 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     );
     if (!received.length) return;
 
-    const zippable: Zippable = {};
-    const used = new Set<string>();
-    Promise.all(
-      received.map(async (t) => {
-        let name = t.name || "file";
-        if (used.has(name)) {
-          const dot = name.lastIndexOf(".");
-          const base = dot > 0 ? name.slice(0, dot) : name;
-          const ext = dot > 0 ? name.slice(dot) : "";
-          let n = 2;
-          while (used.has(`${base} (${n})${ext}`)) n += 1;
-          name = `${base} (${n})${ext}`;
-        }
-        used.add(name);
-        zippable[name] = new Uint8Array(await t.blob!.arrayBuffer());
-      }),
-    )
-      .then(() => {
-        const zipped = zipSync(zippable, { level: 0 });
-        saveBlob(new Blob([zipped], { type: "application/zip" }), "nearby-files.zip");
-      })
-      .catch(() => failSession("Couldn't build the zip."));
+    // Shared streaming helper (issue #28): slice-by-slice archive build that
+    // keeps the main thread responsive and avoids zipSync's 2×-memory spike.
+    void streamZipDownload(
+      received.map((t) => ({ name: t.name, blob: t.blob! })),
+      "nearby-files.zip",
+    ).catch(() => failSession("Couldn't build the zip."));
   }, [failSession]);
 
   const dismissSession = useCallback(() => {
