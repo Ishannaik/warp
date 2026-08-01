@@ -60,19 +60,28 @@ const ICE_SERVERS: RTCIceServer[] = [
  *
  *  - TARGET_SEND_CHUNK: preferred per-message size. usrsctp (Chrome & Firefox)
  *    accepts up to 256 KiB; we cap to the negotiated pc.sctp.maxMessageSize at
- *    runtime and never exceed it (a too-big message closes the channel).
+ *    runtime and never exceed it (a too-big message closes the channel). NOTE:
+ *    256 KiB deliberately exceeds RFC 8831 §6.6's SHOULD-limit of 16 KB, which
+ *    exists to stop one stream monopolizing an association that interleaves many.
+ *    A single bulk file transfer WANTS to monopolize the stream, and we still
+ *    respect the peer's negotiated limit, so the deviation is intentional here.
  *  - MIN_SEND_CHUNK: safe floor if maxMessageSize reports something tiny/0
  *    (e.g. the legacy 16 KiB / 64 KiB default on an old/odd stack).
  *  - READ_BLOCK: how much of the file we pull into memory per blob.arrayBuffer()
  *    read, then slice into TARGET_SEND_CHUNK sends — one await per ~4 MiB instead
  *    of one per 16 KiB.
- *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. MUST sit well below
- *    Chrome's hard 16 MiB SCTP send-buffer cap: bufferedAmount can never
- *    exceed that cap (send() throws first), so a 16 MiB high-water mark meant
- *    the backpressure branch NEVER ran and every large transfer deterministically
- *    died ~⅓ in with a mid-send exception once the file outpaced the link.
- *    8 MiB keeps the pipe full while leaving real headroom. Resume happens on
- *    `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
+ *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. Three DISTINCT size
+ *    limits are easy to conflate (research-2026-07 §1): (a) the 64 KiB DEFAULT
+ *    per-message `maxMessageSize` when the SDP omits a=max-message-size (RFC 8841
+ *    §6.1); (b) the 256 KiB SCTP ASSOCIATION send buffer (usrsctp default /
+ *    Chromium kSendBufferSize); and (c) the 16 MiB bufferedAmount SEND-QUEUE cap
+ *    (libwebrtc MaxSendQueueSize; Blink's ValidateSendLength throws OperationError
+ *    "RTCDataChannel send queue is full" above it). Backpressure depends on (c):
+ *    bufferedAmount can never REACH 16 MiB because send() throws first, so a
+ *    16 MiB high-water mark meant the backpressure branch NEVER ran and every large
+ *    transfer deterministically died ~⅓ in with a mid-send exception once the file
+ *    outpaced the link. 8 MiB keeps the pipe full while leaving real headroom below
+ *    (c). Resume happens on `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
  */
 const TARGET_SEND_CHUNK = 256 * 1024;
 const MIN_SEND_CHUNK = 16 * 1024;
