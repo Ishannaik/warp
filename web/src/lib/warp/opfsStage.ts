@@ -176,6 +176,7 @@ function workerWriter(name: string): OpfsWriter {
   let death: Error | null = null;
   let didOpen = false;
   let openP: Promise<void> | null = null;
+  let closeP: Promise<void> | null = null;
 
   const die = (err: Error) => {
     dead = true;
@@ -217,17 +218,25 @@ function workerWriter(name: string): OpfsWriter {
       await open();
       await rpc({ t: "write", buf }, [buf]); // transfer: zero-copy into the worker
     },
-    async close() {
-      if (!didOpen && !openP) {
-        worker.terminate(); // never opened -> nothing to flush
-        return;
-      }
-      try {
-        await open();
-        await rpc({ t: "close" });
-      } finally {
-        worker.terminate();
-      }
+    close() {
+      // Memoized so close is idempotent. A cancel aborts the same sink TWICE
+      // (the hook aborts it directly, then peer.cancel -> applyCancel aborts it
+      // again); without this, the second close would post {t:"close"} to the
+      // already-terminated worker and await a reply that never comes, hanging
+      // the cleanup chain. Both callers now share one close + one terminate.
+      closeP ??= (async () => {
+        if (!didOpen && !openP) {
+          worker.terminate(); // never opened -> nothing to flush
+          return;
+        }
+        try {
+          await open();
+          await rpc({ t: "close" });
+        } finally {
+          worker.terminate();
+        }
+      })();
+      return closeP;
     },
     async toBlob(mime) {
       const root = await opfsRoot();

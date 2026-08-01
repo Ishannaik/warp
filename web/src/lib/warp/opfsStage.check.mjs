@@ -14,6 +14,7 @@
  */
 
 import assert from "node:assert";
+import vm from "node:vm";
 
 // Stub the browser globals opfsSupported() probes. Both are mutable so each case
 // can flip them.
@@ -160,4 +161,145 @@ function fakeWriter(opts = {}) {
   assert.equal(w.state.removed, true, "a failed close removes the partial staging file");
 }
 
-console.log("OK: opfsStage feature detection + durable-write accounting + poison-on-failure");
+// --- END-TO-END: the REAL workerWriter + REAL inlined OPFS worker source ---------
+//
+// Every case above injects a fake OpfsWriter, so the production writer (the Worker
+// RPC plumbing) and the inlined worker body (open/write/flush/close, error posting)
+// were never exercised. Here we run them for real in Node:
+//   - URL.createObjectURL is stubbed to hand the inlined worker source to a fake
+//     Worker that executes it in a node:vm context (its own `self` + `navigator`).
+//   - navigator.storage.getDirectory (both main-thread and in-worker) returns a
+//     shared in-memory OPFS bucket, so bytes the worker writes are what finalize's
+//     main-thread getFile() reads back.
+// opfsSink() is called with NO makeWriter, so it uses the real workerWriter.
+function makeFakeOpfs(opts = {}) {
+  const files = new Map(); // name -> Buffer[]
+  return {
+    async getFileHandle(name, o) {
+      if (!files.has(name)) {
+        if (!o || !o.create) throw new Error("NotFoundError");
+        files.set(name, []);
+      }
+      const chunks = files.get(name);
+      return {
+        async createSyncAccessHandle() {
+          return {
+            write(view) {
+              if (opts.failWrite) throw new Error("simulated OPFS write failure");
+              const u8 = view instanceof Uint8Array ? view : new Uint8Array(view);
+              chunks.push(Buffer.from(u8));
+              return u8.byteLength;
+            },
+            flush() {},
+            close() {},
+          };
+        },
+        async getFile() {
+          return new Blob(chunks);
+        },
+      };
+    },
+    async removeEntry(name) {
+      files.delete(name);
+    },
+    async *values() {
+      for (const [name, chunks] of files) yield { kind: "file", name, getFile: async () => new Blob(chunks) };
+    },
+  };
+}
+
+// The bucket both the main thread and the worker read/write; swapped per case.
+let currentRoot = makeFakeOpfs();
+
+// Hand the inlined worker source to the fake Worker instead of a blob: URL.
+const workerSrcByUrl = new Map();
+let urlN = 0;
+Object.defineProperty(URL, "createObjectURL", {
+  configurable: true,
+  writable: true,
+  value: (blob) => {
+    const u = `fake:opfs-worker:${urlN++}`;
+    workerSrcByUrl.set(u, blob);
+    return u;
+  },
+});
+
+// A Worker that actually runs the inlined worker source in an isolated context.
+class ExecWorker {
+  constructor(url) {
+    this.onmessage = null;
+    this.onerror = null;
+    this._terminated = false;
+    this._handler = null;
+    this._ready = (async () => {
+      const src = await workerSrcByUrl.get(url).text();
+      const self = {};
+      self.postMessage = (msg) => {
+        queueMicrotask(() => {
+          if (!this._terminated && this.onmessage) this.onmessage({ data: msg });
+        });
+      };
+      const ctx = vm.createContext({
+        self,
+        navigator: { storage: { getDirectory: async () => currentRoot } },
+      });
+      vm.runInContext(src, ctx);
+      this._handler = self.onmessage;
+    })();
+  }
+  postMessage(msg) {
+    void this._ready.then(() => {
+      if (!this._terminated && this._handler) this._handler({ data: msg });
+    });
+  }
+  terminate() {
+    this._terminated = true;
+  }
+}
+
+// Point the live globals the module probes at the real-writer rig.
+nav.storage = { getDirectory: async () => currentRoot };
+globalThis.Worker = ExecWorker;
+assert.equal(opfsSupported(), true, "e2e rig: opfsSupported sees getDirectory + Worker");
+
+// E2E happy path: bytes pumped through the real worker reassemble on finalize.
+{
+  currentRoot = makeFakeOpfs();
+  const sink = opfsSink("e2e-1", "text/plain"); // no makeWriter -> real workerWriter
+  sink.append(buf("hello "));
+  sink.append(buf("world"));
+  await sink.quiesce();
+  assert.equal(sink.bytesWritten, 11, "e2e: bytesWritten counts the worker-acked bytes");
+  const blob = await sink.finalize();
+  assert.equal(await blob.text(), "hello world", "e2e: finalize reads back what the worker wrote to the bucket");
+}
+
+// E2E poison: a failing OPFS write in the worker surfaces as a poisoned sink.
+{
+  currentRoot = makeFakeOpfs({ failWrite: true });
+  const sink = opfsSink("e2e-2");
+  sink.append(buf("XYZ"));
+  await sink.quiesce();
+  assert.equal(sink.failed, true, "e2e: a worker write failure poisons the sink");
+  assert.equal(sink.bytesWritten, 0, "e2e: a poisoned sink advances nothing (no silent hole)");
+  const blob = await sink.finalize();
+  assert.equal(blob.size, 0, "e2e: finalize on a poisoned sink yields an empty Blob");
+}
+
+// E2E double-abort (the cancel path): the hook aborts a sink, then peer.cancel ->
+// applyCancel aborts the SAME sink again. close() must be idempotent — before the
+// fix the second close posted to a terminated worker and never settled.
+{
+  currentRoot = makeFakeOpfs();
+  const sink = opfsSink("e2e-3");
+  sink.append(buf("data"));
+  await sink.quiesce();
+  let hung = false;
+  await Promise.race([
+    Promise.all([sink.abort(), sink.abort()]),
+    new Promise((res) => setTimeout(() => { hung = true; res(); }, 2000)),
+  ]);
+  assert.equal(hung, false, "e2e: aborting the same sink twice settles (idempotent close, no hang)");
+}
+
+console.log("OK: opfsStage feature detection + durable-write accounting + poison-on-failure + real-worker e2e");
