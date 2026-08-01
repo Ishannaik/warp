@@ -113,6 +113,29 @@ async function run() {
   assert.deepEqual(r3j.peers, [], 'reclaimed room starts empty — a fresh handshake, no stale server state');
   r3.close();
 
+  // 8. Oversized-frame guard (#98): a frame over the cap gets a `message-too-large`
+  //    error and is NOT relayed, while the same socket's normal-sized signals still
+  //    flow — the guard rejects the frame, it doesn't kill the connection.
+  const e = await connect();
+  sendj(e, { type: 'join' });
+  const eJoined = await next(e, (m) => m.type === 'joined');
+  const f = await connect();
+  sendj(f, { type: 'join', room: eJoined.room });
+  const fJoined = await next(f, (m) => m.type === 'joined');
+  await next(e, (m) => m.type === 'peer-joined');
+  // Well over the 64 KiB cap (real SDP/ICE is a few KB).
+  const oversized = { type: 'signal', to: fJoined.selfId, data: { pad: 'x'.repeat(128 * 1024) } };
+  e.send(JSON.stringify(oversized));
+  assert.equal((await next(e, (m) => m.type === 'error')).error, 'message-too-large', 'oversized frame is rejected');
+  await delay(300);
+  assert.equal(f.queue.filter((m) => m.type === 'signal').length, 0, 'oversized frame is not relayed');
+  // The socket is still live: a normal signal right after still relays intact.
+  sendj(e, { type: 'signal', to: fJoined.selfId, data: { sdp: 'still-here' } });
+  const after = await next(f, (m) => m.type === 'signal');
+  assert.deepEqual(after.data, { sdp: 'still-here' }, 'normal signals still relay after a rejected oversized one');
+  e.close();
+  f.close();
+
   for (const ws of [a, c, d]) ws.close();
 }
 

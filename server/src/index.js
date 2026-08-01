@@ -4,6 +4,7 @@
 
 const MAX_PEERS = 8;                                       // mesh blows up past this; honest cap
 const MAX_DISCOVER = 8;                                    // >this many sockets per public IP => CGNAT/cellular; hide devices (privacy)
+const MAX_SIGNAL_BYTES = 64 * 1024;                        // #98: real SDP/ICE frames are a few KB; this is generous headroom, not a guess-tight cap
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no ambiguous 0/O/1/I/L
 const CODE_LEN = 6;
 const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
@@ -74,6 +75,18 @@ export class SignalingRoom {
 
   // --- message handling ------------------------------------------------------
   async webSocketMessage(ws, raw) {
+    // Size guard (#98): reject oversized frames BEFORE parsing/relay. Workers raised
+    // the WebSocket message limit to 32 MiB, so without this one bad client could
+    // push huge frames that each cost a JSON.parse + relay inside the single shared
+    // DO — burning CPU for every room on the instance. Signaling only ever carries
+    // SDP offers/answers and ICE candidates (a few KB), so a generous byte ceiling
+    // never touches a legitimate handshake. `raw` is a string for text frames or an
+    // ArrayBuffer for binary; measure bytes either way (a string's .length is UTF-16
+    // units, a fine lower-bound proxy for a large-frame guard).
+    const bytes = typeof raw === 'string' ? raw.length : (raw && raw.byteLength) || 0;
+    if (bytes > MAX_SIGNAL_BYTES) {
+      return this.send(ws, { type: 'error', error: 'message-too-large', message: `Message exceeds ${MAX_SIGNAL_BYTES} bytes.` });
+    }
     let msg;
     try { msg = JSON.parse(raw); }
     catch { return this.send(ws, { type: 'error', error: 'bad-message', message: 'Expected JSON.' }); }
