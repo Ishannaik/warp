@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:engine": "node scripts/run-checks.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",

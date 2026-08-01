@@ -59,16 +59,19 @@ CI (`.github/workflows/ci.yml`) runs exactly these, path-filtered — only the p
 
 ### The engine check harnesses
 
-The engine has runnable, dependency-free checks next to each module — no test runner, just `node` and small stubs for the browser globals (a fake `RTCDataChannel`, etc.):
+The engine has runnable, dependency-free checks next to each module — no test runner, just `node` and small stubs for the browser globals (a fake `RTCDataChannel`, etc.). Run them all with one command:
+
+```bash
+pnpm --filter @warp/web check:engine   # every src/lib/warp/*.check.mjs, fail-fast
+```
+
+The runner (`web/scripts/run-checks.mjs`) globs `src/lib/warp/*.check.mjs`, so a new harness dropped next to a module is picked up automatically. CI runs it in the `web` job — a PR that breaks reconnect/resume logic goes red. To run a single harness while you're working:
 
 ```bash
 cd web
-node src/lib/warp/signaling.check.mjs          # reconnect/backoff behaviour
 node src/lib/warp/peer.check.mjs               # offer -> accept -> stream -> received round-trip, decline, cancel
-node src/lib/warp/transfer.check.mjs           # resume identity helpers
-node src/lib/warp/receiveController.check.mjs  # durable-write sink invariants
 node src/lib/warp/useWarpTransfer.check.mjs    # hook orchestration / salvage-on-reconnect
-node src/lib/warp/idbStage.check.mjs           # IDB staging sink
+node src/lib/warp/opfsStage.check.mjs          # OPFS receive sink (primary large-receive fallback)
 ```
 
 **If you touch a file in `web/src/lib/warp/`, run its `.check.mjs` — and extend it to cover your change.** These harnesses are the engine's regression net.
@@ -120,7 +123,7 @@ Docs, typo fixes, and accessibility improvements are real contributions too, and
 5. **Make the change.** Keep it small. Match the surrounding style — including the inline styles in components.
 6. **Verify:**
    - `pnpm lint && pnpm typecheck && pnpm --filter @warp/web build`
-   - the relevant `node src/lib/warp/*.check.mjs` harness(es) if you touched the engine
+   - `pnpm --filter @warp/web check:engine` if you touched the engine (or the single relevant `node src/lib/warp/*.check.mjs`)
    - `pnpm --filter @warp/server test` if you touched the server
    - **at ~390px width** in DevTools if you touched any UI — no horizontal scroll allowed
 7. **Commit** with a conventional message and push:

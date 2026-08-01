@@ -53,6 +53,10 @@ jobs:
       - run: pnpm --filter @warp/web lint
       - run: pnpm --filter @warp/web typecheck
       - run: pnpm --filter @warp/web build
+      # Engine regression net: the dependency-free *.check.mjs harnesses that
+      # guard the trickiest code (resume, backpressure, salvage-on-reconnect).
+      # CONTRIBUTING promises them; this step makes the promise enforceable (#23).
+      - run: pnpm --filter @warp/web check:engine
 
   server:
     needs: changes
