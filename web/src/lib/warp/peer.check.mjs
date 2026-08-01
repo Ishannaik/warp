@@ -588,6 +588,92 @@ bigFile.slice = Blob.prototype.slice;
   assert.equal(lastStatus, "error", "a send that dies mid-backpressure is marked error for salvage, not left 'transferring'");
 }
 
+// --- optional compression (#130): negotiated, per-chunk, byte-exact -------------
+// A compressible file accepted WITH an advertised codec must round-trip byte-exact
+// AND provably shrink on the wire. Node ships gzip, so this drives the real
+// CompressionStream path end to end. (Every case ABOVE accepts with NO codecs, so
+// they stay on the raw path — this is the only compressed transfer in the harness.)
+{
+  const compSender = new WarpPeer(sig, "cmp-remote", true);
+  const compReceiver = new WarpPeer(sig, "cmp-local", false);
+  const compSenderCh = compSender.pc.localChannel;
+  const compReceiverCh = new FakeChannel();
+  compSenderCh.peer = compReceiverCh;
+  compReceiverCh.peer = compSenderCh;
+  compReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: compReceiverCh }));
+
+  // Highly compressible content, so the wire form is provably smaller than plaintext.
+  const compText = "warp-compression ".repeat(4000); // ~68 KB, very repetitive
+  const compFile = new Blob([compText], { type: "text/plain" });
+  compFile.name = "compressible.txt";
+  compFile.slice = Blob.prototype.slice;
+
+  let beginCodec;
+  let wireBinary = 0;
+  const rawCompSend = compSenderCh.send.bind(compSenderCh);
+  compSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-begin") beginCodec = msg.codec;
+    } else if (d instanceof ArrayBuffer || ArrayBuffer.isView(d)) {
+      wireBinary += d.byteLength;
+    }
+    return rawCompSend(d);
+  };
+
+  const compOfferSeen = waitFor(compReceiver, "incoming-offer");
+  const compSend = compSender.offerFiles([compFile]);
+  const compOffer = await compOfferSeen;
+  const compGot = waitFor(compReceiver, "file-received");
+  compReceiver.acceptOffer(compOffer.batchId, undefined, undefined, ["gzip"]); // advertise a codec
+  const compReceived = await compGot;
+  assert.equal(await compReceived.blob.text(), compText, "compressed transfer is byte-exact after decompression");
+  assert.equal(beginCodec, "gzip", "file-begin names the negotiated codec");
+  assert.ok(wireBinary > 0, "binary chunks crossed the wire");
+  assert.ok(
+    wireBinary < compFile.size,
+    `compressed wire bytes (${wireBinary}) are fewer than plaintext (${compFile.size})`,
+  );
+  compSenderCh.send = rawCompSend;
+  await compSend;
+
+  // An incompressible MIME stays raw even when a codec is advertised: no codec is
+  // named in file-begin, so the receiver takes the sync path and bytes are unchanged.
+  const rawSender = new WarpPeer(sig, "raw-remote", true);
+  const rawReceiver = new WarpPeer(sig, "raw-local", false);
+  const rawSenderCh = rawSender.pc.localChannel;
+  const rawReceiverCh = new FakeChannel();
+  rawSenderCh.peer = rawReceiverCh;
+  rawReceiverCh.peer = rawSenderCh;
+  rawReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: rawReceiverCh }));
+
+  const pngBytes = new Uint8Array(2048);
+  for (let i = 0; i < pngBytes.length; i += 1) pngBytes[i] = (i * 131 + 17) & 0xff;
+  const pngFile = new Blob([pngBytes], { type: "image/png" }); // already compressed -> raw
+  pngFile.name = "image.png";
+  pngFile.slice = Blob.prototype.slice;
+
+  let rawBeginCodec = "unset";
+  const rawSpy = rawSenderCh.send.bind(rawSenderCh);
+  rawSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-begin") rawBeginCodec = msg.codec;
+    }
+    return rawSpy(d);
+  };
+  const rawOfferSeen = waitFor(rawReceiver, "incoming-offer");
+  const rawSend = rawSender.offerFiles([pngFile]);
+  const rawOffer = await rawOfferSeen;
+  const rawGot = waitFor(rawReceiver, "file-received");
+  rawReceiver.acceptOffer(rawOffer.batchId, undefined, undefined, ["gzip"]);
+  const rawReceived = await rawGot;
+  assert.equal(rawBeginCodec, undefined, "an incompressible MIME is sent raw (no codec in file-begin)");
+  assert.deepEqual(new Uint8Array(await rawReceived.blob.arrayBuffer()), pngBytes, "raw bytes pass through unchanged");
+  rawSenderCh.send = rawSpy;
+  await rawSend;
+}
+
 console.log(
-  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression passed",
 );

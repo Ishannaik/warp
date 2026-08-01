@@ -45,6 +45,7 @@ import {
 } from "./transfer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { createHashSession, type HashSession } from "./hash";
+import { chooseCodec, compressChunk, decompressChunk, supportedCodecs, type Codec } from "./compress";
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -172,8 +173,10 @@ type Listener<K extends keyof PeerEvents> = PeerEvents[K];
 interface OutgoingBatch {
   batchId: string;
   files: File[];
-  /** Resolves on accept; rejects when the receiver declines or the channel closes. */
-  resolve: (resume?: Record<string, number>) => void;
+  /** Resolves on accept with the receiver's settlement: per-file resume offsets
+   *  and the compression codecs the receiver can decode (#130). Rejects when the
+   *  receiver declines or the channel closes. */
+  resolve: (settlement?: { resume?: Record<string, number>; codecs?: Codec[] }) => void;
   reject: (reason: "declined" | Error) => void;
   /** Set true the moment the receiver responds, so a late dup is ignored. */
   settled: boolean;
@@ -192,6 +195,18 @@ interface IncomingState {
    *  receive started at offset 0 (a resumed receive's hash would only cover
    *  the tail, so we skip rather than emit a misleading digest). */
   hash: HashSession | null;
+  /** Compression codec the sender packed each chunk with (#130); undefined => the
+   *  binary frames are raw plaintext. When set, chunks are decompressed through
+   *  `chain` before hitting the sink, so appends stay in wire order. */
+  codec?: Codec;
+  /** Ordered decompress->append chain for a compressed receive. The sink's own
+   *  write chain orders appends, but decompression is async and could finish out
+   *  of order; serializing through this chain keeps plaintext bytes in sequence.
+   *  `completeIncoming` awaits it before trusting the durable byte count. */
+  chain: Promise<void>;
+  /** Set when the file is cancelled mid-flight. The decompress chain checks it to
+   *  drop late chunks; a normal completion leaves it false so the chain drains. */
+  cancelled: boolean;
 }
 
 /**
@@ -576,15 +591,22 @@ export class WarpPeer {
     if (ch.readyState !== "open") throw new Error("channel-closed");
 
     // Register the pending batch BEFORE sending, so an instant accept/decline finds it.
-    const accepted = new Promise<Record<string, number> | undefined>((resolve, reject) => {
-      this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false, tokens });
-    });
+    const accepted = new Promise<{ resume?: Record<string, number>; codecs?: Codec[] } | undefined>(
+      (resolve, reject) => {
+        this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false, tokens });
+      },
+    );
 
     this.send(ch, { t: "offer", batchId, items: manifest });
 
     let resume: Record<string, number> | undefined;
+    // Codecs the receiver can decode (#130); intersected with our own support per
+    // file below. Undefined/empty => we send raw bytes (backward compatible).
+    let rxCodecs: Codec[] = [];
     try {
-      resume = await accepted;
+      const settlement = await accepted;
+      resume = settlement?.resume;
+      rxCodecs = settlement?.codecs ?? [];
     } catch (reason) {
       // A real decline is terminal for this offer. Channel closure stays
       // salvageable: leave the items unfinished and reject to the hook.
@@ -596,6 +618,11 @@ export class WarpPeer {
     // Accepted: stream each file in order. A transport death mid-batch is NOT
     // terminal for the app: mark the in-flight + unsent items "error" so the
     // hook can salvage them into an automatic re-offer once the peer rebuilds.
+    // Compression (#130): the codecs BOTH sides support — the receiver's advertised
+    // list intersected with our own. A file is packed only if it's compressible and
+    // this intersection is non-empty (chooseCodec per file, in the loop below).
+    const localCodecs = supportedCodecs();
+    const sharedCodecs = rxCodecs.filter((c) => localCodecs.includes(c));
     try {
       for (let i = 0; i < files.length; i += 1) {
         const id = ids[i];
@@ -617,8 +644,11 @@ export class WarpPeer {
         item.progress = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
         this.emit("transfer", { ...item });
 
-        this.send(ch, { t: "file-begin", id, offset });
-        const finishedClean = await this.streamFile(ch, file, item, offset);
+        // Per-file codec: undefined for incompressible media or no shared codec,
+        // which sends raw bytes exactly as before. `offset` stays in plaintext.
+        const codec = chooseCodec(file.type || "application/octet-stream", sharedCodecs);
+        this.send(ch, { t: "file-begin", id, offset, ...(codec ? { codec } : {}) });
+        const finishedClean = await this.streamFile(ch, file, item, offset, codec);
         if (!finishedClean) {
           // Cancelled mid-flight: tell the receiver and stop this file.
           this.send(ch, { t: "cancel", id });
@@ -677,8 +707,12 @@ export class WarpPeer {
    *   - { dirHandle }  : a multi-file batch, each file written into that folder
    *                      (names de-duped within the folder).
    *   - { fileHandle } : a single file written to that handle.
+   *
+   * `codecs` (#130) advertises the compression codecs this receiver can decode;
+   * the sender compresses a file only when it's compressible and a codec overlaps.
+   * Omit it (the default) to receive raw bytes — the backward-compatible path.
    */
-  acceptOffer(batchId: string, target?: AcceptTarget, resume?: Record<string, number>): void {
+  acceptOffer(batchId: string, target?: AcceptTarget, resume?: Record<string, number>, codecs?: Codec[]): void {
     const items = this.pendingOffers.get(batchId);
     if (!items) return;
     this.pendingOffers.delete(batchId);
@@ -710,7 +744,14 @@ export class WarpPeer {
     }
 
     const ch = this.channel;
-    if (ch && ch.readyState === "open") this.send(ch, { t: "accept", batchId, ...(resume ? { resume } : {}) });
+    if (ch && ch.readyState === "open") {
+      this.send(ch, {
+        t: "accept",
+        batchId,
+        ...(resume ? { resume } : {}),
+        ...(codecs && codecs.length ? { codecs } : {}),
+      });
+    }
   }
 
   /** Receiver: decline a pending offered batch -> the sender sends nothing. */
@@ -759,6 +800,7 @@ export class WarpPeer {
     // abort the sink so a partial file isn't left dangling on disk.
     if (this.incoming && this.incoming.item.id === id) {
       const inc = this.incoming;
+      inc.cancelled = true; // stops a compressed receive's decompress chain
       this.incoming = null;
       inc.hash?.dispose();
       void inc.sink.abort();
@@ -792,12 +834,18 @@ export class WarpPeer {
    * Chrome<->Chrome). This does ~one await per 4 MiB instead of one per 16 KiB,
    * and ~16x fewer SCTP messages, so the channel runs near the link rate.
    * bufferedAmount backpressure (SEND_HIGH_WATER) keeps memory bounded.
+   *
+   * Compression (#130): when `codec` is set, each send chunk is compressed
+   * independently before `send()`, so the wire carries fewer, smaller messages.
+   * Offsets and the integrity hash stay in PLAINTEXT bytes — only the wire form is
+   * packed — so resume and manifest-verify are unaffected.
    */
   private async streamFile(
     ch: RTCDataChannel,
     file: File,
     item: TransferItem,
     startOffset = 0,
+    codec?: Codec,
   ): Promise<boolean> {
     const sendChunk = this.sendChunkSize();
     // Integrity hash runs in a Web Worker (issue #88). Tapped at the 4 MiB
@@ -839,7 +887,15 @@ export class WarpPeer {
           // Send a VIEW into the block, not a slice() copy — one fewer 256 KiB
           // memcpy per message on the send hot path. The view pins its 4 MiB
           // block until queued, which the backpressure bound already covers.
-          ch.send(new Uint8Array(block, pos, end - pos));
+          const view = new Uint8Array(block, pos, end - pos);
+          // Compression (#130): pack each chunk independently when a codec was
+          // negotiated. The receiver decompresses per chunk (stateless), so this
+          // never breaks byte-offset resume. Offset accounting stays plaintext.
+          if (codec) {
+            ch.send(await compressChunk(view, codec));
+          } else {
+            ch.send(view);
+          }
           offset += end - pos;
           pos = end;
         }
@@ -940,7 +996,8 @@ export class WarpPeer {
         if (batch && !batch.settled) {
           batch.settled = true;
           this.outgoing.delete(msg.batchId);
-          batch.resolve(msg.resume); // carries per-file resume offsets (undefined = fresh)
+          // Carry the receiver's resume offsets AND its advertised codecs (#130).
+          batch.resolve({ resume: msg.resume, codecs: msg.codecs });
         }
         break;
       }
@@ -955,7 +1012,7 @@ export class WarpPeer {
         break;
       }
       case "file-begin": {
-        this.startIncoming(msg.id, msg.offset);
+        this.startIncoming(msg.id, msg.offset, msg.codec);
         break;
       }
       case "file-end": {
@@ -998,7 +1055,7 @@ export class WarpPeer {
    * write chunks straight through (no Blob accumulation); otherwise accumulate in
    * memory exactly as before.
    */
-  private startIncoming(id: string, offset = 0): void {
+  private startIncoming(id: string, offset = 0, codec?: Codec): void {
     if (this.cancelledIds.has(id)) return; // cancelled before bytes flowed
     const item = this.items.get(id);
     if (!item || item.direction !== "receive") return; // unaccepted / unknown -> ignore
@@ -1021,7 +1078,10 @@ export class WarpPeer {
     // (offset === 0): a resumed receive already holds [0,offset) whose bytes we
     // never see, so hashing from here would produce a digest of the tail alone.
     const hash = offset === 0 ? createHashSession() : null;
-    this.incoming = { item, sink, hash };
+    // `codec` (#130): when set, binary frames are compressed and routed through the
+    // decompress chain in onChunk; the hash + sink see PLAINTEXT, matching the
+    // sender (which hashes plaintext too). Undefined => raw frames, sync path.
+    this.incoming = { item, sink, hash, codec, chain: Promise.resolve(), cancelled: false };
     item.status = "transferring";
     item.transferred = sink.bytesWritten;
     item.progress = Math.min(100, Math.round((item.transferred / Math.max(1, item.size)) * 100));
@@ -1031,6 +1091,33 @@ export class WarpPeer {
   private onChunk(buf: ArrayBuffer): void {
     const inc = this.incoming;
     if (!inc) return; // no active incoming file (cancelled / not accepted)
+    if (inc.codec) {
+      // Compressed frame (#130): decompress through the ordered chain so plaintext
+      // appends stay in wire order (decompression is async and could finish out of
+      // sequence). A chunk that won't decompress poisons the receive honestly.
+      const codec = inc.codec;
+      inc.chain = inc.chain.then(async () => {
+        if (inc.cancelled) return;
+        try {
+          const plain = await decompressChunk(buf, codec);
+          if (inc.cancelled) return;
+          this.applyChunk(inc, plain);
+        } catch {
+          if (inc.cancelled) return;
+          inc.cancelled = true;
+          inc.hash?.dispose();
+          await inc.sink.abort();
+          this.host.end(inc.item.id);
+          this.markStatus(inc.item.id, "error");
+        }
+      });
+      return;
+    }
+    this.applyChunk(inc, buf);
+  }
+
+  /** Append one PLAINTEXT chunk to the sink + hash and advance progress (Fable H1/L2). */
+  private applyChunk(inc: IncomingState, buf: ArrayBuffer): void {
     inc.sink.append(buf);
     // Feed the same chunk into the off-thread hash worker. postMessage clones
     // (no transfer list), so the sink's reference is not detached out from
@@ -1073,6 +1160,10 @@ export class WarpPeer {
    * with no blob (bytes already on disk).
    */
   private async completeIncoming(id: string, inc: IncomingState): Promise<void> {
+    // Drain the decompress chain first (#130): for a compressed receive, chunks
+    // still in flight must land before we trust the durable byte count. No-op for
+    // the raw path (chain is an already-resolved promise).
+    await inc.chain;
     await inc.sink.quiesce();
     const bytes = inc.sink.bytesWritten;
     if (bytes !== inc.item.size || inc.sink.failed) {

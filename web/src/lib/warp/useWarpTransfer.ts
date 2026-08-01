@@ -41,6 +41,7 @@ import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage"
 import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSupported } from "./opfsStage";
 import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
 import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
+import { supportedCodecs } from "./compress";
 import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 
@@ -385,7 +386,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           rxIdKeyRef.current.set(it.id, it.key!);
           if (!target) target = e.target;
         }
-        peer.acceptOffer(info.batchId, target, resume);
+        peer.acceptOffer(info.batchId, target, resume, supportedCodecs());
       })();
     },
     [],
@@ -866,7 +867,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     // Clear the modal only after the picker settles, so a cancelled picker can
     // still fall through to an in-memory accept of the same offer.
     setIncoming(null);
-    peer.acceptOffer(off.batchId, target);
+    // Advertise the codecs we can decode (#130) so the sender may compress
+    // compressible files; a stack without CompressionStream advertises nothing
+    // and receives raw bytes (backward compatible).
+    peer.acceptOffer(off.batchId, target, undefined, supportedCodecs());
   }, [incoming]);
 
   const decline = useCallback(() => {

@@ -15,7 +15,14 @@
  * batch manifest (`offer`) and waits for the receiver's `accept`/`decline`. No
  * bytes flow until the receiver explicitly accepts. The channel stays OPEN after
  * a batch so either peer can offer again without re-pairing.
+ *
+ * Optional compression (#130): the receiver advertises the codecs it can decode in
+ * its `accept` frame; the sender then compresses each binary chunk and names the
+ * codec in `file-begin`. A receiver that advertises nothing gets raw bytes, so the
+ * protocol stays backward compatible. See compress.ts.
  */
+
+import type { Codec } from "./compress";
 
 /** 16 KiB chunk size — the SCTP-friendly sweet spot used across the design copy. */
 export const CHUNK_SIZE = 16 * 1024;
@@ -64,15 +71,19 @@ export type ControlMessage =
   | { t: "offer"; batchId: string; items: OfferItem[] }
   /** Receiver accepts a batch -> sender starts streaming. `resume` maps a file id
    *  to the receiver's durably-written byte count for a resumed file (absent/0 =
-   *  fresh from byte 0). */
-  | { t: "accept"; batchId: string; resume?: Record<string, number> }
+   *  fresh from byte 0). `codecs` advertises the compression codecs the receiver
+   *  can decode (#130); the sender compresses a file only when it's compressible
+   *  AND a codec overlaps. Absent/empty => send raw bytes (backward compatible). */
+  | { t: "accept"; batchId: string; resume?: Record<string, number>; codecs?: Codec[] }
   /** Receiver declines a batch -> sender sends nothing, marks the batch declined. */
   | { t: "decline"; batchId: string }
   /** Sent immediately before a file's binary chunks. `offset` echoes the byte the
    *  sender will actually stream from (tus-style) so the receiver can verify its
    *  partial lines up before appending — and detect a stale sender that ignored
-   *  the resume request and restarted at 0. */
-  | { t: "file-begin"; id: string; offset: number }
+   *  the resume request and restarted at 0. `codec` (optional, #130) names the
+   *  compression codec each following binary chunk is packed with; absent => the
+   *  chunks are raw plaintext bytes. `offset` is always in PLAINTEXT bytes. */
+  | { t: "file-begin"; id: string; offset: number; codec?: Codec }
   /** Sent immediately after a file's binary chunks. */
   | { t: "file-end"; id: string }
   /** Either side cancels a file in flight (sender stops; receiver discards partial). */
