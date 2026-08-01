@@ -331,9 +331,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /**
    * Decide what to do with an inbound offer (Fable H3/H5/M1/M2): if EVERY item is a
    * known in-progress file — its key is in the registry, not active, token matches,
-   * and it wasn't cancelled — auto-accept it with each file's durable resume offset
-   * and NO modal. Otherwise surface the accept modal. Duplicate keys in one batch
-   * disable resume (force the modal).
+   * not cancelled, AND its sink is healthy — auto-accept it with each file's durable
+   * resume offset and NO modal. Otherwise surface the accept modal. Duplicate keys
+   * in one batch disable resume (force the modal). A POISONED sink (a failed write)
+   * also forces the modal: silently auto-resuming onto a sink that can no longer
+   * accept bytes would just stream the whole tail into nowhere and die at file-end.
    */
   const handleIncomingOffer = useCallback(
     (peerId: string, info: { batchId: string; items: OfferItem[] }) => {
@@ -348,6 +350,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           return (
             !!e &&
             !e.active &&
+            !e.sink.failed &&
             !!it.resumeToken &&
             e.resumeToken === it.resumeToken &&
             !cancelledKeysRef.current.has(it.key!)
@@ -754,6 +757,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const usedNames = new Set<string>();
     for (const it of off.items) {
       if (!it.key) continue;
+      // A prior partial for this key (a poisoned sink, or a re-offer the user
+      // chose to accept fresh) is being REPLACED — abort it so its OPFS staging
+      // file / IDB rows are freed now instead of lingering until the TTL GC.
+      const prev = receiveRegRef.current.get(it.key);
+      if (prev) void prev.sink.abort();
       let sink: ReceiveSink;
       let savedName: string | undefined;
       if (target && "dirHandle" in target) {

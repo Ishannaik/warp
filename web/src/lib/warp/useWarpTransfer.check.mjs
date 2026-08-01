@@ -364,8 +364,8 @@ assert(fsPickers.fileCalls === 0 && fsPickers.dirCalls === 0, "no picker is prom
 const receiveReg = new Map();
 const cancelledKeys = new Set();
 
-function fakeSink(bytes) {
-  return { bytesWritten: bytes, async quiesce() {}, async abort() {} };
+function fakeSink(bytes, failed = false) {
+  return { bytesWritten: bytes, failed, async quiesce() {}, async abort() {} };
 }
 
 async function handleOffer(peerId, info) {
@@ -376,7 +376,14 @@ async function handleOffer(peerId, info) {
     info.items.length > 0 &&
     info.items.every((it) => {
       const e = it.key ? receiveReg.get(it.key) : undefined;
-      return !!e && !e.active && !!it.resumeToken && e.resumeToken === it.resumeToken && !cancelledKeys.has(it.key);
+      return (
+        !!e &&
+        !e.active &&
+        !e.sink.failed &&
+        !!it.resumeToken &&
+        e.resumeToken === it.resumeToken &&
+        !cancelledKeys.has(it.key)
+      );
     });
   if (!allResumable) {
     incoming = { ...info, peerId };
@@ -446,6 +453,16 @@ receiveReg.set("busy|9|9", { key: "busy|9|9", size: 9, resumeToken: "tok-E", sin
 incoming = null;
 await handleOffer(rp.remoteId, { batchId: "re6", items: [{ id: "e1", key: "busy|9|9", size: 9, resumeToken: "tok-E" }] });
 assert(incoming && incoming.batchId === "re6", "a duplicate offer for an ACTIVE file is not double-accepted");
+
+// 6g. A POISONED sink (a write failed before the drop) -> modal, not auto-resume.
+// Auto-resuming onto a dead sink would stream the tail into nowhere and only fail
+// at file-end; the honest path is to surface the offer and let the user restart.
+receiveReg.set("sick|8|7", { key: "sick|8|7", size: 8, resumeToken: "tok-F", sink: fakeSink(3, true), active: false, target: undefined });
+incoming = null;
+rp.accepted.length = 0;
+await handleOffer(rp.remoteId, { batchId: "re7", items: [{ id: "s1", key: "sick|8|7", size: 8, resumeToken: "tok-F" }] });
+assert(incoming && incoming.batchId === "re7", "a re-offer onto a POISONED sink surfaces the modal, not auto-resume");
+assert(rp.accepted.length === 0, "a poisoned-sink re-offer is NOT auto-accepted");
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
