@@ -39,6 +39,7 @@ import {
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
 import { gcOrphanOpfs, opfsSink, opfsSupported } from "./opfsStage";
+import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
 import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
 import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
@@ -62,6 +63,15 @@ interface RxEntry {
   ownerToken?: string;
   /** On-disk name chosen (disk mode). */
   savedName?: string;
+  /**
+   * Durable coordinates for reload-resume (issue #36), present only for the
+   * origin-storage sinks whose staged bytes SURVIVE a tab reload (IDB today; OPFS
+   * recorded for forward-compat). `fileId` is the staging name the sink used, so a
+   * reload reconstructs the SAME sink over the SAME bytes; the ledger row this
+   * feeds is written on durable progress and read back at mount to repopulate the
+   * registry. Absent for memory / disk sinks (they can't reload-resume here).
+   */
+  ledger?: { fileId: string; sinkKind: LedgerSinkKind; mime: string; name: string };
 }
 
 /**
@@ -230,12 +240,17 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** Ref mirrors so long-lived peer event listeners never read stale state. */
   const itemsRef = useRef<TransferItem[]>([]);
   const peersListRef = useRef<string[]>([]);
+  /** Current room code, for stamping ledger rows from long-lived listeners. */
+  const codeRef = useRef<string | null>(joinCode ?? null);
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
   useEffect(() => {
     peersListRef.current = peers;
   }, [peers]);
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
 
   const shareUrl = useMemo(
     () => (code ? `${window.location.origin}/r/${code}` : null),
@@ -315,7 +330,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       end(id) {
         const key = idKey.get(id);
         idKey.delete(id);
-        if (key) reg.delete(key); // completion or cancel -> drop the durable entry
+        if (key) {
+          reg.delete(key); // completion or cancel -> drop the durable entry
+          void removeRxLedger(key); // ...and its reload-resume ledger row (#36)
+        }
       },
     };
   }, []);
@@ -406,7 +424,32 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
 
       // Both directions: an item was created or its progress changed. Stamp the
       // device it belongs to so the UI can tag tray rows / route cancels.
-      peer.on("transfer", (item) => upsertItem({ ...item, peerId }));
+      peer.on("transfer", (item) => {
+        upsertItem({ ...item, peerId });
+        // Reload-resume (#36): persist a resumable receive's DURABLE offset to the
+        // ledger. For a receive, item.transferred IS sink.bytesWritten (durable), and
+        // the peer throttles these emits to ~1% deltas, so this is a cheap upsert on
+        // the commit point — the ledger can never claim more than is staged (H1).
+        if (item.direction === "receive" && item.kind === "file") {
+          const key = rxIdKeyRef.current.get(item.id);
+          const e = key ? receiveRegRef.current.get(key) : undefined;
+          const room = codeRef.current;
+          if (e?.ledger && key && room) {
+            void putRxLedger({
+              key,
+              room,
+              fileId: e.ledger.fileId,
+              resumeToken: e.resumeToken,
+              size: e.size,
+              bytesWritten: item.transferred,
+              sinkKind: e.ledger.sinkKind,
+              mime: e.ledger.mime,
+              name: e.ledger.name,
+              ts: Date.now(),
+            });
+          }
+        }
+      });
 
       // A whole manifest arrived from THIS peer — auto-resume a known in-progress
       // file (no modal), else surface the accept modal.
@@ -779,6 +822,15 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       } else {
         sink = memorySink(it.mime);
       }
+      // Reload-resume coordinates (#36): only the origin-storage sinks stage bytes
+      // that survive a reload, so only they get a ledger row. `fileId` is the staging
+      // name (the offer item id) so a reload reconstructs the SAME sink over the SAME
+      // IDB rows / OPFS file. OPFS is recorded for forward-compat but not yet
+      // rehydrated (its reload offset needs a file-length reconciliation — follow-up).
+      const ledger =
+        useIdb || useOpfs
+          ? { fileId: it.id, sinkKind: (useIdb ? "idb" : "opfs") as LedgerSinkKind, mime: it.mime, name: it.name }
+          : undefined;
       receiveRegRef.current.set(it.key, {
         key: it.key,
         size: it.size,
@@ -787,8 +839,28 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         target,
         active: false,
         savedName,
+        ledger,
       });
       rxIdKeyRef.current.set(it.id, it.key);
+      // Seed the ledger row at offset 0 so an early reload (before the first progress
+      // tick) still finds a resumable entry; progress upserts refine bytesWritten.
+      if (ledger) {
+        const room = codeRef.current;
+        if (room) {
+          void putRxLedger({
+            key: it.key,
+            room,
+            fileId: ledger.fileId,
+            resumeToken: it.resumeToken ?? "",
+            size: it.size,
+            bytesWritten: 0,
+            sinkKind: ledger.sinkKind,
+            mime: ledger.mime,
+            name: ledger.name,
+            ts: Date.now(),
+          });
+        }
+      }
     }
 
     // Clear the modal only after the picker settles, so a cancelled picker can
@@ -801,6 +873,18 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const off = incoming;
     if (!off) return;
     setIncoming(null);
+    // A decline can land on an offer that fell back to the modal despite a stale
+    // partial (e.g. a poisoned sink). Drop those durable entries + ledger rows now
+    // so they neither linger until the TTL GC nor auto-resume on a later re-offer.
+    for (const it of off.items) {
+      if (!it.key) continue;
+      const e = receiveRegRef.current.get(it.key);
+      if (e) {
+        void e.sink.abort();
+        receiveRegRef.current.delete(it.key);
+        void removeRxLedger(it.key);
+      }
+    }
     peersRef.current.get(off.peerId)?.declineOffer(off.batchId);
   }, [incoming]);
 
@@ -815,6 +899,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         const e = receiveRegRef.current.get(key);
         if (e) void e.sink.abort();
         receiveRegRef.current.delete(key);
+        void removeRxLedger(key); // a cancelled file must not reload-resume (#36)
       }
 
       // Route to the peer that owns the item; the item carries its peerId.
@@ -936,17 +1021,63 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     };
   }, [transferring]);
 
-  // Prune abandoned staging (IDB rows + OPFS files) from crashed sessions once on
-  // mount (best-effort).
+  // Prune abandoned staging (IDB rows + OPFS files) and stale reload-resume ledger
+  // rows from crashed sessions once on mount (best-effort).
   useEffect(() => {
     void gcOrphanStaging();
     void gcOrphanOpfs();
+    void gcRxLedger();
   }, []);
 
-  // Receiver: auto-join the room from the URL on mount.
+  /**
+   * Reload-resume (#36): repopulate the receive registry from the durable ledger so
+   * an accidental tab reload doesn't restart a large receive from zero. The sender
+   * never gives up — it re-offers unfinished files with the same `resumeToken` — and
+   * `handleIncomingOffer` already auto-resumes any inactive registry entry whose
+   * key + token match. So reload-survival is just "rebuild the entries from durable
+   * storage on mount"; the existing auto-resume path does the rest.
+   *
+   * Only IDB rows are rehydrated today: their staged chunks are individually durable,
+   * so `idbSink(fileId, mime, bytesWritten)` reproduces the exact offset and its
+   * prefix scan reassembles prefix + tail. OPFS rows are recorded but skipped here —
+   * rehydrating them needs a file-length reconciliation after an unclean close
+   * (follow-up). Memory / disk receives have no row and restart honestly (the sender's
+   * re-offer simply shows the accept modal again).
+   */
+  const hydrateFromLedger = useCallback(async (room: string) => {
+    const rows = await readRxLedger(room);
+    const reg = receiveRegRef.current;
+    for (const row of rows) {
+      if (row.sinkKind !== "idb") continue; // OPFS / others: honest restart for now
+      // Trust the offset only if it's a sane, incomplete count — a corrupt or
+      // already-complete row is dropped, never resumed (H1/H2).
+      if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) {
+        void removeRxLedger(row.key);
+        continue;
+      }
+      if (reg.has(row.key)) continue; // a live entry already owns this file
+      reg.set(row.key, {
+        key: row.key,
+        size: row.size,
+        resumeToken: row.resumeToken,
+        sink: idbSink(row.fileId, row.mime, row.bytesWritten),
+        active: false,
+        ledger: { fileId: row.fileId, sinkKind: "idb", mime: row.mime, name: row.name },
+      });
+    }
+  }, []);
+
+  // Receiver: auto-join the room from the URL on mount — hydrating the durable
+  // ledger FIRST so the sender's re-offer resumes from the staged offset (#36). The
+  // IDB read is fast and settles well before the signaling join + re-offer RTT.
   useEffect(() => {
-    if (joinCode) connect(joinCode);
+    if (!joinCode) return;
+    let cancelled = false;
+    void hydrateFromLedger(joinCode).finally(() => {
+      if (!cancelled) connect(joinCode);
+    });
     return () => {
+      cancelled = true;
       for (const p of peersRef.current.values()) p.close();
       peersRef.current.clear();
       signalingRef.current?.close();

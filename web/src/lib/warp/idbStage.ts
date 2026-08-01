@@ -113,10 +113,18 @@ function fileRange(fileId: string): IDBKeyRange {
 /**
  * A ReceiveSink backed by IndexedDB Blob staging. bytesWritten advances only after
  * a chunk is durably put (Fable H1/M3). A QuotaExceededError poisons the sink.
+ *
+ * `startOffset` (reload-resume, issue #36): a reconstructed sink over a partial
+ * that SURVIVED a tab reload begins at the durable offset instead of 0. The prior
+ * rows are still in the store under the same `fileId` (IDB is durable), so:
+ *   - bytesWritten starts at startOffset (the resume offset the receiver reports),
+ *   - new chunks are keyed from startOffset onward (no clobber of the prefix), and
+ *   - finalize()'s prefix scan assembles the WHOLE file (prefix + tail) in order.
+ * Defaults to 0 (a fresh receive), so existing callers are unchanged.
  */
-export function idbSink(fileId: string, mime?: string): ReceiveSink {
-  let bytes = 0;
-  let offset = 0;
+export function idbSink(fileId: string, mime?: string, startOffset = 0): ReceiveSink {
+  let bytes = startOffset;
+  let offset = startOffset;
   let failed = false;
   let dbP: Promise<IDBDatabase> | null = null;
   const db = () => (dbP ??= openDb());

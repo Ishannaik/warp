@@ -263,4 +263,31 @@ const store = () => db.stores.get("staging");
   assert.deepEqual(left, ["file-F"], "GC prunes the stale orphan, keeps the fresh row");
 }
 
-console.log("OK: idbSink write path — durable bytesWritten, ordered finalize, prefix isolation, abort, poison, TTL GC");
+// --- 6. startOffset: a reconstructed sink resumes over a survived partial (#36) --
+{
+  // First "session": stage the 6-byte prefix of an 11-byte file, then the tab is
+  // reloaded (the sink object is gone, but the IDB rows are durable under fileId).
+  const before = idbSink("file-H", "text/plain");
+  before.append(enc.encode("hello ").buffer);
+  await before.quiesce();
+  assert.equal(before.bytesWritten, 6, "prefix durably staged (6 bytes)");
+  // No finalize/abort — the reload leaves the rows in place, exactly like a crash.
+
+  // Second "session": reconstruct from the durable offset. bytesWritten starts at
+  // the offset (the resume point), new chunks key from there, and finalize assembles
+  // the WHOLE file from the surviving prefix + the freshly-staged tail.
+  const after = idbSink("file-H", "text/plain", 6);
+  assert.equal(after.bytesWritten, 6, "a reconstructed sink reports the durable offset");
+  after.append(enc.encode("world").buffer);
+  await after.quiesce();
+  assert.equal(after.bytesWritten, 11, "the tail advances from the offset");
+  const blob = await after.finalize();
+  assert.equal(new TextDecoder().decode(await bytes(blob)), "hello world", "finalize reassembles prefix + tail");
+  assert.equal(
+    store().records.filter((r) => r.value.fileId === "file-H").length,
+    0,
+    "finalize clears every file-H row (prefix and tail)",
+  );
+}
+
+console.log("OK: idbSink write path — durable bytesWritten, ordered finalize, prefix isolation, abort, poison, TTL GC, reload startOffset");

@@ -464,6 +464,63 @@ await handleOffer(rp.remoteId, { batchId: "re7", items: [{ id: "s1", key: "sick|
 assert(incoming && incoming.batchId === "re7", "a re-offer onto a POISONED sink surfaces the modal, not auto-resume");
 assert(rp.accepted.length === 0, "a poisoned-sink re-offer is NOT auto-accepted");
 
+// 7. Reload-resume (issue #36): the registry is repopulated from the durable ledger
+// on mount, and the EXISTING auto-resume path then continues from the staged offset.
+// hydrateFromLedger mirrors the hook 1:1: only IDB rows with a sane, incomplete
+// offset become entries; OPFS / complete / corrupt rows are skipped (honest restart).
+function hydrateFromLedger(rows) {
+  const hydrated = [];
+  for (const row of rows) {
+    if (row.sinkKind !== "idb") continue;
+    if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) continue;
+    if (receiveReg.has(row.key)) continue;
+    receiveReg.set(row.key, {
+      key: row.key,
+      size: row.size,
+      resumeToken: row.resumeToken,
+      sink: fakeSink(row.bytesWritten),
+      active: false,
+      target: undefined,
+    });
+    hydrated.push(row.key);
+  }
+  return hydrated;
+}
+
+const ledgerRows = [
+  { key: "big.bin|100|7", sinkKind: "idb", resumeToken: "tok-R", size: 100, bytesWritten: 60 },
+  { key: "vid.mp4|50|8", sinkKind: "opfs", resumeToken: "tok-S", size: 50, bytesWritten: 20 },
+  { key: "done.bin|30|9", sinkKind: "idb", resumeToken: "tok-T", size: 30, bytesWritten: 30 },
+  { key: "bad.bin|40|10", sinkKind: "idb", resumeToken: "tok-U", size: 40, bytesWritten: -5 },
+];
+const hydrated = hydrateFromLedger(ledgerRows);
+assert(
+  hydrated.length === 1 && hydrated[0] === "big.bin|100|7",
+  "hydration rebuilds ONLY the sane, incomplete IDB partial",
+);
+assert(receiveReg.has("big.bin|100|7"), "the IDB partial is back in the registry after reload");
+assert(!receiveReg.has("vid.mp4|50|8"), "an OPFS partial is not rehydrated yet (honest restart)");
+assert(!receiveReg.has("done.bin|30|9"), "a complete row is dropped, not resumed");
+assert(!receiveReg.has("bad.bin|40|10"), "a corrupt (negative) offset is dropped, not trusted");
+
+// The sender (still up) re-offers the hydrated file with the SAME token -> the
+// existing auto-resume path continues from the durable offset (60), no modal.
+const rp2 = new FakePeer("reloadpeer1", true);
+rp2.isConnected = true;
+peersMap.set(rp2.remoteId, rp2);
+bind(rp2.remoteId, rp2);
+
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl1", items: [{ id: "z1", key: "big.bin|100|7", size: 100, resumeToken: "tok-R" }] });
+assert(incoming === null, "after reload, the re-offered IDB partial auto-resumes with NO modal");
+assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z1"] === 60, "reload-resume continues from the durable offset (60)");
+
+// The OPFS file was NOT rehydrated, so its re-offer is an "unknown" key -> modal
+// (an honest restart rather than a silent resume from a wrong offset).
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl2", items: [{ id: "z2", key: "vid.mp4|50|8", size: 50, resumeToken: "tok-S" }] });
+assert(incoming && incoming.batchId === "rl2", "a non-rehydrated (OPFS) file restarts via the accept modal");
+
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
