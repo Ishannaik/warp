@@ -26,6 +26,7 @@ import {
 } from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection } from "../lib/warp/useWarpTransfer";
+import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -791,10 +792,6 @@ function Tray({
 
 /* --------------------------------------------------------------- accept modal */
 
-// Mirrors LARGE_THRESHOLD in useWarpTransfer: large batches stream straight to
-// disk via a folder/file picker instead of accumulating in memory.
-const LARGE_THRESHOLD = 256 * 1024 * 1024;
-
 export function AcceptModal({
   items,
   onAccept,
@@ -811,10 +808,11 @@ export function AcceptModal({
   const total = totalBytes(items);
   // A large batch will surface a native folder/file picker on Accept (the hook
   // streams it to disk), so we tell the user to expect that and to choose a spot.
-  const large =
-    typeof window !== "undefined" &&
-    ("showSaveFilePicker" in window || "showDirectoryPicker" in window) &&
-    (total >= LARGE_THRESHOLD || items.some((it) => it.size >= LARGE_THRESHOLD));
+  // Shares LARGE_THRESHOLD + the capability check with useWarpTransfer (#54), so
+  // this copy can't drift from what accept() actually does.
+  const fs = detectFsAccessSupport();
+  const biggest = items.reduce((m, it) => Math.max(m, it.size), 0);
+  const large = (fs.canSaveFile || fs.canPickDirectory) && isLargeBatch(total, biggest);
   const pickTarget = items.length > 1 ? "folder" : "file";
 
   return (

@@ -39,6 +39,7 @@ import {
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
 import { gcOrphanOpfs, opfsSink, opfsSupported } from "./opfsStage";
+import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
 import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 
@@ -62,15 +63,6 @@ interface RxEntry {
   /** On-disk name chosen (disk mode). */
   savedName?: string;
 }
-
-/**
- * At/above this many bytes (256 MiB) — total batch OR any single file — we stream
- * accepted files STRAIGHT TO DISK via the File System Access API instead of
- * accumulating an in-memory Blob (which would crash the tab on a multi-GB game).
- * Below it we keep the small-file in-memory tray (so we never reintroduce the
- * "1000 save prompts" problem). See `accept()`.
- */
-const LARGE_THRESHOLD = 256 * 1024 * 1024;
 
 /**
  * Minimal File System Access API surface the hook calls. `lib.dom` here doesn't
@@ -706,16 +698,23 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     // else stays in the in-memory tray.
     const total = off.items.reduce((s, it) => s + it.size, 0);
     const biggest = off.items.reduce((m, it) => Math.max(m, it.size), 0);
-    const large = total >= LARGE_THRESHOLD || biggest >= LARGE_THRESHOLD;
+    const large = isLargeBatch(total, biggest);
     const fs = window as unknown as WindowWithFsPickers;
-    const canStream = large && (off.items.length > 1 ? !!fs.showDirectoryPicker : !!fs.showSaveFilePicker);
+    // Single source of truth for the disk-vs-memory decision (#54): a multi-file
+    // batch needs the directory picker, a single file the save-file picker; a
+    // browser without the matching picker falls through to "memory".
+    const strategy = chooseReceiveStrategy({
+      itemCount: off.items.length,
+      large,
+      fs: detectFsAccessSupport(window),
+    });
 
     let target: AcceptTarget | undefined;
-    if (canStream) {
+    if (strategy !== "memory") {
       // Prompt FROM the accept user-gesture (we haven't awaited anything yet).
       // If the user dismisses the picker (AbortError) we fall back to in-memory.
       try {
-        if (off.items.length > 1) {
+        if (strategy === "disk-dir") {
           const dirHandle = await fs.showDirectoryPicker!();
           target = { dirHandle };
         } else {
