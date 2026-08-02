@@ -38,7 +38,7 @@ import {
 } from "./peer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
-import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSupported } from "./opfsStage";
+import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSinkWithIdbFallback, opfsSupported } from "./opfsStage";
 import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
 import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
 import { supportedCodecs } from "./compress";
@@ -436,6 +436,12 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           const e = key ? receiveRegRef.current.get(key) : undefined;
           const room = codeRef.current;
           if (e?.ledger && key && room) {
+            // Keep the ledger row's sinkKind in step with the sink that ACTUALLY
+            // holds the bytes: an OPFS receive that fell back to IDB (#170) reports
+            // activeKind "idb", so a reload reconstructs an idbSink over the IDB
+            // rows rather than probing an OPFS file that was never written.
+            const liveKind = (e.sink as { activeKind?: LedgerSinkKind }).activeKind;
+            if (liveKind) e.ledger.sinkKind = liveKind;
             void putRxLedger({
               key,
               room,
@@ -817,7 +823,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         const fh = target.fileHandle;
         sink = diskSink(async () => fh.createWritable());
       } else if (useOpfs) {
-        sink = opfsSink(it.id, it.mime); // large, no FS Access -> OPFS (streams in place)
+        // large, no FS Access -> OPFS (streams in place), with a runtime fallback
+        // to IDB staging if the OPFS sync access handle is unavailable and the sink
+        // poisons before acking a single byte (issue #170). The fallback keeps the
+        // receive alive on the exact browsers the IDB last-resort targets.
+        sink = opfsSinkWithIdbFallback(it.id, it.mime);
       } else if (useIdb) {
         sink = idbSink(it.id, it.mime); // large, no OPFS -> IDB staging (last resort)
       } else {

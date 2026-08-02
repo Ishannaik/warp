@@ -45,6 +45,7 @@
  */
 
 import type { ReceiveSink } from "./receiveController";
+import { idbSink } from "./idbStage";
 
 /** Every staging file is named with this prefix so GC can find and prune orphans. */
 const STAGE_PREFIX = "warp-stage-";
@@ -420,4 +421,142 @@ export async function gcOrphanOpfs(ttlMs = 24 * 60 * 60 * 1000): Promise<void> {
   } catch {
     /* OPFS unavailable — nothing to prune */
   }
+}
+
+/** Which durable sink is currently carrying a fallback receive (issue #170). */
+export type StageKind = "opfs" | "idb";
+
+/**
+ * A ReceiveSink that also reports which backing store is durable right now, so the
+ * hook can keep its reload-resume ledger row's `sinkKind` consistent across an
+ * OPFS→IDB fallback (a reload must reconstruct the SAME kind of sink that actually
+ * holds the bytes).
+ */
+export interface FallbackReceiveSink extends ReceiveSink {
+  /** `'opfs'` until the primary poisons at 0 durable bytes, then `'idb'`. */
+  readonly activeKind: StageKind;
+}
+
+/**
+ * OPFS sink with a runtime IndexedDB fallback (issue #170).
+ *
+ * `opfsSupported()` gates on `getDirectory` + `Worker`, but the ACTUAL requirement —
+ * `FileSystemSyncAccessHandle` — is Worker-only and can't be probed synchronously.
+ * On a stack that passes the gate yet fails `createSyncAccessHandle()` (early
+ * Safari 15.2–15.3 before the sync handle shipped, or any browser/OS that throws on
+ * handle creation), a plain `opfsSink` poisons on its first write and the receive
+ * dies honestly at file-end — losing a transfer the IDB last-resort could have
+ * completed (research-2026-07 §4/P1: "keep idbStage.ts as the last resort for
+ * browsers without OPFS sync access").
+ *
+ * This wrapper closes that gap for the common, safe case: it delegates to the OPFS
+ * sink, but if OPFS poisons BEFORE acking a single byte (`bytesWritten === 0`, i.e.
+ * the open / first write itself failed) it reconstructs the receive on
+ * `idbSink(fileId, mime, 0)` and replays the chunks it buffered, so the sender's
+ * live stream continues uninterrupted and the file completes on IDB.
+ *
+ * Why buffer + replay is safe and bounded:
+ *   - Chunks are buffered ONLY until OPFS proves healthy (acks its first byte) or
+ *     poisons at 0. A healthy OPFS acks the first write within a few ms, so the
+ *     buffer holds at most the handful of chunks that arrived before that ack; once
+ *     `committed` it is dropped and never refilled. A broken OPFS rejects the open
+ *     fast, so the fallback buffer is small too.
+ *   - Fallback happens ONLY at `bytesWritten === 0`. Once OPFS has durably acked any
+ *     bytes, a later failure is an honest error (no fallback): moving an acked
+ *     prefix to IDB would require a full re-request from offset 0, which the issue
+ *     scopes out as not worth the complexity for a quota-style failure. The H1
+ *     invariant (never trust an unverified byte) is preserved either way.
+ *   - Fallback is disabled for a resumed receive (`startOffset > 0`): the surviving
+ *     prefix lives in the OPFS file, not IDB, so it can't be reconstructed there.
+ *     Such a sink behaves exactly like a plain `opfsSink` (honest error on poison).
+ *
+ * `makeIdb` is injectable so the check harness can assert the switch without a real
+ * IndexedDB; it defaults to the production `idbSink`.
+ */
+export function opfsSinkWithIdbFallback(
+  fileId: string,
+  mime?: string,
+  startOffset = 0,
+  makeWriter: (name: string, startOffset: number) => OpfsWriter = workerWriter,
+  makeIdb: (fileId: string, mime?: string, startOffset?: number) => ReceiveSink = idbSink,
+): FallbackReceiveSink {
+  const primary = opfsSink(fileId, mime, startOffset, makeWriter);
+  const canFallBack = startOffset === 0;
+  let secondary: ReceiveSink | null = null;
+  let kind: StageKind = "opfs";
+  let committed = false; // OPFS acked >0 bytes -> proven healthy; stop buffering
+  let buffer: ArrayBuffer[] = [];
+  let chain: Promise<void> = Promise.resolve();
+
+  const active = (): ReceiveSink => secondary ?? primary;
+
+  return {
+    get bytesWritten() {
+      return active().bytesWritten;
+    },
+    get failed() {
+      return active().failed;
+    },
+    get activeKind() {
+      return kind;
+    },
+    append(buf) {
+      chain = chain.then(async () => {
+        if (secondary) {
+          secondary.append(buf);
+          await secondary.quiesce();
+          return;
+        }
+        primary.append(buf);
+        if (committed) return; // OPFS healthy: it owns the bytes, no replay copy kept
+        buffer.push(buf);
+        await primary.quiesce(); // let OPFS's own chain ack or poison this append
+        if (primary.bytesWritten > 0) {
+          committed = true;
+          buffer = []; // OPFS holds these durably; drop the replay copy
+        } else if (canFallBack && primary.failed) {
+          // OPFS failed before acking a single byte -> rebuild on IDB and replay.
+          secondary = makeIdb(fileId, mime, 0);
+          kind = "idb";
+          for (const b of buffer) secondary.append(b);
+          buffer = [];
+          void primary.abort(); // free the empty OPFS staging file now, not at TTL
+          await secondary.quiesce();
+        }
+      });
+    },
+    async quiesce() {
+      try {
+        await chain;
+      } catch {
+        /* poison/fallback already recorded on the active sink */
+      }
+      await active().quiesce();
+    },
+    async finalize() {
+      await this.quiesce();
+      return active().finalize();
+    },
+    async abort() {
+      try {
+        await chain;
+      } catch {
+        /* ignore */
+      }
+      // Abort BOTH: the OPFS staging file (even if poisoned/empty) and the IDB rows
+      // if we fell back, so a cancel frees everything instead of leaking to the TTL.
+      try {
+        await primary.abort();
+      } catch {
+        /* ignore */
+      }
+      if (secondary) {
+        try {
+          await secondary.abort();
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  };
 }

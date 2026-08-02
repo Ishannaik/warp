@@ -23,7 +23,7 @@ Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true,
 class FakeWorker {}
 globalThis.Worker = FakeWorker;
 
-let opfsSupported, opfsSink, opfsDurableLength;
+let opfsSupported, opfsSink, opfsDurableLength, opfsSinkWithIdbFallback;
 try {
   const esbuild = await import("esbuild");
   const url = await import("node:url");
@@ -37,7 +37,7 @@ try {
     platform: "neutral",
   });
   const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
-  ({ opfsSupported, opfsSink, opfsDurableLength } = await import(dataUrl));
+  ({ opfsSupported, opfsSink, opfsDurableLength, opfsSinkWithIdbFallback } = await import(dataUrl));
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
@@ -388,4 +388,148 @@ assert.equal(opfsSupported(), true, "e2e rig: opfsSupported sees getDirectory + 
   assert.equal(await opfsDurableLength("never-staged"), undefined, "e2e: a missing staging file reads as undefined");
 }
 
-console.log("OK: opfsStage feature detection + durable-write accounting + poison-on-failure + real-worker e2e + reload-resume");
+// --- issue #170: runtime OPFS -> IDB fallback ------------------------------------
+//
+// opfsSupported() can pass (getDirectory + Worker) yet createSyncAccessHandle() can
+// still fail at runtime (early Safari 15.2-15.3, or a stack that throws on handle
+// creation). A plain opfsSink then poisons and the receive dies honestly at
+// file-end, losing a transfer the IDB last-resort could have completed. The fallback
+// sink reconstructs on IDB when OPFS poisons BEFORE acking a byte, replays the
+// buffered chunks, and reports the switch via activeKind so the hook's ledger row
+// stays consistent. These cases inject a fake OPFS writer (to force the failure) and
+// a fake IDB sink (to observe the switch without a real IndexedDB).
+
+// A minimal in-memory stand-in for idbSink: records that it was used so the tests
+// can assert the replay + finalize landed on the fallback, not OPFS.
+function fakeIdbSink(record) {
+  const chunks = [];
+  let bytes = 0;
+  return {
+    get bytesWritten() {
+      return bytes;
+    },
+    get failed() {
+      return false;
+    },
+    append(b) {
+      record.appends += 1;
+      chunks.push(Buffer.from(b));
+      bytes += b.byteLength;
+    },
+    async quiesce() {},
+    async finalize() {
+      record.finalized = true;
+      return new Blob(chunks);
+    },
+    async abort() {
+      record.aborted = true;
+      chunks.length = 0;
+    },
+  };
+}
+
+// 170a: OPFS open/first-write fails at 0 durable bytes -> fall back to IDB, replay
+// the buffered chunks, and COMPLETE the receive (no honest error, no lost transfer).
+{
+  let opfsWriter;
+  const idbRecord = { appends: 0, finalized: false, aborted: false };
+  const sink = opfsSinkWithIdbFallback(
+    "fb-1",
+    "text/plain",
+    0,
+    (name) => (opfsWriter = fakeWriter({ failAllWrites: true })),
+    () => fakeIdbSink(idbRecord),
+  );
+  assert.equal(sink.activeKind, "opfs", "170a: starts on OPFS");
+  sink.append(buf("hello ")); // OPFS rejects -> poison at 0 -> fallback + replay
+  sink.append(buf("world")); // lands on IDB
+  await sink.quiesce();
+  assert.equal(sink.activeKind, "idb", "170a: a poison at 0 durable bytes switches activeKind to idb");
+  assert.equal(sink.failed, false, "170a: the fallback sink is NOT failed (the receive survives)");
+  assert.equal(sink.bytesWritten, 11, "170a: bytesWritten reflects the IDB-replayed bytes");
+  assert.equal(idbRecord.appends, 2, "170a: BOTH chunks (the buffered one + the later one) reached IDB");
+  assert.equal(opfsWriter.state.removed, true, "170a: the empty OPFS staging file is freed on fallback");
+  const blob = await sink.finalize();
+  assert.equal(await blob.text(), "hello world", "170a: finalize reassembles the full file from IDB");
+  assert.equal(idbRecord.finalized, true, "170a: finalize went to the IDB sink");
+}
+
+// 170b: OPFS acks some bytes, THEN fails -> NO fallback (honest error). Moving an
+// acked prefix to IDB would need a full re-request from 0, which #170 scopes out.
+{
+  const idbRecord = { appends: 0, finalized: false, aborted: false };
+  const sink = opfsSinkWithIdbFallback(
+    "fb-2",
+    undefined,
+    0,
+    () => fakeWriter({ failAfter: 1 }),
+    () => fakeIdbSink(idbRecord),
+  );
+  sink.append(buf("AB")); // acks -> 2 durable bytes -> OPFS proven healthy, committed
+  sink.append(buf("CD")); // fails -> poison AFTER acked bytes
+  await sink.quiesce();
+  assert.equal(sink.activeKind, "opfs", "170b: a failure after acked bytes does NOT switch to IDB");
+  assert.equal(sink.failed, true, "170b: a mid-stream OPFS failure is an honest error");
+  assert.equal(sink.bytesWritten, 2, "170b: only the durably-acked prefix is counted (H1)");
+  assert.equal(idbRecord.appends, 0, "170b: nothing was replayed to IDB");
+}
+
+// 170c: healthy OPFS never falls back and never buffers after the first ack.
+{
+  const idbRecord = { appends: 0, finalized: false, aborted: false };
+  const sink = opfsSinkWithIdbFallback(
+    "fb-3",
+    "text/plain",
+    0,
+    () => fakeWriter(),
+    () => fakeIdbSink(idbRecord),
+  );
+  sink.append(buf("data"));
+  await sink.quiesce();
+  assert.equal(sink.activeKind, "opfs", "170c: a healthy OPFS sink stays on OPFS");
+  assert.equal(idbRecord.appends, 0, "170c: IDB is never touched when OPFS works");
+  assert.equal(sink.bytesWritten, 4, "170c: bytes land on OPFS");
+  const blob = await sink.finalize();
+  assert.equal(await blob.text(), "data", "170c: finalize reads from OPFS");
+}
+
+// 170d: a RESUMED receive (startOffset > 0) must NOT fall back — its prefix lives in
+// the OPFS file, not IDB, so it can't be reconstructed there. Behaves like a plain
+// opfsSink: an OPFS failure is an honest error.
+{
+  const idbRecord = { appends: 0, finalized: false, aborted: false };
+  const sink = opfsSinkWithIdbFallback(
+    "fb-4",
+    undefined,
+    100, // resumed offset -> fallback disabled
+    () => fakeWriter({ failAllWrites: true }),
+    () => fakeIdbSink(idbRecord),
+  );
+  assert.equal(sink.bytesWritten, 100, "170d: a resumed sink reports from the durable offset");
+  sink.append(buf("tail"));
+  await sink.quiesce();
+  assert.equal(sink.activeKind, "opfs", "170d: a resumed receive never switches to IDB");
+  assert.equal(sink.failed, true, "170d: an OPFS failure on a resumed receive is an honest error");
+  assert.equal(idbRecord.appends, 0, "170d: nothing is replayed to IDB for a resumed receive");
+}
+
+// 170e: abort after a fallback frees BOTH the OPFS staging file and the IDB rows.
+{
+  let opfsWriter;
+  const idbRecord = { appends: 0, finalized: false, aborted: false };
+  const sink = opfsSinkWithIdbFallback(
+    "fb-5",
+    undefined,
+    0,
+    (name) => (opfsWriter = fakeWriter({ failAllWrites: true })),
+    () => fakeIdbSink(idbRecord),
+  );
+  sink.append(buf("x"));
+  await sink.quiesce();
+  assert.equal(sink.activeKind, "idb", "170e: fell back to IDB");
+  await sink.abort();
+  assert.equal(opfsWriter.state.removed, true, "170e: abort removes the OPFS staging file");
+  assert.equal(idbRecord.aborted, true, "170e: abort frees the IDB rows too");
+}
+
+console.log("OK: opfsStage feature detection + durable-write accounting + poison-on-failure + real-worker e2e + reload-resume + #170 OPFS->IDB fallback");

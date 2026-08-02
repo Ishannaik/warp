@@ -551,6 +551,39 @@ incoming = null;
 await handleOffer(rp2.remoteId, { batchId: "rl2", items: [{ id: "z2", key: "vid.mp4|50|8", size: 50, resumeToken: "tok-S" }] });
 assert(incoming && incoming.batchId === "rl2", "an OPFS file with an unreadable length restarts via the accept modal");
 
+// 8. Ledger sinkKind stays consistent across an OPFS -> IDB fallback (issue #170).
+// The progress upsert reads the sink's live `activeKind` and syncs the ledger row's
+// sinkKind to it BEFORE writing, so a reload reconstructs the SAME kind of sink that
+// actually holds the bytes. resolveLedgerKind mirrors the hook's upsert 1:1.
+function resolveLedgerKind(ledger, sink) {
+  const liveKind = sink.activeKind;
+  if (liveKind) ledger.sinkKind = liveKind;
+  return ledger.sinkKind;
+}
+
+// A receive that fell back to IDB reports activeKind "idb": the row seeded "opfs"
+// at accept time must flip to "idb" so a reload builds an idbSink over the IDB rows.
+{
+  const ledger = { sinkKind: "opfs" };
+  const fellBack = { activeKind: "idb", bytesWritten: 40 };
+  assert(resolveLedgerKind(ledger, fellBack) === "idb", "a fallback sink flips the ledger row opfs -> idb");
+  assert(ledger.sinkKind === "idb", "the registry ledger object is synced in place");
+}
+
+// A healthy OPFS receive keeps the row "opfs".
+{
+  const ledger = { sinkKind: "opfs" };
+  const healthy = { activeKind: "opfs", bytesWritten: 40 };
+  assert(resolveLedgerKind(ledger, healthy) === "opfs", "a healthy OPFS sink keeps the ledger row opfs");
+}
+
+// A plain sink (memory/disk/IDB, no activeKind) leaves the row untouched.
+{
+  const ledger = { sinkKind: "idb" };
+  const plain = { bytesWritten: 40 }; // no activeKind property
+  assert(resolveLedgerKind(ledger, plain) === "idb", "a sink without activeKind leaves the ledger row unchanged");
+}
+
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
