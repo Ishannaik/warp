@@ -355,4 +355,27 @@ const store = () => db.stores.get("staging");
   );
 }
 
-console.log("OK: idbSink write path — durable bytesWritten, ordered finalize, prefix isolation, abort, poison, TTL GC, reload startOffset, idbDurableLength contiguity");
+// --- 8. finalize() walks a cursor, not getAll(): many rows reassemble in order ---
+// finalize() used to getAll() the file's whole prefix range, deserializing every
+// staging row into RAM at once — the memory spike this module exists to avoid on
+// the iOS/Firefox fallback. It now walks a cursor, accumulating only the file-backed
+// Blob parts. Pin that the cursor path still reassembles a MANY-row file byte-exact
+// and in key (offset) order, so a regression to an unordered/lossy walk fails here.
+{
+  const ROWS = 512;
+  const s = idbSink("dl-many", "application/octet-stream");
+  const expected = [];
+  for (let i = 0; i < ROWS; i += 1) {
+    const byte = (i * 13 + 1) & 0xff;
+    expected.push(byte);
+    s.append(new Uint8Array([byte]).buffer);
+  }
+  await s.quiesce();
+  assert.equal(store().records.filter((r) => r.value.fileId === "dl-many").length, ROWS, "every chunk staged");
+  const blob = await s.finalize();
+  assert.equal(blob.size, ROWS, "finalize reassembles all rows via the cursor walk");
+  assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), new Uint8Array(expected), "cursor finalize preserves byte-exact offset order");
+  assert.equal(store().records.filter((r) => r.value.fileId === "dl-many").length, 0, "cursor finalize clears the rows");
+}
+
+console.log("OK: idbSink write path — durable bytesWritten, ordered finalize (cursor walk), prefix isolation, abort, poison, TTL GC, reload startOffset, idbDurableLength contiguity");

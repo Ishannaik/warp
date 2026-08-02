@@ -165,17 +165,30 @@ export function idbSink(fileId: string, mime?: string, startOffset = 0): Receive
       await this.quiesce();
       if (failed) return new Blob([], mime ? { type: mime } : undefined);
       const d = await db();
-      const rows = (await reqDone(tx(d, "readonly").getAll(fileRange(fileId)))) as Array<{
-        fileId: string;
-        offset: number;
-        blob: Blob;
-      }>;
-      // Already scoped to this file and returned in key order; sort defensively.
-      const mine = rows.sort((a, b) => a.offset - b.offset);
-      const blob = new Blob(
-        mine.map((r) => r.blob),
-        mime ? { type: mime } : undefined,
-      );
+      // Walk the file's exact prefix range with a cursor instead of `getAll()`.
+      // A multi-GB receive stages tens of thousands of chunk rows, and `getAll()`
+      // would deserialize EVERY row object (fileId/offset/ts plus the Blob) into
+      // RAM at once just to pluck out the Blobs — the exact memory spike this
+      // module exists to avoid (see gcOrphanStaging's cursor rationale, and the
+      // iOS jetsam ceiling in the header). The cursor yields one record at a time
+      // in ascending key order — which IS offset order for the compound
+      // [fileId, offset] key — so we accumulate only the file-backed Blob parts
+      // (cheap metadata, not bytes) and let each row's other fields be reclaimed.
+      const parts: Blob[] = [];
+      await new Promise<void>((resolve, reject) => {
+        const req = tx(d, "readonly").openCursor(fileRange(fileId));
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          parts.push((cursor.value as { blob: Blob }).blob);
+          cursor.continue();
+        };
+        req.onerror = () => reject(req.error);
+      });
+      const blob = new Blob(parts, mime ? { type: mime } : undefined);
       await clearFile(d, fileId); // staging done -> free the quota
       return blob;
     },
