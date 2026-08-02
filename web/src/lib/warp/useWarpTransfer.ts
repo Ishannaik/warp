@@ -44,6 +44,7 @@ import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./re
 import { supportedCodecs } from "./compress";
 import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
+import { SpeedTracker } from "./transferStats";
 
 /**
  * One in-flight (or paused) incoming file's durable state, owned by the HOOK
@@ -122,6 +123,24 @@ export interface WarpError {
   message: string;
 }
 
+/**
+ * Live throughput readout for the session, computed CLIENT-SIDE from the items'
+ * progress (the signaling relay never sees a byte). Aggregated across every
+ * in-flight file, both directions — in a mesh room several files may move at
+ * once, so the figure is the sum of their throughput. `etaSeconds` is null
+ * until the smoothed speed is stable enough to divide remaining bytes by.
+ */
+export interface TransferStats {
+  /** True while at least one file is actively transferring. */
+  active: boolean;
+  /** Smoothed throughput in bytes/second (0 before it stabilizes / on a stall). */
+  speedBps: number;
+  /** Seconds remaining at the current speed, or null when not yet computable. */
+  etaSeconds: number | null;
+  /** Bytes still to move across the active files (for the UI's own labels). */
+  remainingBytes: number;
+}
+
 export interface UseWarpTransfer {
   mode: WarpMode;
   code: string | null;
@@ -137,6 +156,8 @@ export interface UseWarpTransfer {
   /** A pending offer from a peer awaiting accept/decline (tagged peerId), or null. */
   incoming: IncomingOffer | null;
   error: WarpError | null;
+  /** Live throughput + ETA across the in-flight files (client-side only). */
+  stats: TransferStats;
   /** Sender: open a fresh room and wait for peers. */
   createRoom: () => void;
   /** Offer files to EVERY connected device (each gated by that device's accept).
@@ -243,6 +264,14 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   const peersListRef = useRef<string[]>([]);
   /** Current room code, for stamping ledger rows from long-lived listeners. */
   const codeRef = useRef<string | null>(joinCode ?? null);
+  /** Rolling-window throughput sampler fed by the aggregate progress ticks. */
+  const speedRef = useRef(new SpeedTracker());
+  const [stats, setStats] = useState<TransferStats>({
+    active: false,
+    speedBps: 0,
+    etaSeconds: null,
+    remainingBytes: 0,
+  });
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
@@ -521,6 +550,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       setError(null);
       setConnections([]);
       setStatus("connecting");
+      speedRef.current.reset(); // a fresh session starts its speed window clean
 
       const sig = new SignalingClient();
       signalingRef.current = sig;
@@ -1043,6 +1073,32 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     void gcRxLedger();
   }, []);
 
+  // Live speed + ETA: on every progress tick, feed the aggregate bytes-in-flight
+  // into the rolling-window sampler and republish a client-side throughput
+  // readout. Aggregating across items means a mesh room moving several files at
+  // once reports their COMBINED speed; the sampler's window smooths chunk bursts
+  // and self-heals after a stall. Runs only while something is transferring, so
+  // an idle session publishes a single inactive readout and then stops.
+  useEffect(() => {
+    const active = items.filter(
+      (t) => t.kind === "file" && (t.status === "transferring" || t.status === "reconnecting"),
+    );
+    if (!active.length) {
+      speedRef.current.reset();
+      setStats((s) =>
+        s.active ? { active: false, speedBps: 0, etaSeconds: null, remainingBytes: 0 } : s,
+      );
+      return;
+    }
+    const transferred = active.reduce((sum, t) => sum + t.transferred, 0);
+    const remaining = active.reduce((sum, t) => sum + Math.max(0, t.size - t.transferred), 0);
+    const tracker = speedRef.current;
+    tracker.add(transferred);
+    const speedBps = tracker.speed();
+    const etaSeconds = tracker.etaSeconds(remaining);
+    setStats({ active: true, speedBps, etaSeconds, remainingBytes: remaining });
+  }, [items]);
+
   /**
    * Reload-resume (#36): repopulate the receive registry from the durable ledger so
    * an accidental tab reload doesn't restart a large receive from zero. The sender
@@ -1152,6 +1208,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     items,
     incoming,
     error,
+    stats,
     createRoom,
     sendFiles,
     sendText,

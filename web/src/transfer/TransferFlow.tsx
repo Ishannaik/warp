@@ -201,6 +201,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 peerLabel={peerLabel}
                 connections={connections}
                 items={items}
+                stats={wrap.stats}
                 onSendFiles={wrap.sendFiles}
                 onSendText={wrap.sendText}
                 onCancel={wrap.cancel}

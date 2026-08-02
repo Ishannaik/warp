@@ -25,7 +25,8 @@ import {
   type TransferItem,
 } from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
-import type { Connection } from "../lib/warp/useWarpTransfer";
+import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
+import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
 
 const MONO = "'JetBrains Mono',monospace";
@@ -1024,6 +1025,83 @@ function DeviceChip({ label, connected }: { label: string; connected: boolean })
   );
 }
 
+/* ------------------------------------------------------------ stats strip */
+
+/**
+ * Live throughput readout shown while bytes are in flight: smoothed speed on
+ * the left, ETA on the right, with the bytes still to move between them. The
+ * hook aggregates every active file (both directions), so a mesh room moving
+ * several files at once sees one combined figure. Speed shows "—" until the
+ * rolling window has enough samples; ETA shows "calculating…" until the speed
+ * is stable enough to divide the remainder by — no garbage or Infinity.
+ */
+function StatsStrip({ stats, isMobile }: { stats: TransferStats; isMobile: boolean }) {
+  if (!stats.active) return null;
+  const speed = stats.speedBps > 0 ? formatSpeed(stats.speedBps) : "—";
+  const eta =
+    stats.etaSeconds !== null && stats.etaSeconds > 0 ? `~${formatDuration(stats.etaSeconds)} left` : "calculating…";
+  const cell: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "4px",
+    minWidth: 0,
+  };
+  const label: CSSProperties = {
+    fontFamily: MONO,
+    fontSize: "9.5px",
+    letterSpacing: ".18em",
+    textTransform: "uppercase",
+    color: "#6f6a5d",
+  };
+  const value: CSSProperties = {
+    fontFamily: MONO,
+    fontSize: isMobile ? "14px" : "15px",
+    fontWeight: 600,
+    letterSpacing: ".02em",
+    color: "#efe9da",
+    whiteSpace: "nowrap",
+  };
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: isMobile ? "14px" : "22px",
+        padding: isMobile ? "11px 14px" : "12px 16px",
+        border: `1px solid ${HAIRLINE}`,
+        background: "rgba(var(--acc-rgb),.05)",
+      }}
+    >
+      <span
+        style={{
+          width: "7px",
+          height: "7px",
+          flexShrink: 0,
+          background: "var(--amb)",
+          animation: "warpBlink 1.1s steps(1) infinite",
+        }}
+      />
+      <span style={cell}>
+        <span style={label}>Speed</span>
+        <span style={{ ...value, color: "var(--amb)" }}>{speed}</span>
+      </span>
+      <span style={{ ...cell, marginLeft: "auto", alignItems: "flex-end" }}>
+        <span style={label}>Left to move</span>
+        <span style={{ ...value, fontSize: isMobile ? "12.5px" : "13px", color: "#a8a293" }}>
+          {formatBytes(stats.remainingBytes)}
+        </span>
+      </span>
+      <span style={{ ...cell, alignItems: "flex-end" }}>
+        <span style={label}>ETA</span>
+        <span style={value}>{eta}</span>
+      </span>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- session view */
 
 /**
@@ -1041,6 +1119,7 @@ export function SessionView({
   onDownloadAll,
   isMobile,
   heading = "Session open",
+  stats,
   pending,
   onAddFiles,
   onRemovePending,
@@ -1056,6 +1135,8 @@ export function SessionView({
   onDownloadAll: () => void;
   isMobile: boolean;
   heading?: string;
+  /** Live speed + ETA readout (from useWarpTransfer); omitted = no strip. */
+  stats?: TransferStats;
   /** Files staged but not yet offered. Editable until onSendPending fires. */
   pending?: PendingFile[];
   /** Add picked/dropped files to the pending queue. */
@@ -1152,6 +1233,8 @@ export function SessionView({
           )}
         </span>
       </div>
+
+      {stats && <StatsStrip stats={stats} isMobile={isMobile} />}
 
       <Composer
         onSendFiles={onSendFiles}
