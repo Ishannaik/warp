@@ -1280,8 +1280,21 @@ export class WarpPeer {
    * JUST that one piece. The `piece` control frame and the piece bytes are sent
    * back-to-back with no await between, so the ordered channel delivers them
    * adjacently and the receiver routes the binary to injectPiece (not the
-   * sequential path). Best-effort: a closed channel or unreadable file is a no-op
-   * (the receiver's own timeout/error path handles an unanswered request).
+   * sequential path).
+   *
+   * Liveness: a receiver that asked for a piece holds EVERY other byte and has
+   * usually already seen `file-end` — it sits with a stuck verifier waiting on
+   * exactly this answer (finishIncoming defers completion until the verifier is
+   * done). A silent no-op here would therefore strand it FOREVER: no error, no
+   * timeout, a transfer frozen at ~99% with no way out but a manual cancel. So
+   * when we genuinely cannot produce the piece (the picked File's backing
+   * disappeared and the slice read throws), we fail the file HONESTLY with an
+   * in-band cancel instead — the receiver tears the partial down through the
+   * well-tested cancel path rather than hanging. Within this codebase the read
+   * essentially never fails (a session-lived File handle); this closes the
+   * theoretical hole the old "best-effort no-op" comment hand-waved away.
+   * (Spurious requests — unknown id, negative/out-of-range index — still no-op:
+   * no legitimate receiver is waiting on those, so there is nothing to strand.)
    */
   private async answerPieceRequest(id: string, index: number): Promise<void> {
     const entry = this.manifestSends.get(id);
@@ -1293,6 +1306,8 @@ export class WarpPeer {
     try {
       bytes = await file.slice(start, Math.min(start + pieceSize, file.size)).arrayBuffer();
     } catch {
+      const ch = this.channel;
+      if (ch && ch.readyState === "open") this.send(ch, { t: "cancel", id });
       return;
     }
     const ch = this.channel;

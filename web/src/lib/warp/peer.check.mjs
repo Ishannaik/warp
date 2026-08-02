@@ -815,6 +815,106 @@ bigFile.slice = Blob.prototype.slice;
   await tSendP;
 }
 
+// --- piece manifest (#137) liveness: an unanswerable re-request cancels, not hangs
+// A receiver that re-requests a piece holds every other byte and (usually) file-end
+// already — it waits on exactly that answer with a stuck verifier. If the sender
+// CANNOT re-read the piece (the picked File's backing vanished), the old code
+// silently no-op'd and the receiver froze forever at ~99% with no error. The fix
+// fails the file honestly with an in-band cancel. Here we corrupt piece 2 in transit
+// (forcing a re-request) AND make the sender's piece-2 re-read throw; the receiver
+// must be cancelled — never left to hang, never a bogus file-received.
+{
+  const PIECE = 256 * 1024;
+  const N = 5 * PIECE;
+  const bytes = new Uint8Array(N);
+  for (let i = 0; i < N; i += 1) bytes[i] = (i * 7 + 3) & 0xff;
+  const lfile = new Blob([bytes], { type: "application/octet-stream" });
+  lfile.name = "liveness.bin";
+  const origSlice = Blob.prototype.slice;
+  lfile.slice = origSlice;
+
+  const lSender = new WarpPeer(sig, "live-remote", true);
+  const lReceiver = new WarpPeer(sig, "live-local", false);
+  const lSenderCh = lSender.pc.localChannel;
+  const lReceiverCh = new FakeChannel();
+  lSenderCh.peer = lReceiverCh;
+  lReceiverCh.peer = lSenderCh;
+  lReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: lReceiverCh }));
+
+  const CORRUPT_INDEX = 2;
+  let forwardBinaries = 0;
+  let resendNext = false;
+  let corrupted = 0;
+  let senderCancels = 0;
+  const lRawSend = lSenderCh.send.bind(lSenderCh);
+  lSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-begin") {
+        // The manifest is already built (manifestFromFile ran before file-begin was
+        // sent). From here on, make the sender's piece-2 RE-READ fail — as if the
+        // File's backing disappeared — while leaving the forward stream (slice(0,N),
+        // s===0) and every other piece's read intact.
+        lfile.slice = function (s, e) {
+          if (s === CORRUPT_INDEX * PIECE) {
+            return { arrayBuffer: async () => { throw new Error("backing file gone"); } };
+          }
+          return origSlice.call(this, s, e);
+        };
+      }
+      if (msg.t === "piece") resendNext = true;
+      if (msg.t === "cancel") senderCancels += 1;
+      return lRawSend(d);
+    }
+    if (resendNext) {
+      resendNext = false;
+      return lRawSend(d);
+    }
+    const idx = (forwardBinaries += 1);
+    if (idx - 1 === CORRUPT_INDEX) {
+      const src = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d);
+      const bad = new Uint8Array(src);
+      bad[10] ^= 0xff;
+      corrupted += 1;
+      return lRawSend(bad.buffer);
+    }
+    return lRawSend(d);
+  };
+
+  let pieceRequests = 0;
+  const lRawRSend = lReceiverCh.send.bind(lReceiverCh);
+  lReceiverCh.send = (d) => {
+    if (typeof d === "string" && JSON.parse(d).t === "piece-request") pieceRequests += 1;
+    return lRawRSend(d);
+  };
+
+  let bogusReceive = false;
+  const offRecv = lReceiver.on("file-received", () => { bogusReceive = true; });
+
+  const lOfferSeen = waitFor(lReceiver, "incoming-offer");
+  const lSendP = lSender.offerFiles([lfile]);
+  const lOffer = await lOfferSeen;
+  const lCancelled = waitFor(lReceiver, "cancelled");
+  lReceiver.acceptOffer(lOffer.batchId);
+
+  // The receiver must be cancelled — not hang. A timeout here means the old hang.
+  const cancelInfo = await Promise.race([
+    lCancelled,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("unanswerable piece-request HUNG the receiver")), 5000)),
+  ]);
+
+  assert.equal(corrupted, 1, "the harness corrupted exactly one forward piece");
+  assert.equal(pieceRequests, 1, "the receiver re-requested the corrupt piece");
+  assert.equal(senderCancels, 1, "the sender answered the failed re-read with an honest cancel");
+  assert.ok(cancelInfo && cancelInfo.id, "the receiver tore the partial down via the cancel path");
+  assert.equal(bogusReceive, false, "no file-received fired for a file whose piece could not be re-read");
+
+  offRecv();
+  lSenderCh.send = lRawSend;
+  lReceiverCh.send = lRawRSend;
+  await lSendP;
+}
+
 console.log(
-  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request (#137) passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request + unanswerable-piece liveness (#137) passed",
 );
