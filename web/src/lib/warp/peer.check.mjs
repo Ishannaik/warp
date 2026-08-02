@@ -780,6 +780,178 @@ bigFile.slice = Blob.prototype.slice;
   await mSendP;
 }
 
+// --- resumed receive verifies its tail (#171 / research P5) ---------------------
+// A resumed receive used to fall back to the legacy trust-the-stream path for its
+// ENTIRE tail (the sender only sent a manifest at offset 0, the receiver only built
+// a verifier at offset 0). Now the sender caches the manifest from a fresh send and
+// re-includes it on a resumed file-begin, and the receiver seeds a verifier at the
+// piece boundary, so a corrupt tail piece is re-requested by index, not trusted.
+{
+  const PIECE = 256 * 1024;
+  const N = 5 * PIECE; // 1.25 MiB -> 5 pieces
+  const bytes = new Uint8Array(N);
+  for (let i = 0; i < N; i += 1) bytes[i] = (i * 13 + 5) & 0xff;
+  const rfile = new Blob([bytes], { type: "application/octet-stream" });
+  rfile.name = "resume.bin";
+  rfile.slice = Blob.prototype.slice;
+
+  const RESUME = 2 * PIECE; // piece-aligned resume offset (2 pieces in, 3-piece tail)
+  let prefix = new Uint8Array(0); // offer 1 is fresh; swapped to the partial for offer 2
+
+  // A sink that already holds `prefix` (the durable bytes a resumed receive has),
+  // appends the verified tail, and finalizes to prefix+tail — mirroring what the
+  // hook reconstructs over a durable partial (#36/#169), at the engine seam.
+  const prefixSink = (pre) => {
+    const chunks = [];
+    let n = pre.byteLength;
+    return {
+      get bytesWritten() {
+        return n;
+      },
+      get failed() {
+        return false;
+      },
+      append(buf) {
+        chunks.push(new Uint8Array(buf));
+        n += buf.byteLength;
+      },
+      async quiesce() {},
+      async finalize() {
+        const out = new Uint8Array(n);
+        out.set(pre, 0);
+        let off = pre.byteLength;
+        for (const c of chunks) {
+          out.set(c, off);
+          off += c.byteLength;
+        }
+        return new Blob([out]);
+      },
+      async abort() {
+        chunks.length = 0;
+      },
+    };
+  };
+  let liveSink = null;
+  const host = {
+    begin() {
+      liveSink = prefixSink(prefix);
+      return liveSink;
+    },
+    get() {
+      return liveSink;
+    },
+    savedName() {
+      return undefined;
+    },
+    end() {},
+  };
+
+  const rSender = new WarpPeer(sig, "res-remote", true);
+  const rReceiver = new WarpPeer(sig, "res-local", false, host);
+  const rSenderCh = rSender.pc.localChannel;
+  const rReceiverCh = new FakeChannel();
+  rSenderCh.peer = rReceiverCh;
+  rReceiverCh.peer = rSenderCh;
+  rReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: rReceiverCh }));
+
+  // Wire spy: capture each file-begin's manifest; during offer 2 corrupt the FIRST
+  // forward tail piece and deliver the targeted re-send intact.
+  const begins = [];
+  let armCorrupt = false;
+  let resendNext = false;
+  let corrupted = 0;
+  let tailBinaries = 0;
+  let offer2BinaryBytes = 0;
+  const rawSSend = rSenderCh.send.bind(rSenderCh);
+  rSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-begin") begins.push(msg.pieces ?? null);
+      if (msg.t === "piece") resendNext = true; // the next binary is the re-send
+      return rawSSend(d);
+    }
+    if (armCorrupt) offer2BinaryBytes += d.byteLength;
+    if (resendNext) {
+      resendNext = false; // deliver the re-sent piece intact
+      return rawSSend(d);
+    }
+    if (armCorrupt) {
+      tailBinaries += 1;
+      if (tailBinaries === 1) {
+        const src = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d);
+        const bad = new Uint8Array(src); // copy — don't mutate the sender's block
+        bad[20] ^= 0xff;
+        corrupted += 1;
+        return rawSSend(bad.buffer);
+      }
+    }
+    return rawSSend(d);
+  };
+  let pieceRequests = 0;
+  let requestedIndex = -1;
+  const rawRSend = rReceiverCh.send.bind(rReceiverCh);
+  rReceiverCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "piece-request") {
+        pieceRequests += 1;
+        requestedIndex = msg.index;
+      }
+    }
+    return rawRSend(d);
+  };
+
+  // Offer 1: FRESH (offset 0). Computes + caches the manifest in the sender and
+  // verifies the whole file on the receiver — also proving the #171 changes don't
+  // regress the fresh manifest path.
+  const o1Seen = waitFor(rReceiver, "incoming-offer");
+  const send1 = rSender.offerFiles([rfile]);
+  const o1 = await o1Seen;
+  const got1 = waitFor(rReceiver, "file-received");
+  rReceiver.acceptOffer(o1.batchId);
+  const rec1 = await Promise.race([
+    got1,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("fresh transfer hung")), 5000)),
+  ]);
+  assert.deepEqual(new Uint8Array(await rec1.blob.arrayBuffer()), bytes, "fresh offer still transfers byte-exact (no #171 regression)");
+  await send1;
+  assert.equal(begins.length, 1, "offer 1 sent one file-begin");
+  assert.ok(begins[0], "offer 1 (fresh) carried a manifest");
+
+  // Offer 2: RESUMED at a piece boundary. The receiver already holds [0, RESUME);
+  // the sender must re-include the CACHED manifest (no re-read) and stream only the
+  // tail, which the receiver verifies piece-by-piece — re-requesting the corrupt piece.
+  prefix = bytes.subarray(0, RESUME); // the durable partial the receiver resumes onto
+  armCorrupt = true;
+  const o2Seen = waitFor(rReceiver, "incoming-offer");
+  const send2 = rSender.offerFiles([rfile]);
+  const o2 = await o2Seen;
+  const got2 = waitFor(rReceiver, "file-received");
+  rReceiver.acceptOffer(o2.batchId, undefined, { [o2.items[0].id]: RESUME });
+  const rec2 = await Promise.race([
+    got2,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("resumed transfer hung")), 5000)),
+  ]);
+
+  assert.equal(begins.length, 2, "offer 2 sent a second file-begin");
+  assert.ok(begins[1], "the resumed file-begin re-included a manifest (#171)");
+  assert.deepEqual(begins[1], begins[0], "the resumed manifest is the cached one (identical hashes, no re-read)");
+
+  assert.equal(corrupted, 1, "the harness corrupted exactly one tail piece");
+  assert.equal(pieceRequests, 1, "the resumed receiver re-requested exactly one piece (tail is verified, not trusted)");
+  assert.equal(requestedIndex, 2, "the re-request named the corrupt tail piece's ABSOLUTE index");
+
+  assert.equal(rec2.blob.size, N, "the resumed file completed to full size");
+  assert.deepEqual(new Uint8Array(await rec2.blob.arrayBuffer()), bytes, "prefix + verified tail reassemble byte-exact");
+
+  // Tail-only on the wire: the 3-piece tail plus exactly one re-sent piece — never a full resend.
+  assert.equal(offer2BinaryBytes, N - RESUME + PIECE, "resume streamed only the tail plus the one re-requested piece");
+
+  rSenderCh.send = rawSSend;
+  rReceiverCh.send = rawRSend;
+  await send2;
+}
+
 // --- no manifest for tiny files: the backward-compatible path is unchanged ------
 {
   const tiny = new Blob(["small file, no manifest"], { type: "text/plain" });
@@ -916,5 +1088,5 @@ bigFile.slice = Blob.prototype.slice;
 }
 
 console.log(
-  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request + unanswerable-piece liveness (#137) passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request + unanswerable-piece liveness (#137) + resumed-tail piece verification (#171) passed",
 );

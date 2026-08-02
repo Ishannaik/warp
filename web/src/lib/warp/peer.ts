@@ -369,6 +369,14 @@ export class WarpPeer {
    *  handles (metadata, not bytes); cleared on cancel/close. */
   private manifestSends = new Map<string, { file: File; pieceSize: number }>();
 
+  /** Computed piece manifests keyed by the stable file identity (`fileKey`), so a
+   *  RESUMED re-offer of the same file can re-include the hashes in `file-begin`
+   *  WITHOUT re-reading the whole file (#171, research P5). A fresh send computes
+   *  the manifest once and caches it here; a later resumed send of the same `key`
+   *  reuses it so the receiver verifies the tail piece-by-piece. Per-id state lives
+   *  in `manifestSends`; this cross-offer cache is cleared only on close(). */
+  private manifestCache = new Map<string, PieceManifest>();
+
   /** True once the transport has EVER been up — separates a real NAT failure
    *  (never connected) from a mid-session drop (recoverable). */
   private everConnected = false;
@@ -680,18 +688,34 @@ export class WarpPeer {
         // which sends raw bytes exactly as before. `offset` stays in plaintext.
         const codec = chooseCodec(file.type || "application/octet-stream", sharedCodecs);
 
-        // Piece manifest (#137): for a FRESH file in the size window, hash it into
-        // per-piece SHA-256s and ride them in file-begin so the receiver verifies
-        // each piece and re-requests a bad index instead of trusting the stream.
-        // Skipped on resume (offset > 0 — we'd only hash the tail) and for tiny /
-        // huge files (shouldManifest), which keep the legacy trust-the-stream path.
+        // Piece manifest (#137, extended by #171): for a file in the size window,
+        // ride per-piece SHA-256s in file-begin so the receiver verifies each piece
+        // and re-requests a bad index instead of trusting the stream.
+        //   - FRESH (offset 0): hash the file now and cache the manifest by its
+        //     stable identity so a later resumed re-offer can reuse it.
+        //   - RESUMED (offset > 0, #171): re-include the CACHED manifest (if this
+        //     peer sent the file fresh earlier) so the receiver verifies the tail
+        //     piece-by-piece — the exact path a fresh receive gets — without the
+        //     sender re-reading the whole file (which would wreck time-to-first-byte
+        //     and is why MANIFEST_MAX_BYTES exists). No cache (this peer never sent
+        //     it fresh, e.g. a rebuilt peer) => the legacy trust-the-stream resume,
+        //     exactly as before — no regression.
+        // Tiny / huge files (shouldManifest) always keep the legacy path.
         let pieces: PieceManifest | undefined;
-        if (offset === 0 && shouldManifest(file.size)) {
-          const pieceSize = choosePieceSize(file.size);
-          pieces = await manifestFromFile(file, pieceSize);
-          if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
-          // Remember the file so a piece-request can re-read just that piece.
-          this.manifestSends.set(id, { file, pieceSize });
+        if (shouldManifest(file.size)) {
+          if (offset === 0) {
+            const pieceSize = choosePieceSize(file.size);
+            pieces = await manifestFromFile(file, pieceSize);
+            if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+            this.manifestCache.set(fileKey(file), pieces); // reuse on a resumed re-offer
+          } else {
+            pieces = this.manifestCache.get(fileKey(file));
+          }
+          if (pieces) {
+            // Remember the file so a piece-request can re-read just that piece —
+            // needed on resume too, since the receiver now verifies the tail (#171).
+            this.manifestSends.set(id, { file, pieceSize: pieces.pieceSize });
+          }
         }
 
         this.send(ch, { t: "file-begin", id, offset, ...(codec ? { codec } : {}), ...(pieces ? { pieces } : {}) });
@@ -1157,11 +1181,24 @@ export class WarpPeer {
     // (offset === 0): a resumed receive already holds [0,offset) whose bytes we
     // never see, so hashing from here would produce a digest of the tail alone.
     const hash = offset === 0 ? createHashSession() : null;
-    // Per-piece verifier (#137): only for a FRESH receive whose file-begin carried
-    // a manifest. When present, chunks are verified piece-by-piece and only verified
-    // bytes reach the sink; a bad piece is re-requested by index. Absent => the
-    // legacy trust-the-stream path (unchanged).
-    const verifier = pieces && offset === 0 ? new PieceVerifier(pieces) : null;
+    // Per-piece verifier (#137, extended by #171): build it whenever file-begin
+    // carried a manifest — for a FRESH receive (offset 0) AND for a RESUMED one.
+    // A manifest receive only ever writes WHOLE verified pieces, so a resumed
+    // offset is a piece boundary; seeding the verifier there (offset / pieceSize)
+    // verifies the tail piece-by-piece, so a corrupt tail piece is re-requested by
+    // index, not trusted (research P5 — resume from verified bytes, not written
+    // bytes). Guards keep this safe: the manifest must describe THIS file
+    // (pieces.size === item.size) and the offset must be an exact piece boundary
+    // within it; otherwise fall back to the legacy trust-the-stream path rather
+    // than seed a misaligned verifier (which would re-emit pieces the sink already
+    // holds). Absent manifest => legacy path (unchanged).
+    let verifier: PieceVerifier | null = null;
+    if (pieces && pieces.size === item.size && pieces.pieceSize > 0) {
+      if (offset === 0) verifier = new PieceVerifier(pieces);
+      else if (offset % pieces.pieceSize === 0 && offset <= pieces.size) {
+        verifier = new PieceVerifier(pieces, offset / pieces.pieceSize);
+      }
+    }
     // `codec` (#130): when set, binary frames are compressed and routed through the
     // decompress chain in onChunk; the hash + sink see PLAINTEXT, matching the
     // sender (which hashes plaintext too). Undefined => raw frames, sync path.
@@ -1406,6 +1443,7 @@ export class WarpPeer {
     this.disposed = true;
     this.clearRestartTimer();
     this.manifestSends.clear(); // drop lazy File handles held for piece re-requests (#137)
+    this.manifestCache.clear(); // drop cached piece manifests (#171)
     try {
       this.channel?.close();
     } catch {

@@ -222,4 +222,71 @@ assert.equal(manifestFromBytes(new Uint8Array(0), ps).hashes.length, 0, "empty f
   assert.equal(v.done, false, "a file with trailing garbage is not 'done'");
 }
 
+// --- PieceVerifier: resumed receive seeded to a piece boundary (#171 / P5) ---
+// A manifest receive only ever writes whole verified pieces, so a resumed offset
+// is a piece boundary. Seeding the verifier there must verify ONLY the tail, report
+// verifiedBytes from the boundary, and never re-emit the prefix the sink already has.
+{
+  // Resume at the start of piece 2 (offset 16 of 26 bytes; pieces 8/8/8/2).
+  const startPiece = 2;
+  const resumeOffset = startPiece * ps; // 16
+  const v = new PieceVerifier(manifest, startPiece);
+  assert.equal(v.verifiedBytes, resumeOffset, "a seeded verifier reports verifiedBytes from the resume boundary");
+  assert.equal(v.done, false, "a seeded verifier with a tail ahead is not done");
+
+  const seen = [];
+  for (let i = startPiece; i < 4; i += 1) {
+    const piece = data.subarray(i * ps, Math.min((i + 1) * ps, data.byteLength));
+    const r = v.push(piece);
+    assert.equal(r.mismatch, null, `resumed tail piece ${i} verifies`);
+    seen.push(...r.verified);
+  }
+  assert.equal(v.done, true, "the resumed tail completes the file");
+  assert.equal(v.verifiedBytes, data.byteLength, "verifiedBytes reaches the full size after the tail");
+  // Only the TAIL (pieces 2..3) was emitted — the prefix is never re-emitted.
+  const tail = data.subarray(resumeOffset);
+  assert.equal(concat(seen).length, tail.byteLength, "only the tail is emitted, not the already-held prefix");
+  assert.deepEqual(Array.from(concat(seen)), Array.from(tail), "the emitted tail reassembles byte-exact");
+}
+
+// --- PieceVerifier: a corrupt piece in the resumed tail is re-requested (#171) ---
+{
+  const startPiece = 1; // resume at offset 8
+  const v = new PieceVerifier(manifest, startPiece);
+
+  // Corrupt the first tail piece (piece 1) — the resumed receive must NOT trust it.
+  const bad1 = data.subarray(ps, 2 * ps).slice();
+  bad1[0] ^= 0xff;
+  const r1 = v.push(bad1);
+  assert.equal(r1.mismatch, 1, "a corrupt resumed-tail piece is localized to its ABSOLUTE index");
+  assert.equal(r1.verified.length, 0, "the corrupt piece emits nothing to the sink");
+  assert.equal(v.verifiedBytes, startPiece * ps, "verifiedBytes stays frozen at the resume boundary (P5)");
+
+  // The targeted re-request answer (correct bytes) resumes and chains the rest.
+  const fixed = v.injectPiece(1, data.subarray(ps, 2 * ps));
+  assert.equal(fixed.mismatch, null, "the corrected piece clears the mismatch");
+  const rest = [];
+  for (let i = 2; i < 4; i += 1) {
+    rest.push(...v.push(data.subarray(i * ps, Math.min((i + 1) * ps, data.byteLength))).verified);
+  }
+  assert.equal(v.done, true, "the resumed tail completes after the targeted re-request");
+  assert.equal(v.verifiedBytes, data.byteLength, "verifiedBytes reaches the full size after recovery");
+  const all = concat([...fixed.verified, ...rest]);
+  assert.deepEqual(Array.from(all), Array.from(data.subarray(startPiece * ps)), "re-requested tail reassembles byte-exact");
+}
+
+// --- PieceVerifier: seeding at the exact end is trivially done (#171) --------
+{
+  // When the file size is an exact multiple of the piece size, a receive that
+  // already holds everything resumes at offset == size (a true piece boundary):
+  // the seeded verifier is done at once and reports the full size. (A file with a
+  // short last piece can never resume at a boundary == size, so this is the only
+  // "nothing left" seed — peer.ts gates offset <= size AND offset % pieceSize == 0.)
+  const aligned = enc("abcdefghijklmnop"); // 16 bytes -> 2 full pieces of 8
+  const m16 = manifestFromBytes(aligned, ps);
+  const full = new PieceVerifier(m16, m16.hashes.length); // offset == size == 16
+  assert.equal(full.done, true, "seeding at the full size is done immediately");
+  assert.equal(full.verifiedBytes, aligned.byteLength, "verifiedBytes equals the size when nothing is left");
+}
+
 console.log("OK: pieceManifest.ts — SHA-256 vectors, manifest shape, size window, streaming verifier (clean/ragged/corrupt-piece re-request, verified-prefix P5)");

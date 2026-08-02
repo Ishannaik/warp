@@ -193,17 +193,31 @@ export interface VerifyResult {
 export class PieceVerifier {
   private readonly manifest: PieceManifest;
   /** Index of the piece currently being assembled / next to verify. */
-  private cursor = 0;
+  private cursor: number;
   /** Bytes buffered toward the next piece(s), not yet verified. */
   private pending: Uint8Array[] = [];
   private pendingLen = 0;
   /** Contiguous verified byte count (P5). Advances only on a passed piece. */
-  private verified = 0;
+  private verified: number;
   /** Index of the piece that failed its hash, or null when healthy. */
   private stuck: number | null = null;
 
-  constructor(manifest: PieceManifest) {
+  /**
+   * `startPiece` (#171, research P5) seeds a RESUMED receive: a manifest receive
+   * only ever writes WHOLE verified pieces to the sink, so a resumed offset is
+   * always a piece boundary, and the caller passes `offset / pieceSize`. `cursor`
+   * and `verified` start at that boundary, so the tail verifies piece-by-piece
+   * exactly as a fresh receive verifies from 0 — `verifiedBytes` reports from the
+   * boundary, `done` fires when the last piece verifies, and a corrupt tail piece
+   * halts at its ABSOLUTE index for targeted re-request. A fresh receive passes the
+   * default 0 and behaves exactly as before. The caller must only pass a true piece
+   * boundary (peer.ts gates on `offset % pieceSize === 0`); a misaligned seed would
+   * re-emit pieces the sink already holds, so it is never constructed that way.
+   */
+  constructor(manifest: PieceManifest, startPiece = 0) {
     this.manifest = manifest;
+    this.cursor = startPiece;
+    this.verified = startPiece * manifest.pieceSize;
   }
 
   /** Highest contiguous verified byte offset (the safe resume point, P5). */
