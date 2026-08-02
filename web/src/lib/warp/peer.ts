@@ -91,6 +91,13 @@ const ICE_SERVERS: RTCIceServer[] = [
  *    outpaced the link. 8 MiB keeps the pipe full while leaving real headroom below
  *    (c). Resume happens on `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
  */
+// TARGET_SEND_CHUNK intentionally exceeds RFC 8831 §6.6's SHOULD-limit of 16 KB
+// per message (which exists to avoid monopolizing the association when message
+// interleaving, RFC 8260, is unsupported). For a single-stream bulk transfer
+// monopolization IS the goal, so 256 KiB is the right trade; it stays safe because
+// sendChunkSize() caps to the peer's negotiated maxMessageSize and floors at
+// MIN_SEND_CHUNK. Literature consensus is 16 KiB for compatibility, 256 KiB only
+// with End-of-Record on both peers (research-2026-07 §1).
 const TARGET_SEND_CHUNK = 256 * 1024;
 const MIN_SEND_CHUNK = 16 * 1024;
 const READ_BLOCK = 4 * 1024 * 1024;
