@@ -23,6 +23,7 @@
  */
 
 import type { Codec } from "./compress";
+import type { PieceManifest } from "./pieceManifest";
 
 /** 16 KiB chunk size — the SCTP-friendly sweet spot used across the design copy. */
 export const CHUNK_SIZE = 16 * 1024;
@@ -82,10 +83,24 @@ export type ControlMessage =
    *  partial lines up before appending — and detect a stale sender that ignored
    *  the resume request and restarted at 0. `codec` (optional, #130) names the
    *  compression codec each following binary chunk is packed with; absent => the
-   *  chunks are raw plaintext bytes. `offset` is always in PLAINTEXT bytes. */
-  | { t: "file-begin"; id: string; offset: number; codec?: Codec }
+   *  chunks are raw plaintext bytes. `offset` is always in PLAINTEXT bytes.
+   *  `pieces` (optional, #137) is the per-piece SHA-256 manifest for a FRESH
+   *  (offset 0) file in the manifest size window: the receiver verifies each piece
+   *  as it lands and re-requests any bad index instead of trusting the stream.
+   *  Absent => no per-piece verification (the backward-compatible path). */
+  | { t: "file-begin"; id: string; offset: number; codec?: Codec; pieces?: PieceManifest }
   /** Sent immediately after a file's binary chunks. */
   | { t: "file-end"; id: string }
+  /** Receiver -> sender (#137): the piece at `index` failed its manifest hash;
+   *  re-send just that one piece. The sender answers with a `piece` frame + the
+   *  piece's bytes; the forward stream is unaffected. Only sent when a manifest
+   *  was present, so an old sender (no manifest) never sees one. */
+  | { t: "piece-request"; id: string; index: number }
+  /** Sender -> receiver (#137): the single re-requested piece `index` follows as
+   *  the NEXT binary frame (and only that frame — the two sends are back-to-back
+   *  so nothing interleaves). The receiver routes that binary to its verifier's
+   *  `injectPiece`, not the sequential append path. */
+  | { t: "piece"; id: string; index: number }
   /** Either side cancels a file in flight (sender stops; receiver discards partial). */
   | { t: "cancel"; id: string }
   /** A text snippet — shown directly in the other side's tray (no accept needed). */

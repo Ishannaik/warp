@@ -674,6 +674,147 @@ bigFile.slice = Blob.prototype.slice;
   await rawSend;
 }
 
+// --- piece manifest (#137): a corrupt piece triggers ONE targeted re-request ----
+// A file in the manifest window gets a per-piece SHA-256 manifest in file-begin.
+// We flip one byte of piece 2 in transit; the receiver must detect it against the
+// manifest, re-request ONLY that index, and complete byte-exact from the re-send —
+// never a full resend. This drives the real manifestFromFile + PieceVerifier +
+// piece-request/piece round-trip end to end.
+{
+  const PIECE = 256 * 1024; // choosePieceSize floor; file below stays wire-aligned
+  const N = 5 * PIECE; // 1.25 MiB -> 5 pieces, above the 1 MiB manifest floor
+  const bytes = new Uint8Array(N);
+  for (let i = 0; i < N; i += 1) bytes[i] = (i * 7 + 3) & 0xff;
+  const mfile = new Blob([bytes], { type: "application/octet-stream" });
+  mfile.name = "manifest.bin";
+  mfile.slice = Blob.prototype.slice;
+
+  const mSender = new WarpPeer(sig, "mani-remote", true);
+  const mReceiver = new WarpPeer(sig, "mani-local", false);
+  const mSenderCh = mSender.pc.localChannel;
+  const mReceiverCh = new FakeChannel();
+  mSenderCh.peer = mReceiverCh;
+  mReceiverCh.peer = mSenderCh;
+  mReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: mReceiverCh }));
+
+  // Spy the sender->receiver wire: capture the manifest, corrupt exactly one
+  // FORWARD piece (index 2), and never corrupt the targeted re-send (the binary
+  // that immediately follows a `piece` control frame).
+  let manifest = null;
+  let forwardBinaries = 0;
+  let resendNext = false;
+  let corrupted = 0;
+  let senderBinaryBytes = 0;
+  const CORRUPT_INDEX = 2;
+  const mRawSend = mSenderCh.send.bind(mSenderCh);
+  mSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-begin") manifest = msg.pieces ?? null;
+      if (msg.t === "piece") resendNext = true; // the next binary is the re-send
+      return mRawSend(d);
+    }
+    const len = d.byteLength;
+    senderBinaryBytes += len;
+    if (resendNext) {
+      resendNext = false; // deliver the re-sent piece intact
+      return mRawSend(d);
+    }
+    const idx = forwardBinaries += 1;
+    if (idx - 1 === CORRUPT_INDEX) {
+      const src = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d);
+      const bad = new Uint8Array(src); // copy — don't mutate the sender's read block
+      bad[10] ^= 0xff;
+      corrupted += 1;
+      return mRawSend(bad.buffer);
+    }
+    return mRawSend(d);
+  };
+
+  // Count the receiver's targeted re-requests.
+  let pieceRequests = 0;
+  let requestedIndex = -1;
+  const mRawRSend = mReceiverCh.send.bind(mReceiverCh);
+  mReceiverCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "piece-request") {
+        pieceRequests += 1;
+        requestedIndex = msg.index;
+      }
+    }
+    return mRawRSend(d);
+  };
+
+  const mOfferSeen = waitFor(mReceiver, "incoming-offer");
+  const mSendP = mSender.offerFiles([mfile]);
+  const mOffer = await mOfferSeen;
+  const mGot = waitFor(mReceiver, "file-received");
+  mReceiver.acceptOffer(mOffer.batchId);
+
+  const mReceived = await Promise.race([
+    mGot,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("manifest transfer hung")), 5000)),
+  ]);
+
+  // The manifest rode in file-begin: one hash per piece at the wire-aligned size.
+  assert.ok(manifest, "file-begin carries a piece manifest for a file in the size window");
+  assert.equal(manifest.pieceSize, PIECE, "the manifest uses the 256 KiB wire-aligned piece size");
+  assert.equal(manifest.hashes.length, 5, "a 1.25 MiB file is 5 pieces");
+  assert.equal(manifest.size, N, "the manifest records the full file size");
+
+  // Exactly one corrupt piece, exactly one targeted re-request of THAT index.
+  assert.equal(corrupted, 1, "the harness corrupted exactly one forward piece");
+  assert.equal(pieceRequests, 1, "the receiver re-requested exactly one piece (not a full resend)");
+  assert.equal(requestedIndex, CORRUPT_INDEX, "the re-request named the corrupt piece index");
+
+  // Byte-exact completion: the bad piece was replaced by the clean re-send.
+  assert.equal(mReceived.blob.size, N, "the whole file arrived");
+  assert.deepEqual(new Uint8Array(await mReceived.blob.arrayBuffer()), bytes, "reassembled bytes are byte-exact after the targeted re-request");
+
+  // No full resend: forward stream (N) + exactly one re-sent piece (PIECE).
+  assert.equal(senderBinaryBytes, N + PIECE, "only the single corrupt piece was re-sent, not the whole file");
+
+  mSenderCh.send = mRawSend;
+  mReceiverCh.send = mRawRSend;
+  await mSendP;
+}
+
+// --- no manifest for tiny files: the backward-compatible path is unchanged ------
+{
+  const tiny = new Blob(["small file, no manifest"], { type: "text/plain" });
+  tiny.name = "tiny.txt";
+  tiny.slice = Blob.prototype.slice;
+
+  const tSender = new WarpPeer(sig, "tiny-remote", true);
+  const tReceiver = new WarpPeer(sig, "tiny-local", false);
+  const tSenderCh = tSender.pc.localChannel;
+  const tReceiverCh = new FakeChannel();
+  tSenderCh.peer = tReceiverCh;
+  tReceiverCh.peer = tSenderCh;
+  tReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: tReceiverCh }));
+
+  let tinyManifest = "unset";
+  const tRawSend = tSenderCh.send.bind(tSenderCh);
+  tSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-begin") tinyManifest = msg.pieces;
+    }
+    return tRawSend(d);
+  };
+  const tOfferSeen = waitFor(tReceiver, "incoming-offer");
+  const tSendP = tSender.offerFiles([tiny]);
+  const tOffer = await tOfferSeen;
+  const tGot = waitFor(tReceiver, "file-received");
+  tReceiver.acceptOffer(tOffer.batchId);
+  const tReceived = await tGot;
+  assert.equal(tinyManifest, undefined, "a file below the manifest floor carries NO manifest (legacy path)");
+  assert.equal(await tReceived.blob.text(), "small file, no manifest", "tiny files still transfer byte-exact");
+  tSenderCh.send = tRawSend;
+  await tSendP;
+}
+
 console.log(
-  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request (#137) passed",
 );
