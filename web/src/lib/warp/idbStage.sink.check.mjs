@@ -164,7 +164,7 @@ globalThis.indexedDB = {
 globalThis.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
 
 // --- load idbStage.ts (esbuild-bundled, as the other harnesses do) --------------
-let idbSink, gcOrphanStaging;
+let idbSink, gcOrphanStaging, idbDurableLength;
 try {
   const esbuild = await import("esbuild");
   const url = await import("node:url");
@@ -178,7 +178,7 @@ try {
     platform: "neutral",
   });
   const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
-  ({ idbSink, gcOrphanStaging } = await import(dataUrl));
+  ({ idbSink, gcOrphanStaging, idbDurableLength } = await import(dataUrl));
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
@@ -290,4 +290,69 @@ const store = () => db.stores.get("staging");
   );
 }
 
-console.log("OK: idbSink write path — durable bytesWritten, ordered finalize, prefix isolation, abort, poison, TTL GC, reload startOffset");
+// --- 7. idbDurableLength: the contiguous durable prefix a resume may trust -------
+// Reload-resume hardening (research-2026-07 §6/P5): the ledger's bytesWritten can
+// outlive the staged rows (separate DBs, independent TTL GCs), so the hook reconciles
+// the resume offset against the ACTUAL contiguous prefix. These cases pin that
+// measurement: it must stop at the first gap and never report a byte past a hole (H1).
+{
+  // A clean contiguous prefix [0,6) + [6,11) measures its full length.
+  const s = idbSink("dl-full", "text/plain");
+  s.append(enc.encode("hello ").buffer); // [0,6)
+  s.append(enc.encode("world").buffer); // [6,11)
+  await s.quiesce();
+  assert.equal(await idbDurableLength("dl-full"), 11, "a contiguous prefix measures its full length");
+  await s.abort(); // clean up the rows
+}
+
+{
+  // A gap: [0,6) present, [6,8) missing, [8,11) present -> the prefix stops at 6.
+  const head = idbSink("dl-gap", "text/plain", 0);
+  head.append(enc.encode("hello ").buffer); // [0,6)
+  await head.quiesce();
+  const tail = idbSink("dl-gap", "text/plain", 8);
+  tail.append(enc.encode("rld").buffer); // [8,11) — note the hole at [6,8)
+  await tail.quiesce();
+  assert.equal(await idbDurableLength("dl-gap"), 6, "a gap stops the measurement at the contiguous prefix");
+}
+
+{
+  // A missing first row: only [5,11) staged -> nothing contiguous from 0 -> 0.
+  const s = idbSink("dl-nofirst", "text/plain", 5);
+  s.append(enc.encode("world").buffer); // [5,11)
+  await s.quiesce();
+  assert.equal(await idbDurableLength("dl-nofirst"), 0, "a prefix that doesn't start at 0 measures 0");
+}
+
+{
+  // No rows at all -> 0 (an honest restart, never a throw).
+  assert.equal(await idbDurableLength("dl-never-staged"), 0, "an unstaged file measures 0");
+}
+
+{
+  // THE bug this hardening closes: a GC TTL race reaps the prefix row while a fresher
+  // tail row (and, upstream, a fresher ledger row claiming 11) survives. Stage a full
+  // [0,6)+[6,11) prefix, backdate ONLY the first row past the TTL, and run GC. The
+  // ledger would still say 11, but the durable prefix is now 0 — trusting the ledger
+  // would finalize a truncated file. idbDurableLength reports the truth.
+  const s = idbSink("dl-race", "text/plain");
+  s.append(enc.encode("hello ").buffer); // [0,6)
+  s.append(enc.encode("world").buffer); // [6,11)
+  await s.quiesce();
+  assert.equal(await idbDurableLength("dl-race"), 11, "full prefix before GC");
+  for (const rec of store().records) {
+    if (rec.value.fileId === "dl-race" && rec.value.offset === 0) {
+      rec.value.ts = Date.now() - 48 * 60 * 60 * 1000; // age the prefix row past the TTL
+    }
+  }
+  await gcOrphanStaging(24 * 60 * 60 * 1000); // reaps [0,6), leaves [6,11)
+  const offsets = store().records.filter((r) => r.value.fileId === "dl-race").map((r) => r.value.offset);
+  assert.deepEqual(offsets, [6], "GC reaped the prefix row, left the tail");
+  assert.equal(
+    await idbDurableLength("dl-race"),
+    0,
+    "after the prefix row is reaped, the durable prefix is 0 — not the 11 a stale ledger would claim",
+  );
+}
+
+console.log("OK: idbSink write path — durable bytesWritten, ordered finalize, prefix isolation, abort, poison, TTL GC, reload startOffset, idbDurableLength contiguity");

@@ -248,3 +248,55 @@ export async function gcOrphanStaging(ttlMs = 24 * 60 * 60 * 1000): Promise<void
     /* IDB blocked / unavailable — nothing to prune */
   }
 }
+
+/**
+ * The length of the contiguous staged prefix for one file, measured from the ACTUAL
+ * IDB rows — not the ledger (reload-resume hardening, research-2026-07 §6/P5).
+ *
+ * The ledger's `bytesWritten` is only guaranteed durable AT WRITE TIME (it is written
+ * from the sink's durable count). Between that write and a reload, the staging rows
+ * and the ledger row can diverge: they live in SEPARATE databases ("warp" vs
+ * "warp-rx-ledger") with separate `ts` values, so `gcOrphanStaging` and `gcRxLedger`
+ * age and reap them independently. A prefix row whose `ts` crosses the TTL while a
+ * fresher ledger row survives leaves the ledger claiming an offset whose bytes are
+ * gone. Trusting it would report that offset to the sender, and `finalize()` would
+ * assemble only the surviving tail — committing a truncated file (an H1 violation).
+ * This is the exact gap the OPFS path already closes by reconciling against
+ * `opfsDurableLength` (#169); the IDB path needs the same measurement.
+ *
+ * Walks the file's rows in ascending key order and accumulates while each row starts
+ * exactly where the prefix ends, stopping at the first gap. Returns the byte length a
+ * resume can safely claim: 0 if the first row is missing or doesn't start at 0 (so the
+ * caller restarts honestly), never a value past a hole. Reads only each row's offset
+ * and `blob.size` (a file-backed Blob's metadata, not its bytes) one cursor record at
+ * a time, so the peak footprint is a single record even for a multi-GB file. Best
+ * effort: never throws — any error reads as 0 (honest restart upstream).
+ */
+export async function idbDurableLength(fileId: string): Promise<number> {
+  try {
+    const d = await openDb();
+    return await new Promise<number>((resolve, reject) => {
+      let contiguous = 0;
+      const req = tx(d, "readonly").openCursor(fileRange(fileId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve(contiguous);
+          return;
+        }
+        const row = cursor.value as { offset: number; blob: Blob };
+        if (row.offset === contiguous) {
+          contiguous += row.blob.size;
+          cursor.continue();
+        } else if (row.offset < contiguous) {
+          cursor.continue(); // overlapping/duplicate row inside the prefix — skip it
+        } else {
+          resolve(contiguous); // a gap: the durable prefix ends before this row
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return 0; // IDB unavailable / unreadable -> honest restart upstream
+  }
+}

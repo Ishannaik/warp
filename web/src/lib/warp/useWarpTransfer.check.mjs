@@ -466,13 +466,16 @@ assert(rp.accepted.length === 0, "a poisoned-sink re-offer is NOT auto-accepted"
 
 // 7. Reload-resume (issue #36, extended to OPFS by #169): the registry is repopulated
 // from the durable ledger on mount, and the EXISTING auto-resume path then continues
-// from the staged offset. hydrateFromLedger mirrors the hook 1:1: IDB rows with a
-// sane, incomplete offset become entries directly; OPFS rows ALSO rehydrate, but only
-// after reconciling the ledger offset against the file's real durable length
-// (opfsDurableLength) — resume at min(real, ledger), never the ledger alone (H1). An
-// OPFS row whose length can't be read (undefined) is dropped for an honest restart;
-// complete / corrupt rows are always skipped.
-function hydrateFromLedger(rows, opfsLength) {
+// from the staged offset. hydrateFromLedger mirrors the hook 1:1: BOTH durable kinds
+// reconcile the ledger offset against what is really staged now and resume at
+// min(real, ledger) — never the ledger alone (H1). OPFS measures the file's real
+// length (opfsDurableLength); an unreadable length (undefined) is dropped for an
+// honest restart. IDB measures the contiguous staged prefix (idbDurableLength); the
+// staging rows and the ledger row live in separate DBs with independent TTL GCs, so a
+// prefix row can be reaped while a fresher ledger row survives — trusting the ledger
+// alone would finalize a truncated file. A durable prefix of 0 resumes at 0 (an honest
+// full re-receive). Complete / corrupt rows are always skipped.
+function hydrateFromLedger(rows, opfsLength, idbLength) {
   const hydrated = [];
   for (const row of rows) {
     if (row.sinkKind !== "idb" && row.sinkKind !== "opfs") continue;
@@ -482,6 +485,11 @@ function hydrateFromLedger(rows, opfsLength) {
     if (row.sinkKind === "opfs") {
       const real = opfsLength(row.fileId);
       if (real === undefined) continue; // length unreadable -> honest restart
+      offset = Math.min(real, row.bytesWritten);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) continue;
+    } else {
+      // IDB: reconcile against the contiguous durable prefix (idbDurableLength).
+      const real = idbLength(row.fileId);
       offset = Math.min(real, row.bytesWritten);
       if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) continue;
     }
@@ -504,23 +512,45 @@ function hydrateFromLedger(rows, opfsLength) {
 const opfsFiles = { "img-stage": 40 };
 const opfsLength = (fileId) => (fileId in opfsFiles ? opfsFiles[fileId] : undefined);
 
+// The durable IDB contiguous-prefix lengths a reload would measure: big-stage holds
+// the full 60 the ledger acked (no reconciliation needed); db-stage holds only 30 of
+// the 50 acked (a mid-prefix gap pulls the offset back); gc-stage holds 0 — its prefix
+// row was reaped by the staging TTL GC while the ledger row survived.
+const idbFiles = { "big-stage": 60, "db-stage": 30, "gc-stage": 0 };
+const idbLength = (fileId) => (fileId in idbFiles ? idbFiles[fileId] : 0);
+
 const ledgerRows = [
-  { key: "big.bin|100|7", sinkKind: "idb", resumeToken: "tok-R", size: 100, bytesWritten: 60 },
+  { key: "big.bin|100|7", sinkKind: "idb", fileId: "big-stage", resumeToken: "tok-R", size: 100, bytesWritten: 60 },
   { key: "img.iso|80|11", sinkKind: "opfs", fileId: "img-stage", resumeToken: "tok-V", size: 80, bytesWritten: 50 },
   { key: "vid.mp4|50|8", sinkKind: "opfs", fileId: "vid-stage", resumeToken: "tok-S", size: 50, bytesWritten: 20 },
-  { key: "done.bin|30|9", sinkKind: "idb", resumeToken: "tok-T", size: 30, bytesWritten: 30 },
-  { key: "bad.bin|40|10", sinkKind: "idb", resumeToken: "tok-U", size: 40, bytesWritten: -5 },
+  { key: "db.iso|90|12", sinkKind: "idb", fileId: "db-stage", resumeToken: "tok-W", size: 90, bytesWritten: 50 },
+  { key: "gc.bin|70|13", sinkKind: "idb", fileId: "gc-stage", resumeToken: "tok-X", size: 70, bytesWritten: 40 },
+  { key: "done.bin|30|9", sinkKind: "idb", fileId: "done-stage", resumeToken: "tok-T", size: 30, bytesWritten: 30 },
+  { key: "bad.bin|40|10", sinkKind: "idb", fileId: "bad-stage", resumeToken: "tok-U", size: 40, bytesWritten: -5 },
 ];
-const hydrated = hydrateFromLedger(ledgerRows, opfsLength);
+const hydrated = hydrateFromLedger(ledgerRows, opfsLength, idbLength);
 assert(
-  hydrated.length === 2 && hydrated.includes("big.bin|100|7") && hydrated.includes("img.iso|80|11"),
-  "hydration rebuilds the sane IDB partial AND a readable OPFS partial",
+  hydrated.length === 4 &&
+    hydrated.includes("big.bin|100|7") &&
+    hydrated.includes("img.iso|80|11") &&
+    hydrated.includes("db.iso|90|12") &&
+    hydrated.includes("gc.bin|70|13"),
+  "hydration rebuilds the sane IDB + OPFS partials, reconciling each to its durable prefix",
 );
 assert(receiveReg.has("big.bin|100|7"), "the IDB partial is back in the registry after reload");
+assert(receiveReg.get("big.bin|100|7").sink.bytesWritten === 60, "an IDB prefix that matches the ledger resumes at the ledger offset");
 assert(receiveReg.has("img.iso|80|11"), "a readable OPFS partial is rehydrated after reload (#169)");
 assert(
   receiveReg.get("img.iso|80|11").sink.bytesWritten === 40,
   "the OPFS resume offset is reconciled to min(durable length, ledger) — 40, not the 50 the ledger acked",
+);
+assert(
+  receiveReg.get("db.iso|90|12").sink.bytesWritten === 30,
+  "the IDB resume offset is reconciled to the contiguous durable prefix — 30, not the 50 the ledger acked",
+);
+assert(
+  receiveReg.get("gc.bin|70|13").sink.bytesWritten === 0,
+  "an IDB prefix reaped by GC resumes at 0 (honest full re-receive), not the 40 the stale ledger claims",
 );
 assert(!receiveReg.has("vid.mp4|50|8"), "an OPFS partial with an unreadable length is dropped (honest restart)");
 assert(!receiveReg.has("done.bin|30|9"), "a complete row is dropped, not resumed");
@@ -544,6 +574,14 @@ incoming = null;
 await handleOffer(rp2.remoteId, { batchId: "rl3", items: [{ id: "z3", key: "img.iso|80|11", size: 80, resumeToken: "tok-V" }] });
 assert(incoming === null, "after reload, the re-offered OPFS partial auto-resumes with NO modal (#169)");
 assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z3"] === 40, "OPFS reload-resume continues from the reconciled offset (40)");
+
+// The reconciled IDB partial (db.iso) likewise auto-resumes — from the contiguous
+// durable prefix (30), not the 50 the ledger acked, so the sender re-sends only the
+// bytes that are actually missing rather than trusting a stale ledger offset.
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl4", items: [{ id: "z4", key: "db.iso|90|12", size: 90, resumeToken: "tok-W" }] });
+assert(incoming === null, "after reload, the re-offered IDB partial auto-resumes with NO modal");
+assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z4"] === 30, "IDB reload-resume continues from the reconciled durable prefix (30)");
 
 // The vid.mp4 OPFS row was dropped (its durable length was unreadable), so its re-offer
 // is an "unknown" key -> modal (an honest restart rather than a resume onto a hole).

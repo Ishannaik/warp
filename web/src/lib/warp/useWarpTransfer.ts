@@ -37,7 +37,7 @@ import {
   type ReceiveHost,
 } from "./peer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
-import { estimateFits, gcOrphanStaging, idbSink, storageFits } from "./idbStage";
+import { estimateFits, gcOrphanStaging, idbDurableLength, idbSink, storageFits } from "./idbStage";
 import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSinkWithIdbFallback, opfsSupported } from "./opfsStage";
 import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
 import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
@@ -1051,15 +1051,17 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
    * key + token match. So reload-survival is just "rebuild the entries from durable
    * storage on mount"; the existing auto-resume path does the rest.
    *
-   * IDB rows rehydrate directly: their staged chunks are individually durable, so
-   * `idbSink(fileId, mime, bytesWritten)` reproduces the exact offset and its prefix
-   * scan reassembles prefix + tail. OPFS rows rehydrate too (#169), but their flushes
-   * are BATCHED, so after an unclean close the file's real length can lag the ledger's
-   * `bytesWritten`; we reconcile against the file's actual durable length and resume
-   * at `min(real, ledger)` — never the ledger alone (H1). If the length can't be read
-   * (file gone / OPFS unavailable) we drop the row and fall back to an honest restart.
-   * Memory / disk receives have no row and restart honestly (the sender's re-offer
-   * simply shows the accept modal again).
+   * Both durable kinds reconcile the ledger offset against what is REALLY staged now
+   * and resume at `min(real, ledger)` — never the ledger alone (H1). The ledger's
+   * `bytesWritten` was durable when written, but it can outlive the staged bytes:
+   * OPFS flushes are BATCHED, so after an unclean close the file's real length can lag
+   * the ledger (#169, measured via `opfsDurableLength`); and the IDB staging rows and
+   * the ledger row live in separate databases with independent TTL GCs, so a prefix
+   * row can be reaped while a fresher ledger row survives (measured via
+   * `idbDurableLength`, the contiguous-prefix length). If the durable length can't be
+   * read (OPFS file gone / unavailable) we drop the row; if it measures 0 we resume at
+   * 0 (an honest full re-receive through the auto-resume path). Memory / disk receives
+   * have no row and restart honestly (the sender's re-offer shows the accept modal).
    */
   const hydrateFromLedger = useCallback(async (room: string) => {
     const rows = await readRxLedger(room);
@@ -1074,11 +1076,24 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       }
       if (reg.has(row.key)) continue; // a live entry already owns this file
       if (row.sinkKind === "idb") {
+        // Reconcile the ledger offset against the rows that are ACTUALLY durable now,
+        // mirroring the OPFS branch below. The ledger's bytesWritten was durable when
+        // written, but the staging rows and the ledger row live in separate databases
+        // with independent TTL GCs (gcOrphanStaging vs gcRxLedger), so a prefix row can
+        // be reaped while a fresher ledger row survives. Trusting the ledger alone
+        // would then report an offset whose prefix is gone and finalize a truncated
+        // file (H1). Resume at min(durable prefix, ledger) — never the ledger alone.
+        const real = await idbDurableLength(row.fileId);
+        const offset = Math.min(real, row.bytesWritten);
+        if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) {
+          void removeRxLedger(row.key);
+          continue;
+        }
         reg.set(row.key, {
           key: row.key,
           size: row.size,
           resumeToken: row.resumeToken,
-          sink: idbSink(row.fileId, row.mime, row.bytesWritten),
+          sink: idbSink(row.fileId, row.mime, offset),
           active: false,
           ledger: { fileId: row.fileId, sinkKind: "idb", mime: row.mime, name: row.name },
         });
