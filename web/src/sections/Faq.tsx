@@ -3,7 +3,7 @@ import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Section 05 — "Questions".
- * Accordion of the five honest answers, ported verbatim from the Wrap
+ * Accordion of the five honest answers, ported verbatim from the Warp
  * design source (#faq).
  *
  * The source used a vanilla-JS max-height toggle; here a single open index is
@@ -85,7 +85,7 @@ interface Item {
 const ITEMS: Item[] = [
   {
     q: "Is it really peer-to-peer?",
-    a: "Yes. Once two devices pair, the file travels directly between them over an encrypted WebRTC channel. Our relay only helps them find each other — it never sees the contents.",
+    a: "Yes. Once two devices pair, the file travels directly between them over an encrypted WebRTC channel. A small signaling server only helps them find each other — it never sees the contents.",
   },
   {
     q: "What’s the maximum file size?",
@@ -137,6 +137,7 @@ export default function Faq() {
                 <button
                   type="button"
                   aria-expanded={open}
+                  aria-controls={`faq-panel-${i}`}
                   style={{
                     ...triggerStyle,
                     gap: isMobile ? "12px" : triggerStyle.gap,
@@ -164,6 +165,7 @@ export default function Faq() {
                   </span>
                 </button>
                 <div
+                  id={`faq-panel-${i}`}
                   style={{
                     display: "grid",
                     gridTemplateRows: open ? "1fr" : "0fr",
