@@ -4,7 +4,7 @@ import { useReducedMotion } from "../lib/useReducedMotion";
 /**
  * Live-mode transfer simulation (the "ShareX queue" behaviour).
  *
- * Ported verbatim from the Wrap design export's vanilla-JS `tick()`:
+ * Ported verbatim from the Warp design export's vanilla-JS `tick()`:
  *   - interval 130ms, multiplier 1, throughput multiplier 1  (Live mode)
  *   - uploading rows advance pct by (bytes>3000 ? 0.9 : 1.7) * (0.6 + rand*0.9) * mult
  *   - when fewer than 2 rows are uploading, the next queued row is promoted

@@ -1,5 +1,5 @@
 /**
- * Typed client for the Wrap signaling server.
+ * Typed client for the Warp signaling server.
  *
  * Transport: a single WebSocket to the live Cloudflare Worker. The server is a
  * dumb relay — it assigns a `selfId`, owns rooms, and forwards opaque `signal`

@@ -6,7 +6,7 @@ import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * ShareX-style transfer-queue window for the hero (right column).
- * Ported verbatim from the Wrap design source: magic-ui border beam,
+ * Ported verbatim from the Warp design source: magic-ui border beam,
  * Queue / History / Peers tabs, the animated queue rows, and the footer
  * totals. Tab switching is reimplemented here as React state; the Live-mode
  * queue simulation lives in the useTransferSim() hook.
