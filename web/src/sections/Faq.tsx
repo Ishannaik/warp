@@ -132,11 +132,13 @@ export default function Faq() {
         <div style={{ borderTop: "1px solid rgba(239,233,218,.16)" }}>
           {ITEMS.map((item, i) => {
             const open = openIndex === i;
+            const panelId = `faq-panel-${i}`;
             return (
               <div key={item.q} style={itemStyle}>
                 <button
                   type="button"
                   aria-expanded={open}
+                  aria-controls={panelId}
                   style={{
                     ...triggerStyle,
                     gap: isMobile ? "12px" : triggerStyle.gap,
@@ -164,6 +166,7 @@ export default function Faq() {
                   </span>
                 </button>
                 <div
+                  id={panelId}
                   style={{
                     display: "grid",
                     gridTemplateRows: open ? "1fr" : "0fr",
