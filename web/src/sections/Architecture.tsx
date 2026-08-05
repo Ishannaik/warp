@@ -323,10 +323,10 @@ export default function Architecture() {
             </p>
           </div>
           <div style={cardBase}>
-            <div style={cardLabel}>RELAY FALLBACK</div>
+            <div style={cardLabel}>SIGNALING FALLBACK</div>
             <p style={cardBody}>
-              If a direct path can&rsquo;t form, an encrypted relay finishes the
-              job &mdash; still unreadable to us.
+              If a direct path can&rsquo;t form, signaling helps peers reconnect
+              without holding your file data &mdash; still unreadable to us.
             </p>
           </div>
         </div>
