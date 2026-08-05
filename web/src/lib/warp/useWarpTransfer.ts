@@ -180,20 +180,61 @@ function labelFor(peerId: string): string {
   return peerId.slice(0, 8);
 }
 
-/** De-dupe a filename within a folder target: "a.txt", "a (1).txt", … */
-function uniqueName(used: Set<string>, name: string): string {
-  if (!used.has(name)) {
-    used.add(name);
-    return name;
+/**
+ * Does `name` already exist in `dir`?
+ *
+ * Deliberately cheap: ONE `getFileHandle` for the exact name, never a directory
+ * scan. A `NotFoundError` is the API's way of saying the slot is free.
+ *
+ * Returns "unknown" when the probe fails for any OTHER reason (a revoked
+ * permission, a transient FS error). That third state matters: treating an
+ * unreadable directory as "free" would let us overwrite a file we simply could
+ * not see, and treating it as "taken" would spin forever looking for a free slot.
+ */
+async function existsInDir(dir: FsDirHandle, name: string): Promise<boolean | "unknown"> {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch (err) {
+    return (err as { name?: string } | null)?.name === "NotFoundError" ? false : "unknown";
   }
+}
+
+/**
+ * De-dupe a filename for a folder target: "a.txt", "a (1).txt", …
+ *
+ * Two different things can collide and both are checked:
+ *   - names already claimed by EARLIER FILES IN THE SAME BATCH (`used`), and
+ *   - files ALREADY ON DISK in the chosen folder (`dir`).
+ *
+ * Without the second check, receiving `report.pdf` into a folder that already
+ * holds one silently clobbered the existing file (issue #133). The existing file
+ * now always wins its name and the incoming one steps aside.
+ *
+ * When a disk probe is inconclusive we take the current candidate and stop
+ * probing, so the real `create: true` write surfaces the real error rather than
+ * this helper inventing a different filename or looping.
+ *
+ * `dir` is optional so callers with no folder target keep the pure in-batch
+ * behaviour.
+ */
+async function uniqueName(used: Set<string>, name: string, dir?: FsDirHandle): Promise<string> {
   const dot = name.lastIndexOf(".");
+  // dot > 0 keeps dotfiles whole: ".env" stems to ".env", not "" + ".env".
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";
-  let n = 1;
-  let candidate = `${stem} (${n})${ext}`;
-  while (used.has(candidate)) candidate = `${stem} (${(n += 1)})${ext}`;
-  used.add(candidate);
-  return candidate;
+
+  let candidate = name;
+  for (let n = 1; ; n += 1) {
+    if (!used.has(candidate)) {
+      const onDisk = dir ? await existsInDir(dir, candidate) : false;
+      if (onDisk !== true) {
+        used.add(candidate);
+        return candidate;
+      }
+    }
+    candidate = `${stem} (${n})${ext}`;
+  }
 }
 
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
@@ -749,8 +790,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       let sink: ReceiveSink;
       let savedName: string | undefined;
       if (target && "dirHandle" in target) {
-        savedName = uniqueName(usedNames, it.name);
         const dir = target.dirHandle;
+        // Probes the folder as well as this batch, so an existing file keeps its
+        // name and the incoming one becomes "name (1).ext" (issue #133).
+        savedName = await uniqueName(usedNames, it.name, dir);
         const name = savedName;
         sink = diskSink(async () => (await dir.getFileHandle(name, { create: true })).createWritable());
       } else if (target && "fileHandle" in target) {
