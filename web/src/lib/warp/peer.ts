@@ -1110,7 +1110,6 @@ export class WarpPeer {
   }
 }
 
-/** Max edge of a generated thumbnail, in CSS pixels. */
 /**
  * Validate a receiver-supplied resume offset (Fable L1): must be a non-negative
  * integer no larger than the file. Anything else (NaN, negative, >size, non-int —
@@ -1121,6 +1120,7 @@ function clampOffset(v: unknown, size: number): number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= size ? v : 0;
 }
 
+/** Max edge of a generated thumbnail, in CSS pixels. */
 const THUMB_MAX = 64;
 
 /**
