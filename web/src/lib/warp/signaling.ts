@@ -10,13 +10,19 @@
  *   { type: 'join' }                 create a fresh room, become its first peer
  *   { type: 'join', room: CODE }     join an existing room by code
  *   { type: 'signal', to, data }     relay an opaque payload to one peer
+ *   { type: 'ping' }                 keepalive so the Durable Object stays awake
+ *   { type: 'announce', ... }        LAN nearby discovery (not fully typed here)
  *
  * Protocol (server -> client):
  *   { type: 'joined', selfId, room, peers }   ack of our join (peers = existing)
  *   { type: 'peer-joined', peerId }           someone else joined our room
  *   { type: 'peer-left', peerId }             someone else left
  *   { type: 'signal', from, data }            a relayed payload from `from`
+ *   { type: 'nearby', devices | crowded }    same-network list (or overcrowded)
  *   { type: 'error', error }                  server-side failure
+ *
+ * Note: SignalingClient types the room/signal subset. Nearby discovery attaches
+ * a raw listener for announce/nearby frames (see useNearby.ts).
  */
 
 // Optional-chain `import.meta.env` so the module still loads outside Vite
