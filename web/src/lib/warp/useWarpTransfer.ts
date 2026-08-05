@@ -1,5 +1,5 @@
 /**
- * React hook orchestrating a Wrap transfer: signaling socket, the WebRTC peers,
+ * React hook orchestrating a Warp transfer: signaling socket, the WebRTC peers,
  * and the symmetric file-transfer tray. Both sender and receiver use this hook —
  * pass `joinCode` to act as the receiver who joins an existing room.
  *

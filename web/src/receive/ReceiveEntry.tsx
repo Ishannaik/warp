@@ -10,7 +10,7 @@ import { CODE_LEN, VALID_RE, sanitize } from "../lib/warp/roomCode";
  * isn't tappable). One field, auto-uppercased and sanitised to the server's
  * code alphabet, then `navigate("/r/<CODE>")` hands off to TransferFlow.
  *
- * Built from the existing Wrap design system — same dark palette, hairline
+ * Built from the existing Warp design system — same dark palette, hairline
  * borders, mono labels, Bricolage/Archivo/JetBrains Mono fonts, accent button.
  */
 

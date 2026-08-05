@@ -3,7 +3,7 @@ import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Section 05 — "Questions".
- * Accordion of the five honest answers, ported verbatim from the Wrap
+ * Accordion of the five honest answers, ported verbatim from the Warp
  * design source (#faq).
  *
  * The source used a vanilla-JS max-height toggle; here a single open index is

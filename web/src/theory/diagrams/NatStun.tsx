@@ -21,7 +21,7 @@ import {
  *  - SYMMETRIC / CGNAT (amber, failure): the NAT assigns a DIFFERENT outbound
  *    port per destination (:51001 → :51002 → :51003). The address STUN learned
  *    no longer matches; the hole-punch fails (broken beam) — the ball hits the
- *    wall. Only a TURN relay could bridge it — and Wrap won't.
+ *    wall. Only a TURN relay could bridge it — and Warp won't.
  *
  * Beneath: the ~10–20% "needs a relay" bar — the hinge into PART B.
  *

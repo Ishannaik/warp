@@ -6,7 +6,7 @@ import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
 
 /**
- * Hero composition for the Wrap landing page. Ported verbatim from the design
+ * Hero composition for the Warp landing page. Ported verbatim from the design
  * source: corner crosshairs, status strip, nav, the hero grid (copy + the
  * ShareX transfer window), and the marquee ticker. The atmosphere layer (lamp
  * + meteors) is rendered as the background.
