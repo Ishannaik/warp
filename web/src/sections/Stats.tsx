@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useReducedMotion } from "../lib/useReducedMotion";
 
 /**
  * Stats — the "03 / speed" stats band.
@@ -10,12 +11,21 @@ import { useIsMobile } from "../lib/useIsMobile";
 const COUNT_DURATION = 1500; // ms
 const easeOutCubic = (k: number) => 1 - Math.pow(1 - k, 3);
 
-/** Count up from 0 to `target` once `start` flips true. */
-function useCountUp(target: number, decimals: number, start: boolean) {
+/** Count up from 0 to `target` once `start` flips true. Snaps when reduced. */
+function useCountUp(
+  target: number,
+  decimals: number,
+  start: boolean,
+  reducedMotion: boolean,
+) {
   const [value, setValue] = useState(0);
 
   useEffect(() => {
     if (!start) return;
+    if (reducedMotion) {
+      setValue(target);
+      return;
+    }
     let raf = 0;
     let t0 = 0;
     const tick = (now: number) => {
@@ -26,7 +36,7 @@ function useCountUp(target: number, decimals: number, start: boolean) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, start]);
+  }, [target, start, reducedMotion]);
 
   return value.toFixed(decimals);
 }
@@ -75,10 +85,11 @@ const label: React.CSSProperties = {
 export default function Stats() {
   const { ref, inView } = useInView<HTMLDivElement>();
   const isMobile = useIsMobile();
+  const reducedMotion = useReducedMotion();
 
-  const servers = useCountUp(0, 0, inView); // 0 — stays 0
-  const bits = useCountUp(256, 0, inView); // 256
-  const peak = useCountUp(2.4, 1, inView); // 2.4 GB/s
+  const servers = useCountUp(0, 0, inView, reducedMotion); // 0 — stays 0
+  const bits = useCountUp(256, 0, inView, reducedMotion); // 256
+  const peak = useCountUp(2.4, 1, inView, reducedMotion); // 2.4 GB/s
 
   // On mobile, reduce cell padding so big numbers + labels fit without overflow.
   const mobileCell: React.CSSProperties = isMobile
