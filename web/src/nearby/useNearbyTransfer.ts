@@ -229,7 +229,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
       // Offer the files once the channel is open (offerFiles requires an open channel).
       const offer = () =>
-        activePeer.offerFiles(files).catch(() => failSession("The data channel hit an error."));
+        activePeer.offerFiles(files).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
       if (activePeer.isConnected) {
         void offer();
       } else {
