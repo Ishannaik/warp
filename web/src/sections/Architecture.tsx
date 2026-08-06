@@ -325,8 +325,8 @@ export default function Architecture() {
           <div style={cardBase}>
             <div style={cardLabel}>SIGNALING FALLBACK</div>
             <p style={cardBody}>
-              If a direct path can&rsquo;t form, signaling helps peers reconnect
-              without holding your file data &mdash; still unreadable to us.
+              If the connection drops, signaling helps peers reconnect without
+              holding your file data &mdash; still unreadable to us.
             </p>
           </div>
         </div>
