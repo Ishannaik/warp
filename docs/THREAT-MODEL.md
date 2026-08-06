@@ -67,7 +67,7 @@ for (let i = 0; i < CODE_LEN; i++) code += CODE_ALPHABET[bytes[i] % CODE_ALPHABE
 
 The reduction on line 66 is where a small flaw enters. A byte holds 256 values and 256 is not a multiple of 31:
 
-```
+```text
 256 = 8 * 31 + 8
 ```
 
@@ -108,7 +108,7 @@ The number that actually governs risk is not 887,503,681. An attacker is not sea
 | 100 | 1.13e-7 | ~6,150,000 |
 | 1,000 | 1.13e-6 | ~615,000 |
 
-Sweeping the full space at 100 guesses per second takes about 103 days, so a single low-traffic room is not realistically brute-forced. The exposure grows with adoption, not with time.
+At 100 guesses per second, sweeping the full space takes about 103 days, and the 50% mark against one live room arrives at about 71 days (615,000,000 / 100 = 6,150,000 seconds). Neither figure describes a real attack, because no room survives long enough to absorb it: a code is guessable only for its live session plus the three-minute reclaim window below. What an attacker actually accumulates is guesses against whatever set of rooms happens to be open while they are guessing, so exposure grows with concurrent rooms, room lifetime, and attacker guess rate.
 
 The two caps in the file are not defenses against this. `MAX_PEERS = 8` (`:5`) bounds mesh size per room, and `MAX_DISCOVER = 8` (`:6`) is a privacy guardrail on nearby-device listing. Neither one limits how many codes a client may try.
 
@@ -119,7 +119,7 @@ The two caps in the file are not defenses against this. `MAX_PEERS = 8` (`:5`) b
 This exists so two devices that drop together, on a shared tunnel or train Wi-Fi, can rejoin the same rendezvous point and resume. It also means a code stays guessable for three minutes after everyone has left it. Two consequences follow:
 
 - A code's guessable lifetime is its live session plus three minutes, so every room contributes more exposure than its actual use.
-- The first reclaim-join wins and deletes the record (`:109`). An attacker who guesses a code inside that window occupies the rendezvous point before the legitimate peers return, which denies them the reclaim they were relying on.
+- The first reclaim-join wins and deletes the record (`:109`), and the same join turns the code back into a live room. An attacker who guesses a code inside that window gains unauthorized membership of the rendezvous point the legitimate peers were returning to. Those peers are not locked out by that alone — they still reach the room by the ordinary live-room path (`:98`, `:110-111`, `:119`) and find the attacker already inside. Denying them the rendezvous takes a further act: filling the room to `MAX_PEERS` (8) or otherwise disrupting it.
 
 The record is best-effort GC'd by an alarm (`:203-209`), and reads re-validate expiry, so the three-minute bound holds even when the alarm is delayed. No transfer state is restored on reclaim; the server only owes the same code back.
 
