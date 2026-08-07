@@ -15,19 +15,20 @@
  * Because exactly one side ever creates the offer for a given pair, there is no
  * offer collision to resolve.
  *
- * Symmetric file transfer (review-before-receive redesign):
+ * Symmetric file transfer (review-before-receive):
  *   - EITHER peer can offer files at any time over the same open channel.
  *   - A send batch is GATED: the sender announces a manifest (`offer`), the
  *     receiver shows an accept modal, and only on `accept` do bytes flow. On
  *     `decline` nothing is sent.
- *   - Received files are accumulated into an in-memory Blob and handed to the
- *     UI via "file-received" — NOTHING auto-saves to disk. Downloading (one
- *     file, or a zip of all) is the UI's job now.
+ *   - Accepted receives flow through a `ReceiveHost`: the default path can keep
+ *     bytes in an in-memory Blob, while a supplied disk target streams them
+ *     straight to disk and emits `savedToDisk` on completion.
  *   - The channel STAYS OPEN after a batch: both peers can keep sending.
  *
- * v1 transport scope: 1-to-1 happy path. We connect to the first available peer
- * and route all transfers over that single channel. Multi-peer mesh is out of
- * scope.
+ * Mesh scope:
+ *   - One `WarpPeer` represents one remote-device connection.
+ *   - `useWarpTransfer` owns the full mesh: one `WarpPeer` per remote device,
+ *     with the glare-free initiator/responder role above applied to each pair.
  */
 
 import type { SignalData, SignalingClient } from "./signaling";
