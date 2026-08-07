@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
 
 /**
@@ -192,7 +193,13 @@ export default function Compare() {
               <div style={headWrapStyle}>WARP</div>
               <div style={headOtherStyle}>AIRDROP</div>
               <div style={headOtherStyle}>WETRANSFER</div>
-              <div style={headOtherStyle}>WORMHOLE</div>
+              <a
+                href="/vs/wormhole"
+                onClick={(e) => { e.preventDefault(); navigate("/vs/wormhole"); }}
+                style={{ ...headOtherStyle, textDecoration: "none" }}
+              >
+                WORMHOLE
+              </a>
             </div>
 
             {/* rows */}

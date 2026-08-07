@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import Wormhole from "./vs/Wormhole";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -54,6 +55,13 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path === "/vs/wormhole") {
+    return {
+      title: "Warp vs Wormhole.app · Warp",
+      description:
+        "Wormhole.app stores files up to 5 GB on its own servers for 24 hours. Warp skips the server entirely, for files of any size, on a direct peer-to-peer connection.",
+    };
+  }
   if (path !== "/") {
     return {
       title: "Page not found · Warp",
@@ -88,6 +96,7 @@ export default function App() {
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
+  if (path === "/vs/wormhole") return <Wormhole />;
 
   return <NotFound />;
 }
