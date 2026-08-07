@@ -323,10 +323,10 @@ export default function Architecture() {
             </p>
           </div>
           <div style={cardBase}>
-            <div style={cardLabel}>RELAY FALLBACK</div>
+            <div style={cardLabel}>HONEST FAILURE</div>
             <p style={cardBody}>
-              If a direct path can&rsquo;t form, an encrypted relay finishes the
-              job &mdash; still unreadable to us.
+              If a direct path can&rsquo;t form, Warp tells you plainly. There
+              is no relay to fall back to, on purpose.
             </p>
           </div>
         </div>
