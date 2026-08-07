@@ -33,6 +33,7 @@
 import type { SignalData, SignalingClient } from "./signaling";
 import {
   LOW_WATER_MARK,
+  SEND_HIGH_WATER,
   TEXT_SNIPPET_MAX_BYTES,
   fileId,
   fileKey,
@@ -66,7 +67,8 @@ const ICE_SERVERS: RTCIceServer[] = [
  *  - READ_BLOCK: how much of the file we pull into memory per blob.arrayBuffer()
  *    read, then slice into TARGET_SEND_CHUNK sends — one await per ~4 MiB instead
  *    of one per 16 KiB.
- *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. MUST sit well below
+ *  - SEND_HIGH_WATER (imported from transfer.ts): bufferedAmount backpressure
+ *    ceiling. MUST sit well below
  *    Chrome's hard 16 MiB SCTP send-buffer cap: bufferedAmount can never
  *    exceed that cap (send() throws first), so a 16 MiB high-water mark meant
  *    the backpressure branch NEVER ran and every large transfer deterministically
@@ -77,7 +79,6 @@ const ICE_SERVERS: RTCIceServer[] = [
 const TARGET_SEND_CHUNK = 256 * 1024;
 const MIN_SEND_CHUNK = 16 * 1024;
 const READ_BLOCK = 4 * 1024 * 1024;
-const SEND_HIGH_WATER = 8 * 1024 * 1024;
 
 /**
  * Mid-session transport recovery. A `disconnected`/`failed` connectionState is
