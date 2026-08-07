@@ -17,6 +17,7 @@ const footerLinks: { label: string; href: string; external?: boolean; to?: strin
   { label: "How it works", href: "#work" },
   { label: "Security", href: "#trust" },
   { label: "FAQ", href: "#faq" },
+  { label: "No upload", href: "/send-without-uploading", to: "/send-without-uploading" },
   { label: "Brand", href: "/brand", to: "/brand" },
   { label: "Terms", href: "/terms", to: "/terms" },
   { label: "Privacy", href: "/privacy", to: "/privacy" },
