@@ -16,7 +16,8 @@ if (!globalThis.localStorage || typeof globalThis.localStorage.getItem !== "func
   };
 }
 
-const DEVICE_NAME_KEY = "wrap.deviceName";
+const DEVICE_NAME_KEY = "warp.deviceName";
+const LEGACY_DEVICE_NAME_KEY = "wrap.deviceName";
 
 function renameDevice(name) {
   const clean = name.trim().slice(0, 40) || "Device";
@@ -26,6 +27,19 @@ function renameDevice(name) {
     /* best-effort */
   }
   return clean;
+}
+
+function loadDeviceName() {
+  const existing = localStorage.getItem(DEVICE_NAME_KEY);
+  if (existing && existing.trim()) return existing;
+
+  const legacy = localStorage.getItem(LEGACY_DEVICE_NAME_KEY);
+  if (legacy && legacy.trim()) {
+    localStorage.setItem(DEVICE_NAME_KEY, legacy);
+    localStorage.removeItem(LEGACY_DEVICE_NAME_KEY);
+    return legacy;
+  }
+  return null;
 }
 
 // 1. Trimming and clamping to 40 characters
@@ -49,6 +63,22 @@ function renameDevice(name) {
   const result = renameDevice("My Cool Laptop");
   assert.equal(result, "My Cool Laptop");
   assert.equal(localStorage.getItem(DEVICE_NAME_KEY), "My Cool Laptop");
+}
+
+// 4. Legacy "wrap.deviceName" value migrates to "warp.deviceName" once
+{
+  storage.clear();
+  localStorage.setItem(LEGACY_DEVICE_NAME_KEY, "Old Wrap Name");
+  const result = loadDeviceName();
+  assert.equal(result, "Old Wrap Name");
+  assert.equal(localStorage.getItem(DEVICE_NAME_KEY), "Old Wrap Name");
+  assert.equal(localStorage.getItem(LEGACY_DEVICE_NAME_KEY), null);
+}
+
+// 5. No stored name at all -> loadDeviceName has nothing to fall back to
+{
+  storage.clear();
+  assert.equal(loadDeviceName(), null);
 }
 
 console.log("OK: useNearby rename device checks passed");
