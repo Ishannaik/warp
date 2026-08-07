@@ -127,11 +127,11 @@ sender                                  receiver
 
 ### The send pump: chunk sizes and backpressure
 
-`streamFile()` is where throughput lives, and it's tuned by four constants at the top of `peer.ts`:
+`streamFile()` is where throughput lives, tuned by three constants at the top of `peer.ts` plus two shared with `transfer.ts`'s wire protocol:
 
 - `READ_BLOCK = 4 MiB` — the file is read via `blob.arrayBuffer()` in 4 MiB gulps: one `await` per ~4 MiB instead of one per chunk.
 - `TARGET_SEND_CHUNK = 256 KiB` — each gulp is sliced into SCTP messages of this size, capped at the *negotiated* `pc.sctp.maxMessageSize` (`sendChunkSize()`; a too-big message closes the channel) and floored at `MIN_SEND_CHUNK = 16 KiB`.
-- `SEND_HIGH_WATER = 8 MiB` / `LOW_WATER_MARK = 1 MiB` — classic high/low-water backpressure on `channel.bufferedAmount`: above high water the pump parks on `waitForDrain()`; `bufferedamountlow` (threshold = low water) resumes it.
+- `SEND_HIGH_WATER = 8 MiB` / `LOW_WATER_MARK = 1 MiB` (defined in `transfer.ts`) — classic high/low-water backpressure on `channel.bufferedAmount`: above high water the pump parks on `waitForDrain()`; `bufferedamountlow` (threshold = low water) resumes it.
 
 **Why 8 MiB is load-bearing:** Chrome's SCTP send buffer hard-caps at 16 MiB, and `bufferedAmount` *can never exceed it* — `send()` throws first. A high-water mark ≥ 16 MiB therefore never triggers, backpressure never engages, and every large transfer deterministically dies mid-send once the file outpaces the link (the historical "frozen at 40%" bug). The check also counts the chunk *about to be sent* (`bufferedAmount + sendChunk > SEND_HIGH_WATER`) so the buffer can't be pushed toward the cap. Relatedly, `waitForDrain()` also resolves on channel `close`/`error` — a channel that dies mid-drain must fail loudly, not park the pump forever.
 
