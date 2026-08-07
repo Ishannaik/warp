@@ -17,9 +17,6 @@
  * a batch so either peer can offer again without re-pairing.
  */
 
-/** 16 KiB chunk size — the SCTP-friendly sweet spot used across the design copy. */
-export const CHUNK_SIZE = 16 * 1024;
-
 /** Text snippets stay as one JSON control frame; keep them below old SCTP caps. */
 export const TEXT_SNIPPET_MAX_BYTES = 64 * 1024;
 const TEXT_SNIPPET_SIZE_PROBE_ID = "xxxxxxxx";
@@ -35,7 +32,7 @@ export function textSnippetFrameBytes(text: string, id = TEXT_SNIPPET_SIZE_PROBE
  * we stop pumping and wait for `bufferedamountlow` before resuming, so we never
  * balloon memory on a fast disk / slow link.
  */
-export const HIGH_WATER_MARK = 8 * 1024 * 1024; // 8 MiB
+export const SEND_HIGH_WATER = 8 * 1024 * 1024; // 8 MiB
 export const LOW_WATER_MARK = 1 * 1024 * 1024; // 1 MiB
 
 /** A single file's descriptor inside a batch manifest. */

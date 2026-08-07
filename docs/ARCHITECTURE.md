@@ -127,7 +127,7 @@ sender                                  receiver
 
 ### The send pump: chunk sizes and backpressure
 
-`streamFile()` is where throughput lives, and it's tuned by four constants at the top of `peer.ts`:
+`streamFile()` is where throughput lives, and it's tuned by four constants: three at the top of `peer.ts`, plus `SEND_HIGH_WATER` imported from `transfer.ts`:
 
 - `READ_BLOCK = 4 MiB` — the file is read via `blob.arrayBuffer()` in 4 MiB gulps: one `await` per ~4 MiB instead of one per chunk.
 - `TARGET_SEND_CHUNK = 256 KiB` — each gulp is sliced into SCTP messages of this size, capped at the *negotiated* `pc.sctp.maxMessageSize` (`sendChunkSize()`; a too-big message closes the channel) and floored at `MIN_SEND_CHUNK = 16 KiB`.
