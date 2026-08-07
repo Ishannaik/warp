@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import WhyTransfersFail from "./content/WhyTransfersFail";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -54,6 +55,13 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path === "/why-transfers-fail") {
+    return {
+      title: "Why does my file transfer keep failing? · Warp",
+      description:
+        "Cloud share tools upload your file to a server first, and that upload is what a dropped connection kills. Warp streams device-to-device and recovers instead of dying mid-transfer.",
+    };
+  }
   if (path !== "/") {
     return {
       title: "Page not found · Warp",
@@ -88,6 +96,7 @@ export default function App() {
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
+  if (path === "/why-transfers-fail") return <WhyTransfersFail />;
 
   return <NotFound />;
 }
