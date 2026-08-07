@@ -26,7 +26,7 @@ Closes #<!-- issue number, if any -->
 - [ ] No new recurring-cost infrastructure — no TURN, database, storage, or paid API ($0, no card, forever)
 - [ ] Still STUN-only — no relay in the file path; NAT failure stays an honest error
 - [ ] The signaling server still never reads, stores, or understands file contents
-- [ ] `SEND_HIGH_WATER` in `peer.ts` untouched or still well below 16 MiB
+- [ ] `SEND_HIGH_WATER` in `transfer.ts` untouched or still well below 16 MiB
 - [ ] Transient network drops still recover (no new terminal errors for blips; keepalive ping intact)
 
 ## Screenshots / recordings
