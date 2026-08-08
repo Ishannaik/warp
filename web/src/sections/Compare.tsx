@@ -124,7 +124,7 @@ const ROWS: Row[] = [
     warp: CHECK,
     airdrop: { value: CHECK, ok: true },
     wetransfer: { value: CROSS, ok: false },
-    wormhole: { value: CHECK, ok: true },
+    wormhole: { value: "Over 5 GB only", ok: false },
   },
   {
     label: "No file-size limit",
@@ -152,7 +152,7 @@ const ROWS: Row[] = [
     warp: CHECK,
     airdrop: { value: CROSS, ok: false },
     wetransfer: { value: CROSS, ok: false },
-    wormhole: { value: CHECK, ok: true },
+    wormhole: { value: CROSS, ok: false },
   },
 ];
 
