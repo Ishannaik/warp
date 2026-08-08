@@ -71,28 +71,29 @@ if (typeof globalThis.document === "undefined") globalThis.document = undefined;
 
 // --- transpile peer.ts/transfer.ts on the fly (esbuild if present) --------
 let WarpPeer;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const fs = await import("node:fs/promises");
-  const url = await import("node:url");
-  const path = await import("node:path");
-  const here = path.dirname(url.fileURLToPath(import.meta.url));
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "peer.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-    // signaling.ts is type-only at runtime here; let it bundle.
-  });
-  const code = out.outputFiles[0].text;
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
-  ({ WarpPeer } = await import(dataUrl));
-  void fs;
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available to transpile TS for this check —", e.message);
   process.exit(0);
 }
+const fs = await import("node:fs/promises");
+const url = await import("node:url");
+const path = await import("node:path");
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "peer.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+  // signaling.ts is type-only at runtime here; let it bundle.
+});
+const code = out.outputFiles[0].text;
+const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+({ WarpPeer } = await import(dataUrl));
+void fs;
 
 // --- wire two peers through fake channels ---------------------------------
 // Record out-of-band signaling sends so we can assert the instant-cancel path.

@@ -15,21 +15,22 @@ import url from "node:url";
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
 let supportedCodecs, isCompressible, chooseCodec, compressChunk, decompressChunk;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "compress.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-  });
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
-  ({ supportedCodecs, isCompressible, chooseCodec, compressChunk, decompressChunk } = await import(dataUrl));
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
 }
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "compress.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
+({ supportedCodecs, isCompressible, chooseCodec, compressChunk, decompressChunk } = await import(dataUrl));
 
 // --- isCompressible: an allowlist, raw when in doubt ------------------------------
 assert.equal(isCompressible("text/plain"), true, "text/plain compresses");

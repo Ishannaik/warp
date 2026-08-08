@@ -15,21 +15,22 @@ import url from "node:url";
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
 let LARGE_THRESHOLD, detectFsAccessSupport, isLargeBatch, chooseReceiveStrategy;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "receiveStrategy.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-  });
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
-  ({ LARGE_THRESHOLD, detectFsAccessSupport, isLargeBatch, chooseReceiveStrategy } = await import(dataUrl));
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
 }
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "receiveStrategy.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
+({ LARGE_THRESHOLD, detectFsAccessSupport, isLargeBatch, chooseReceiveStrategy } = await import(dataUrl));
 
 const MiB = 1024 * 1024;
 assert.equal(LARGE_THRESHOLD, 256 * MiB, "LARGE_THRESHOLD is the shared 256 MiB line");

@@ -32,25 +32,26 @@ globalThis.URL.revokeObjectURL = () => {};
 
 // --- transpile zipDownload.ts on the fly (esbuild if present) --------------
 let streamZipDownload;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const path = await import("node:path");
-  const url = await import("node:url");
-  const here = path.dirname(url.fileURLToPath(import.meta.url));
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "zipDownload.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-  });
-  const code = out.outputFiles[0].text;
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
-  ({ streamZipDownload } = await import(dataUrl));
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available to transpile TS for this check —", e.message);
   process.exit(0);
 }
+const path = await import("node:path");
+const url = await import("node:url");
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "zipDownload.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const code = out.outputFiles[0].text;
+const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+({ streamZipDownload } = await import(dataUrl));
 
 // fflate's synchronous unzip, for verifying the streamed archive. Resolves from
 // the same dependency the helper bundles.
