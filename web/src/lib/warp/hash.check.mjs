@@ -18,25 +18,26 @@ import assert from "node:assert";
 import { createHash, randomBytes } from "node:crypto";
 
 let init, update, finalize, toHex;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const url = await import("node:url");
-  const path = await import("node:path");
-  const here = path.dirname(url.fileURLToPath(import.meta.url));
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "sha256.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-  });
-  const code = out.outputFiles[0].text;
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
-  ({ init, update, finalize, toHex } = await import(dataUrl));
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
 }
+const url = await import("node:url");
+const path = await import("node:path");
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "sha256.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const code = out.outputFiles[0].text;
+const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+({ init, update, finalize, toHex } = await import(dataUrl));
 
 const enc = new TextEncoder();
 const hex = (bytes) => toHex(bytes);
