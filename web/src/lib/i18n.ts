@@ -53,6 +53,20 @@ export type StringKey = keyof Strings;
 
 const localeDictionaries: Record<string, Partial<Strings>> = { en };
 
+// AVAILABLE_LOCALES (switcher metadata) and localeDictionaries (actual
+// translations) are two registries that #164 is expected to update
+// together — catch it here if a future locale only makes it into one.
+for (const { code } of AVAILABLE_LOCALES) {
+  if (!localeDictionaries[code]) {
+    console.error(`i18n: "${code}" is in AVAILABLE_LOCALES but has no entry in localeDictionaries`);
+  }
+}
+for (const code of Object.keys(localeDictionaries)) {
+  if (!AVAILABLE_LOCALES.some((l) => l.code === code)) {
+    console.error(`i18n: "${code}" is in localeDictionaries but missing from AVAILABLE_LOCALES`);
+  }
+}
+
 const StringsContext = createContext<Strings>(en);
 
 interface LocaleState {
@@ -70,8 +84,12 @@ const LocaleStateContext = createContext<LocaleState>({
 function detectInitialLocale(): string {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
 
-  const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-  if (stored && localeDictionaries[stored]) return stored;
+  try {
+    const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+    if (stored && localeDictionaries[stored]) return stored;
+  } catch {
+    // Private browsing, disabled storage, etc. — fall through to detection.
+  }
 
   const preferred = navigator.languages?.length ? navigator.languages : [navigator.language];
   return pickBestLocale(preferred, Object.keys(localeDictionaries), DEFAULT_LOCALE);
@@ -93,7 +111,12 @@ export function LocaleProvider({
 
   const setLocale = (code: string) => {
     if (!localeDictionaries[code]) return;
-    window.localStorage.setItem(LOCALE_STORAGE_KEY, code);
+    try {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, code);
+    } catch {
+      // Quota exceeded, disabled storage, etc. — the pick still takes
+      // effect for this session, it just won't persist across reloads.
+    }
     setLocaleState(code);
   };
 
