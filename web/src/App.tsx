@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import SendWithoutUploading from "./content/SendWithoutUploading";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -54,6 +55,13 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path === "/send-without-uploading") {
+    return {
+      title: "Send files without uploading to a server · Warp",
+      description:
+        "Warp sends files device-to-device over an encrypted peer-to-peer connection — no cloud copy, no upload step. Here's exactly what the signaling server does and doesn't see.",
+    };
+  }
   if (path !== "/") {
     return {
       title: "Page not found · Warp",
@@ -91,6 +99,7 @@ export default function App() {
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
+  if (path === "/send-without-uploading") return <SendWithoutUploading />;
 
   return <NotFound />;
 }
