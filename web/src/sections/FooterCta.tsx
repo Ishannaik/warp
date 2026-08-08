@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useLocale } from "../lib/i18n";
 
 /**
  * FooterCta — closing call-to-action + footer bar.
@@ -37,6 +38,66 @@ function FooterLink({ label, href, external, to }: { label: string; href: string
     >
       {label}
     </a>
+  );
+}
+
+/** Mono, hairline-bordered locale pills — one active button per available locale (issue #163). */
+function LanguageSwitcher() {
+  const { locale, locales, setLocale } = useLocale();
+  if (locales.length < 2) {
+    // Nothing to switch to yet — just say what's active. Grows real options
+    // once a second locale ships (#164) without any change here.
+    return (
+      <span
+        style={{
+          fontFamily: "'JetBrains Mono',monospace",
+          fontSize: 11,
+          letterSpacing: ".08em",
+          color: "#4a463c",
+          border: "1px solid rgba(239,233,218,.13)",
+          padding: "4px 8px",
+        }}
+      >
+        {locales[0]?.label ?? locale.toUpperCase()}
+      </span>
+    );
+  }
+
+  return (
+    <div
+      role="group"
+      aria-label="Language"
+      style={{
+        display: "flex",
+        border: "1px solid rgba(239,233,218,.13)",
+        fontFamily: "'JetBrains Mono',monospace",
+        fontSize: 11,
+        letterSpacing: ".08em",
+      }}
+    >
+      {locales.map((l) => {
+        const active = l.code === locale;
+        return (
+          <button
+            key={l.code}
+            type="button"
+            title={l.name}
+            aria-pressed={active}
+            onClick={() => setLocale(l.code)}
+            style={{
+              appearance: "none",
+              background: active ? "rgba(239,233,218,.09)" : "transparent",
+              border: "none",
+              color: active ? "#efe9da" : "#6f6a5d",
+              padding: "4px 8px",
+              cursor: active ? "default" : "pointer",
+            }}
+          >
+            {l.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -167,6 +228,7 @@ export default function FooterCta() {
           {footerLinks.map((l) => (
             <FooterLink key={l.label} label={l.label} href={l.href} external={l.external} to={l.to} />
           ))}
+          <LanguageSwitcher />
         </div>
         <div
           style={{
