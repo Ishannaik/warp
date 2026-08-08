@@ -42,7 +42,7 @@ function FooterLink({ label, href, external, to }: { label: string; href: string
 }
 
 /** Mono, hairline-bordered locale pills — one active button per available locale (issue #163). */
-function LanguageSwitcher() {
+function LanguageSwitcher({ isMobile }: { isMobile: boolean }) {
   const { locale, locales, setLocale } = useLocale();
   if (locales.length < 2) {
     // Nothing to switch to yet — just say what's active. Grows real options
@@ -69,6 +69,8 @@ function LanguageSwitcher() {
       aria-label="Language"
       style={{
         display: "flex",
+        flexWrap: "wrap",
+        maxWidth: isMobile ? 220 : undefined,
         border: "1px solid rgba(239,233,218,.13)",
         fontFamily: "'JetBrains Mono',monospace",
         fontSize: 11,
@@ -89,7 +91,7 @@ function LanguageSwitcher() {
               background: active ? "rgba(239,233,218,.09)" : "transparent",
               border: "none",
               color: active ? "#efe9da" : "#6f6a5d",
-              padding: "4px 8px",
+              padding: isMobile ? "4px 6px" : "4px 8px",
               cursor: active ? "default" : "pointer",
             }}
           >
@@ -228,7 +230,7 @@ export default function FooterCta() {
           {footerLinks.map((l) => (
             <FooterLink key={l.label} label={l.label} href={l.href} external={l.external} to={l.to} />
           ))}
-          <LanguageSwitcher />
+          <LanguageSwitcher isMobile={isMobile} />
         </div>
         <div
           style={{
