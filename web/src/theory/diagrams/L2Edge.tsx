@@ -21,7 +21,7 @@ import {
  * Contrasts two workloads through an edge node:
  *  - Cacheable (cheap): one origin fetch, then many cache HITs fan out; the
  *    hit counter climbs while cost-per-delivery collapses (a flat-cheap curve).
- *  - Wrap-style transfer (not cacheable): every request is a unique encrypted
+ *  - Warp-style transfer (not cacheable): every request is a unique encrypted
  *    MISS; the egress meter climbs one-for-one (a linear curve).
  *
  * The two cost curves are drawn as SVG and animate their divergence.

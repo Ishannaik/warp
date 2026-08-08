@@ -34,11 +34,11 @@ import L7Bedrock from "./diagrams/L7Bedrock";
 /**
  * Theory — the "/how" deep-dive (page shell / foundation).
  *
- * Editorial technical longform that teaches (PART A) how Wrap actually works,
+ * Editorial technical longform that teaches (PART A) how Warp actually works,
  * concept by concept, then descends (PART B) through the economics of a relayed
  * byte to show why a relay can never be truly free.
  *
- * Built entirely on the Wrap design system: dark palette, Bricolage/Archivo/
+ * Built entirely on the Warp design system: dark palette, Bricolage/Archivo/
  * JetBrains Mono, hairline borders, mono eyebrows, accent var(--acc) /
  * amber var(--amb). All diagrams are self-contained CSS/SVG components living in
  * ./diagrams and rendered beside their prose. Final copy comes from

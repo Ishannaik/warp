@@ -1457,7 +1457,6 @@ export class WarpPeer {
   }
 }
 
-/** Max edge of a generated thumbnail, in CSS pixels. */
 /**
  * Validate a receiver-supplied resume offset (Fable L1): must be a non-negative
  * integer no larger than the file. Anything else (NaN, negative, >size, non-int —
@@ -1480,6 +1479,7 @@ function pieceBuffer(p: Uint8Array): ArrayBuffer {
     : p.slice().buffer;
 }
 
+/** Max edge of a generated thumbnail, in CSS pixels. */
 const THUMB_MAX = 64;
 
 /** Skip thumbnail decoding above this source size (issue #90): a single enormous

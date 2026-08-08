@@ -13,7 +13,7 @@ import {
  * Every diagram in src/theory/diagrams reuses these so the deep-dive reads as
  * one consistent visual language: the same node chrome, the same beams, the
  * same labels, the same scroll-trigger. All pieces are CSS/SVG only (no raster
- * images) and lean on the Wrap palette tokens (--acc, --amb, ink/body/muted/
+ * images) and lean on the Warp palette tokens (--acc, --amb, ink/body/muted/
  * dim) plus the theory.css keyframes.
  *
  * Convention: diagrams import what they need from "./primitives" and wrap their

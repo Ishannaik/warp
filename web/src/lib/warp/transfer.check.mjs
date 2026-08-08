@@ -29,7 +29,8 @@ try {
   process.exit(0);
 }
 
-const { fileKey, newResumeToken, formatBytes } = mod;
+const { fileKey, newResumeToken, formatBytes, textSnippetFrameBytes, TEXT_SNIPPET_MAX_BYTES, fileId } =
+  mod;
 
 // --- fileKey: stable per (name,size,mtime); changes when any of them changes ---
 const a = { name: "clip.mp4", size: 1234, lastModified: 42 };
@@ -60,4 +61,77 @@ assert.equal(formatBytes(120_000_000), "120 MB", "large MB uses zero decimals");
 assert.equal(formatBytes(999_999_999), "1.0 GB", "999_999_999 must not render as 1000 MB");
 assert.equal(formatBytes(1_000_000_000), "1.0 GB", "exact GB boundary");
 
-console.log("OK: transfer.ts resume identity helpers (fileKey stability + token uniqueness) + formatBytes boundaries");
+// --- textSnippetFrameBytes: measures the wire frame, not the string ---
+// The value guards `SessionView`'s composer hint and `peer.ts`'s send-side throw, so it has
+// to count what is actually JSON-encoded: the envelope, and UTF-8 bytes rather than UTF-16
+// code units.
+const utf8 = (s) => new TextEncoder().encode(s).byteLength;
+
+// The empty frame is pure envelope: {"t":"text","id":"xxxxxxxx","text":""}
+const ENVELOPE_BYTES = textSnippetFrameBytes("");
+assert.equal(ENVELOPE_BYTES, 38, "empty snippet still costs the JSON envelope");
+
+for (const [label, text] of [
+  ["empty", ""],
+  ["ascii", "hello world"],
+  ["multi-byte", "👋 héllo — ünïcode"],
+  ["astral only", "👋🏽👨‍👩‍👧‍👦"],
+]) {
+  assert.ok(
+    textSnippetFrameBytes(text) >= utf8(text),
+    `${label}: frame is never smaller than the raw UTF-8 payload`,
+  );
+  assert.equal(
+    textSnippetFrameBytes(text),
+    ENVELOPE_BYTES + utf8(text),
+    `${label}: frame is exactly envelope + UTF-8 payload when nothing needs escaping`,
+  );
+}
+
+// The whole reason the helper exists: `.length` under-counts multi-byte text.
+// "👋" is 2 UTF-16 code units but 4 UTF-8 bytes, so a naive check leaks 2 bytes per emoji.
+assert.ok(
+  textSnippetFrameBytes("👋") - ENVELOPE_BYTES > "👋".length,
+  "multi-byte text costs more bytes than String#length suggests",
+);
+
+// JSON escaping expands on the wire too: `"` and `\` each serialize to two bytes.
+assert.equal(textSnippetFrameBytes('"'), ENVELOPE_BYTES + 2, 'a quote is escaped to \\" on the wire');
+assert.equal(textSnippetFrameBytes("\\"), ENVELOPE_BYTES + 2, "a backslash is escaped to \\\\ on the wire");
+assert.ok(
+  textSnippetFrameBytes('""""') > utf8('""""'),
+  "escaping is counted, so quote-heavy text is larger than its raw byte length",
+);
+
+// --- textSnippetFrameBytes: the cap boundary peer.ts throws on ---
+const atCap = "a".repeat(TEXT_SNIPPET_MAX_BYTES - ENVELOPE_BYTES);
+assert.equal(textSnippetFrameBytes(atCap), TEXT_SNIPPET_MAX_BYTES, "largest exact-fit snippet lands on the cap");
+assert.ok(textSnippetFrameBytes(atCap) <= TEXT_SNIPPET_MAX_BYTES, "an exact-fit snippet is accepted");
+assert.ok(
+  textSnippetFrameBytes(atCap + "a") > TEXT_SNIPPET_MAX_BYTES,
+  "one byte past the cap is rejected — the boundary is not off by one",
+);
+assert.ok(
+  textSnippetFrameBytes("x".repeat(TEXT_SNIPPET_MAX_BYTES)) > TEXT_SNIPPET_MAX_BYTES,
+  "a clearly oversized snippet exceeds the cap",
+);
+
+// --- textSnippetFrameBytes: the default probe id must bound every real id ---
+// `SessionView` measures with the default probe id before an id exists, while `peer.ts`
+// measures with the real one from `fileId()`. The UI hint is only safe if the probe is
+// never shorter than a real id, otherwise a snippet could pass the hint and throw on send.
+const PROBE_ID_BYTES = 8;
+for (let i = 0; i < 200; i++) {
+  assert.ok(
+    utf8(fileId()) <= PROBE_ID_BYTES,
+    "fileId() never exceeds the default probe id, so the composer hint stays conservative",
+  );
+}
+assert.ok(
+  textSnippetFrameBytes("hi", "short") <= textSnippetFrameBytes("hi"),
+  "a shorter id yields a smaller frame than the probe id estimate",
+);
+
+console.log(
+  "OK: transfer.ts resume identity helpers (fileKey stability + token uniqueness) + formatBytes boundaries + textSnippetFrameBytes envelope/UTF-8/escaping/cap",
+);

@@ -8,7 +8,7 @@ import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
 /**
  * "On your network" — LAN auto-discovery surface for the landing page.
  *
- * Lists other Wrap devices on the same Wi-Fi (no code needed). Tap a device to
+ * Lists other Warp devices on the same Wi-Fi (no code needed). Tap a device to
  * pick files and offer them across. Review-before-receive redesign: an inbound
  * FILE offer raises the SAME accept modal as the code-room flow (with the file
  * manifest, thumbnails, sizes), and on accept the files land in an in-app TRAY

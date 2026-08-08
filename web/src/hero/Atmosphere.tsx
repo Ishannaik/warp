@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 /**
  * Hero background atmosphere layer: an aceternity-style lamp glow plus a set of
- * magic-ui meteor streaks. Ported verbatim from the Wrap design source
+ * magic-ui meteor streaks. Ported verbatim from the Warp design source
  * (`#warp-atmo`). Pointer-events disabled; sits behind the hero content.
  *
  * The shipped default variant has atmosphere ON, so this is always rendered.

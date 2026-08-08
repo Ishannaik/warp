@@ -10,7 +10,7 @@ import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
 
 /**
- * Wrap Transfer flow — a real, WebRTC-backed transfer surface.
+ * Warp Transfer flow — a real, WebRTC-backed transfer surface.
  *
  * Review-before-receive redesign: there are now two pre-connect screens and then
  * one PERSISTENT session view shared with the LAN flow:

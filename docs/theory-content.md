@@ -1,7 +1,7 @@
-# Wrap — Explainer Content
+# Warp — Explainer Content
 
 > Source of truth for the `/how` deep-dive page (`web/src/theory/Theory.tsx`).
-> Two parts. **PART A** explains *how Wrap works* (7 concepts, A1–A7). **PART B**
+> Two parts. **PART A** explains *how Warp works* (7 concepts, A1–A7). **PART B**
 > explains *why a relay can never be completely free* as a descent through eight
 > layers (L0–L7) plus a closing synthesis.
 >
@@ -22,7 +22,7 @@
 
 - **Eyebrow:** THE THEORY — IN PLAIN LANGUAGE
 - **Headline:** No server / in the middle.
-- **Sub:** Wrap moves a file straight from one device to another over an
+- **Sub:** Warp moves a file straight from one device to another over an
   encrypted, peer-to-peer channel. Here is exactly how that works — and, at the
   end, the honest reason a relay-based service can never be truly free.
 - **Signature diagram (hero):** the two-phase Flow diagram. Phase 1 — both peers
@@ -33,7 +33,7 @@
 
 ---
 
-# PART A — How Wrap works
+# PART A — How Warp works
 
 A literal walkthrough of the lifecycle of one transfer. Numbering 01–07 is real:
 it traces the order things actually happen.
@@ -57,7 +57,7 @@ before it can come down.
 
 The uncomfortable part is that the server didn't need to see the file at all. It
 was only ever a middleman — a place to leave the file so the other person could
-pick it up later. Wrap removes the middleman: if two devices are both online,
+pick it up later. Warp removes the middleman: if two devices are both online,
 the file goes directly between them.
 
 - **Callout (amber):** If two devices are both online, the file should go
@@ -88,7 +88,7 @@ A side-by-side comparison that animates the contrast.
 **Body.**
 WebRTC was designed for live video calls, where routing every frame through a
 server would be slow and expensive. So browsers learned how to open a direct
-connection between two machines and stream data across it. Wrap uses that exact
+connection between two machines and stream data across it. Warp uses that exact
 capability — not for video, but for your files, over a **DataChannel** that is
 wrapped in **DTLS** encryption by the standard itself. Encryption isn't a
 feature you switch on; it's the only mode there is.
@@ -168,7 +168,7 @@ here, what address and port do I look like?" — and STUN answers. Armed with
 that, two peers behind ordinary (full-cone / address-restricted) routers can
 **hole-punch**: aim packets at each other's discovered addresses at the same
 moment so each router accepts the other's traffic. STUN is tiny and cheap, so
-Wrap uses it freely.
+Warp uses it freely.
 
 But some networks — **symmetric NATs**, **CGNAT** (carrier-grade NAT shared
 across many subscribers), strict corporate firewalls — rewrite the port
@@ -178,7 +178,7 @@ only fix is a **TURN** relay: a server that forwards every encrypted byte for th
 whole transfer. That's bandwidth someone has to pay for, and it quietly puts a
 server back in the middle of your data. This is the hinge into PART B.
 
-- **Callout (amber):** Wrap runs no TURN relay. On the rare network where a
+- **Callout (amber):** Warp runs no TURN relay. On the rare network where a
   direct path can't form, it tells you plainly instead of routing your file
   through a paid server. Free, honest, and never a middleman by stealth.
 
@@ -192,7 +192,7 @@ Two contrasting scenarios, ideally toggling or stacked:
   port per destination (animate the port number changing each attempt — e.g.
   :51001 → :51002 → :51003). The address STUN learned no longer matches; the
   hole-punch beam fails to connect (a broken/severed beam). Caption: only a TURN
-  relay could bridge this — and Wrap won't.
+  relay could bridge this — and Warp won't.
 Reduced-motion: show both scenarios at rest — open path connected, symmetric path
 broken with mismatched ports labeled.
 
@@ -203,7 +203,7 @@ broken with mismatched ports labeled.
 - **Eyebrow:** 05 / MOVING THE BYTES
 - **Heading:** Big files go across as a steady stream of 16 KB chunks.
 - **Lede:** You can't hand a multi-gigabyte file to the channel in one piece — it
-  would exhaust memory. Wrap slices the file into small **16 KB chunks** and
+  would exhaust memory. Warp slices the file into small **16 KB chunks** and
   feeds them through one after another.
 
 **Body.**
@@ -212,7 +212,7 @@ moment, no matter how large the whole thing is. That's why there's no size cap �
 the only real limit is free space on the receiving device.
 
 The second half is **backpressure**. The sender can produce chunks far faster
-than the network can carry them, so Wrap watches the channel's outgoing buffer
+than the network can carry them, so Warp watches the channel's outgoing buffer
 (`bufferedAmount`). When it fills past a high-water threshold, the sender pauses;
 when it drains below a low-water mark, the sender resumes. The file moves at
 exactly the speed the link can sustain — fast where the network is fast, patient
@@ -239,20 +239,20 @@ flight.
 
 - **Eyebrow:** 06 / NEARBY
 - **Heading:** Devices on the same network find each other automatically.
-- **Lede:** When two devices sit on the same network, Wrap can let them discover
+- **Lede:** When two devices sit on the same network, Warp can let them discover
   each other with no code at all — grouped by the public address they share.
 
 **Body.**
-Every device that connects to Wrap's signaling server arrives from some public
+Every device that connects to Warp's signaling server arrives from some public
 address. Two devices on the same home or office network almost always egress from
-the **same public IPv4 address**, so Wrap can group connections by that address
+the **same public IPv4 address**, so Warp can group connections by that address
 and quietly show you the other devices that appear to be sitting right next to
 you — Snapdrop-style, no room code to type.
 
 IPv6 needs a gentler grouping. A single subscriber line is typically handed a
 whole **/64 prefix**, and individual devices take different addresses within it
 (privacy extensions rotate them, too). Matching on the full 128-bit address would
-split a household apart, so Wrap groups by the **/64 prefix** instead — the part
+split a household apart, so Warp groups by the **/64 prefix** instead — the part
 that identifies the network, not the device. Same network, same group; discovery
 just works, and the actual transfer still happens directly and encrypted between
 the two peers.
@@ -281,7 +281,7 @@ the matching prefix highlighted.
 - **Eyebrow:** 07 / THE SERVER THAT BARELY EXISTS
 - **Heading:** A Cloudflare Durable Object that wakes to introduce two peers,
   then sleeps.
-- **Lede:** The one piece of server Wrap needs is the signaling switchboard. It
+- **Lede:** The one piece of server Warp needs is the signaling switchboard. It
   runs as a Cloudflare **Durable Object** — a tiny, single-purpose coordinator
   that hibernates the instant it goes idle.
 
@@ -293,7 +293,7 @@ two devices. The moment the peers connect directly and the room falls quiet, it
 itself is evicted from memory) — freeing its resources until something else needs
 it.
 
-This is what makes Wrap cheap to run and trustworthy by design. There are no
+This is what makes Warp cheap to run and trustworthy by design. There are no
 fleets of servers, no storage buckets, no file-handling tier to pay for or to
 breach. The only server-side component is a coordinator that sees connection
 notes for a few seconds and then goes back to sleep — while your file travels a
@@ -317,14 +317,14 @@ with notes in place, plus a dim label that it hibernates when idle — no flicke
 
 # PART B — Why a relay can never be completely free
 
-A descent. We start at the surface, where Wrap lives, and go down one layer at a
+A descent. We start at the surface, where Warp lives, and go down one layer at a
 time toward bedrock. Each layer answers "but couldn't the layer below absorb the
 cost?" — and the answer keeps being *no*. The sticky **DepthGauge** rail on the
 side marks L0…L7 as the reader descends.
 
 - **PART B intro eyebrow:** PART B / THE ECONOMICS OF A BYTE
 - **PART B intro heading:** Why a relay can never be completely free.
-- **PART B intro lede:** Wrap is free because, in the common case, it relays
+- **PART B intro lede:** Warp is free because, in the common case, it relays
   nothing — it reuses pipes you've *already* paid for. The moment a service
   relays your bytes for you, it inherits a cost that doesn't disappear no matter
   how deep you push it. Follow it down.
@@ -340,9 +340,9 @@ side marks L0…L7 as the reader descends.
   marginal cost to anyone but the two peers.
 
 **Body.**
-When Wrap connects two peers directly, your bytes ride your existing broadband
+When Warp connects two peers directly, your bytes ride your existing broadband
 and the receiver's existing connection. Those are sunk costs — already paid,
-flat-rate, sitting idle. Wrap adds a few seconds of tiny, content-free signaling
+flat-rate, sitting idle. Warp adds a few seconds of tiny, content-free signaling
 on top, which is cheap enough to give away. That's the whole trick: **free**
 isn't magic, it's the absence of a relay.
 
@@ -412,7 +412,7 @@ cloud bill. The edge can't rescue a relay.
 Contrast two workloads through an edge/CDN node:
 - *Cacheable (cheap):* one origin fetch, then many cache **HITs** fanning out to
   many clients — show the hit counter climbing, cost-per-delivery collapsing.
-- *Wrap-style transfer (not cacheable):* every request is a **MISS** / unique
+- *Warp-style transfer (not cacheable):* every request is a **MISS** / unique
   encrypted blob; the egress meter climbs one-for-one with deliveries.
 Animate the divergence (one line flat-and-cheap, the other linear). Reduced-
 motion: show both end states with HIT vs MISS labels and the two cost curves.
@@ -600,15 +600,15 @@ fully static plates with all three figures/laws labeled.
 ## CLOSING — Synthesis
 
 - **Eyebrow:** THE WHOLE STORY, IN ONE BREATH
-- **Heading:** So Wrap is free by refusing to relay.
+- **Heading:** So Warp is free by refusing to relay.
 - **Lede:** Every layer of the descent said the same thing: a relayed byte costs
-  something, all the way down to physics. Wrap's answer is to not relay.
+  something, all the way down to physics. Warp's answer is to not relay.
 
 **Body.**
 In the common case, two devices connect directly and the file rides pipes that are
 already paid for — marginal cost zero, no server in the path, end-to-end
 encrypted by the standard itself. On the rare network where a direct path can't
-form, Wrap doesn't quietly route you through a paid relay and eat a cost it would
+form, Warp doesn't quietly route you through a paid relay and eat a cost it would
 eventually have to recover. It tells you the truth. That honesty is the product:
 free where free is real, and never a middleman by stealth.
 
