@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
 
 /**
@@ -123,7 +124,7 @@ const ROWS: Row[] = [
     warp: CHECK,
     airdrop: { value: CHECK, ok: true },
     wetransfer: { value: CROSS, ok: false },
-    wormhole: { value: CHECK, ok: true },
+    wormhole: { value: "Over 5 GB only", ok: false },
   },
   {
     label: "No file-size limit",
@@ -151,7 +152,7 @@ const ROWS: Row[] = [
     warp: CHECK,
     airdrop: { value: CROSS, ok: false },
     wetransfer: { value: CROSS, ok: false },
-    wormhole: { value: CHECK, ok: true },
+    wormhole: { value: CROSS, ok: false },
   },
 ];
 
@@ -192,7 +193,13 @@ export default function Compare() {
               <div style={headWrapStyle}>WARP</div>
               <div style={headOtherStyle}>AIRDROP</div>
               <div style={headOtherStyle}>WETRANSFER</div>
-              <div style={headOtherStyle}>WORMHOLE</div>
+              <a
+                href="/vs/wormhole"
+                onClick={(e) => { e.preventDefault(); navigate("/vs/wormhole"); }}
+                style={{ ...headOtherStyle, textDecoration: "none" }}
+              >
+                WORMHOLE
+              </a>
             </div>
 
             {/* rows */}
