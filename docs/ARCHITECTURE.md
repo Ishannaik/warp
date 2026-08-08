@@ -130,10 +130,18 @@ sender                                  receiver
 `streamFile()` is where throughput lives, and it's tuned by four constants at the top of `peer.ts`:
 
 - `READ_BLOCK = 4 MiB` — the file is read via `blob.arrayBuffer()` in 4 MiB gulps: one `await` per ~4 MiB instead of one per chunk.
-- `TARGET_SEND_CHUNK = 256 KiB` — each gulp is sliced into SCTP messages of this size, capped at the *negotiated* `pc.sctp.maxMessageSize` (`sendChunkSize()`; a too-big message closes the channel) and floored at `MIN_SEND_CHUNK = 16 KiB`.
+- `TARGET_SEND_CHUNK = 256 KiB` — each gulp is sliced into SCTP messages of this size, capped at the *negotiated* `pc.sctp.maxMessageSize` (`sendChunkSize()`; a too-big message closes the channel) and floored at `MIN_SEND_CHUNK = 16 KiB`. 256 KiB deliberately exceeds RFC 8831 §6.6's 16 KB SHOULD, which exists to stop one stream monopolizing an association that interleaves many — a single bulk transfer *wants* to monopolize, and the negotiated peer limit is still respected.
 - `SEND_HIGH_WATER = 8 MiB` / `LOW_WATER_MARK = 1 MiB` — classic high/low-water backpressure on `channel.bufferedAmount`: above high water the pump parks on `waitForDrain()`; `bufferedamountlow` (threshold = low water) resumes it.
 
-**Why 8 MiB is load-bearing:** Chrome's SCTP send buffer hard-caps at 16 MiB, and `bufferedAmount` *can never exceed it* — `send()` throws first. A high-water mark ≥ 16 MiB therefore never triggers, backpressure never engages, and every large transfer deterministically dies mid-send once the file outpaces the link (the historical "frozen at 40%" bug). The check also counts the chunk *about to be sent* (`bufferedAmount + sendChunk > SEND_HIGH_WATER`) so the buffer can't be pushed toward the cap. Relatedly, `waitForDrain()` also resolves on channel `close`/`error` — a channel that dies mid-drain must fail loudly, not park the pump forever.
+**Three distinct size limits, easy to conflate** (`docs/research-2026-07.md` §1):
+
+| # | Limit | Value | Where it comes from |
+|---|---|---|---|
+| 1 | Default per-message `maxMessageSize` | **64 KiB** | RFC 8841 §6.1 when the SDP omits `a=max-message-size`; W3C `[[MaxMessageSize]]` initializes to 65536 |
+| 2 | SCTP **association** send buffer | **256 KiB** | usrsctp `SCTPCTL_MAXDGRAM_DEFAULT`; Chromium `kSendBufferSize` |
+| 3 | `bufferedAmount` **send-queue** cap | **16 MiB** | libwebrtc `DataChannelInterface::MaxSendQueueSize()`; Blink's `ValidateSendLength()` throws `OperationError` above it |
+
+**Why 8 MiB is load-bearing:** backpressure depends on limit **3**, not on "the SCTP send buffer" — that name belongs to limit 2, which is 256 KiB. `bufferedAmount` can never *reach* 16 MiB because `send()` throws first, so a high-water mark ≥ 16 MiB never triggers, backpressure never engages, and every large transfer deterministically dies mid-send once the file outpaces the link (the historical "frozen at 40%" bug). The check also counts the chunk *about to be sent* (`bufferedAmount + sendChunk > SEND_HIGH_WATER`) so the queue can't be pushed toward the cap. Relatedly, `waitForDrain()` also resolves on channel `close`/`error` — a channel that dies mid-drain must fail loudly, not park the pump forever.
 
 ### Cancel: instant, from either side
 
