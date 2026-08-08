@@ -15,12 +15,14 @@
  * the global keyframes media query.
  */
 
-import { memo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   TEXT_SNIPPET_MAX_BYTES,
   formatBytes,
+  summarizeBatches,
   textSnippetFrameBytes,
+  type BatchSummary,
   type OfferItem,
   type TransferItem,
 } from "../lib/warp/transfer";
@@ -694,6 +696,84 @@ function composerBtn(isMobile: boolean): CSSProperties {
   };
 }
 
+/* ------------------------------------------------------------- batch progress */
+
+/**
+ * One aggregate bar for a multi-file batch: "3 of 8 files · 340 MB of 900 MB".
+ * Byte-weighted so a handful of large files don't get drowned out by a pile of
+ * tiny ones finishing first. Purely derived from the batch's own items — see
+ * `summarizeBatches` for the grouping/rollup. Single-file transfers never
+ * produce a summary (see there), so this never renders redundantly.
+ */
+function BatchBar({ batch, isMobile }: { batch: BatchSummary; isMobile: boolean }) {
+  const complete = batch.done >= batch.total;
+  const col = complete ? "var(--acc)" : "var(--amb)";
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: isMobile ? "12px" : "13px 15px",
+        borderBottom: `1px solid ${HAIRLINE}`,
+        background: "rgba(var(--acc-rgb),.04)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "10px",
+          fontFamily: MONO,
+          fontSize: "10.5px",
+          letterSpacing: ".05em",
+          color: "#a8a293",
+        }}
+      >
+        <span>
+          {batch.direction === "receive" ? "↓" : "↑"} Batch · {batch.done} of {batch.total} files
+        </span>
+        <span style={{ color: "#6f6a5d", whiteSpace: "nowrap" }}>
+          {formatBytes(batch.bytesDone)} of {formatBytes(batch.bytesTotal)}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <span
+          style={{
+            flex: 1,
+            height: "7px",
+            background: "rgba(239,233,218,.09)",
+            overflow: "hidden",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              height: "100%",
+              width: `${batch.progress}%`,
+              background: col,
+              transition: "width .12s linear",
+            }}
+          />
+        </span>
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: "10.5px",
+            color: "#a8a293",
+            width: "34px",
+            whiteSpace: "nowrap",
+            textAlign: "right",
+          }}
+        >
+          {batch.progress}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ the tray */
 
 function Tray({
@@ -717,6 +797,9 @@ function Tray({
   const receivedFiles = items.filter(
     (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && !t.savedToDisk && t.blob,
   ).length;
+
+  // Aggregate bar(s) for any batch of 2+ files, shown above the per-file rows.
+  const batches = useMemo(() => summarizeBatches(items), [items]);
 
   return (
     <div style={{ border: `1px solid ${HAIRLINE}`, background: "#15140f" }}>
@@ -762,6 +845,10 @@ function Tray({
           </button>
         )}
       </div>
+
+      {batches.map((batch) => (
+        <BatchBar key={batch.batchId} batch={batch} isMobile={isMobile} />
+      ))}
 
       {items.length === 0 ? (
         <div

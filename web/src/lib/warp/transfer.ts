@@ -163,6 +163,63 @@ export interface TransferItem {
   peerId?: string;
 }
 
+/** Aggregate progress across every item that shares a `batchId`. */
+export interface BatchSummary {
+  batchId: string;
+  direction: Direction;
+  peerId?: string;
+  /** Items in this batch, in the order they appear in the tray. */
+  total: number;
+  /** Items whose status is `done` (declined/cancelled/error items don't count). */
+  done: number;
+  bytesTotal: number;
+  bytesDone: number;
+  /** 0..100, byte-weighted (large files count for more than small ones). */
+  progress: number;
+}
+
+/**
+ * Groups tray items by `batchId` and rolls each group up into byte-weighted
+ * totals, for a "3 of 8 files, 340 MB of 900 MB" style aggregate bar. Only
+ * groups with 2+ items are returned — a lone file's own row is the aggregate,
+ * so there's nothing useful to summarize (and #134 wants no redundant bar).
+ *
+ * `transferred` already reflects a `done` item's full size, so summing it
+ * across the group is enough — no separate branch needed for finished items.
+ */
+export function summarizeBatches(items: TransferItem[]): BatchSummary[] {
+  const order: string[] = [];
+  const groups = new Map<string, TransferItem[]>();
+  for (const item of items) {
+    let group = groups.get(item.batchId);
+    if (!group) {
+      group = [];
+      groups.set(item.batchId, group);
+      order.push(item.batchId);
+    }
+    group.push(item);
+  }
+
+  const summaries: BatchSummary[] = [];
+  for (const batchId of order) {
+    const group = groups.get(batchId)!;
+    if (group.length < 2) continue;
+    const bytesTotal = group.reduce((s, i) => s + i.size, 0);
+    const bytesDone = group.reduce((s, i) => s + i.transferred, 0);
+    summaries.push({
+      batchId,
+      direction: group[0].direction,
+      peerId: group[0].peerId,
+      total: group.length,
+      done: group.filter((i) => i.status === "done").length,
+      bytesTotal,
+      bytesDone,
+      progress: bytesTotal > 0 ? Math.round((bytesDone / bytesTotal) * 100) : 0,
+    });
+  }
+  return summaries;
+}
+
 /** Human-readable byte formatter matching the design's `fmt()`. */
 export function formatBytes(b: number): string {
   if (b >= 1e9) return (b / 1e9).toFixed(1) + " GB";
