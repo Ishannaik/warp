@@ -1,5 +1,20 @@
-import { createContext, createElement, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import en from "../locales/en";
+import {
+  AVAILABLE_LOCALES,
+  DEFAULT_LOCALE,
+  LOCALE_STORAGE_KEY,
+  pickBestLocale,
+  type LocaleMeta,
+} from "./localeDetect";
 
 /**
  * Warp's i18n layer. No framework (see #37) — just a typed dictionary,
@@ -24,31 +39,92 @@ import en from "../locales/en";
  * a name) is a template function instead — `t("files_count")(3)` — so
  * we never concatenate strings around a number and bake in English word
  * order.
+ *
+ * The switcher (#163) lives here too: `LocaleProvider` picks a starting
+ * locale from `navigator.languages` (see `localeDetect.ts`), remembers a
+ * manual pick in `localStorage`, and keeps `<html lang>` in sync. `useLocale()`
+ * exposes that state to the footer control. The `strings` prop from #161 is
+ * still there — a partial override merged on top of whatever locale is
+ * active, handy for one-off testing without touching localStorage.
  */
 
 export type Strings = typeof en;
 export type StringKey = keyof Strings;
 
-const LocaleContext = createContext<Strings>(en);
+const localeDictionaries: Record<string, Partial<Strings>> = { en };
+
+const StringsContext = createContext<Strings>(en);
+
+interface LocaleState {
+  locale: string;
+  locales: readonly LocaleMeta[];
+  setLocale: (code: string) => void;
+}
+
+const LocaleStateContext = createContext<LocaleState>({
+  locale: DEFAULT_LOCALE,
+  locales: AVAILABLE_LOCALES,
+  setLocale: () => {},
+});
+
+function detectInitialLocale(): string {
+  if (typeof window === "undefined") return DEFAULT_LOCALE;
+
+  const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+  if (stored && localeDictionaries[stored]) return stored;
+
+  const preferred = navigator.languages?.length ? navigator.languages : [navigator.language];
+  return pickBestLocale(preferred, Object.keys(localeDictionaries), DEFAULT_LOCALE);
+}
 
 export function LocaleProvider({
   strings,
   children,
 }: {
-  /** A partial locale to merge over `en`. Omit for plain English. */
+  /** A partial locale to merge over the active locale. Omit for the plain dictionary. */
   strings?: Partial<Strings>;
   children: ReactNode;
 }) {
-  const merged = useMemo<Strings>(() => ({ ...en, ...strings }), [strings]);
-  return createElement(LocaleContext.Provider, { value: merged }, children);
+  const [locale, setLocaleState] = useState<string>(detectInitialLocale);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
+  const setLocale = (code: string) => {
+    if (!localeDictionaries[code]) return;
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, code);
+    setLocaleState(code);
+  };
+
+  const merged = useMemo<Strings>(
+    () => ({ ...en, ...localeDictionaries[locale], ...strings }),
+    [locale, strings],
+  );
+
+  const localeState = useMemo<LocaleState>(
+    () => ({ locale, locales: AVAILABLE_LOCALES, setLocale }),
+    [locale],
+  );
+
+  return createElement(
+    LocaleStateContext.Provider,
+    { value: localeState },
+    createElement(StringsContext.Provider, { value: merged }, children),
+  );
 }
 
 /** Returns a typed `t(key)` bound to the nearest `LocaleProvider` (or `en` if there isn't one). */
 export function useT() {
-  const strings = useContext(LocaleContext);
+  const strings = useContext(StringsContext);
   return useMemo(() => {
     return function t<K extends StringKey>(key: K): Strings[K] {
       return strings[key];
     };
   }, [strings]);
+}
+
+/** The active locale, the locales available to switch to, and a setter that persists the pick. */
+export function useLocale() {
+  return useContext(LocaleStateContext);
 }
