@@ -172,6 +172,14 @@ export class SignalingRoom {
   }
 
   handleSignal(ws, msg) {
+    // Refuse obviously malformed frames. A non-string `to` just failed the lookup below
+    // and vanished silently; a missing `data` still reached the peer as `data: undefined`,
+    // which every client then had to special-case. `data` itself stays opaque — this
+    // checks that the key is present, never what is inside it, so `null` is a value and
+    // relays normally.
+    if (typeof msg.to !== 'string' || msg.data === undefined) {
+      return this.send(ws, { type: 'error', error: 'bad-message', message: 'signal requires to + data.' });
+    }
     const a = ws.deserializeAttachment();
     if (!a) return;
     // Relay to the target peer if it's reachable from this sender: either same room,
