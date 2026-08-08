@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import WeTransferSizeLimit from "./content/WeTransferSizeLimit";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -54,6 +55,13 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path === "/wetransfer-size-limit") {
+    return {
+      title: "Past WeTransfer's 3 GB limit? Send peer-to-peer instead · Warp",
+      description:
+        "WeTransfer's free plan caps transfers at 3 GB because files sit on their servers. Warp streams files directly between devices, so there's no server copy to cap.",
+    };
+  }
   if (path !== "/") {
     return {
       title: "Page not found · Warp",
@@ -91,6 +99,7 @@ export default function App() {
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
+  if (path === "/wetransfer-size-limit") return <WeTransferSizeLimit />;
 
   return <NotFound />;
 }
