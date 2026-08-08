@@ -34,7 +34,11 @@ export default function L5Power() {
   const animate = inView && !reduced;
 
   return (
-    <DiagramFrame caption="L5 · DATA-CENTER ENERGY" tone="amb">
+    <DiagramFrame
+      caption="L5 · DATA-CENTER ENERGY"
+      tone="amb"
+      ariaLabel="Grid power flowing into a data center and splitting between useful compute and cooling or conversion overhead, shown as a proportional stacked bar at a PUE of 1.56."
+    >
       <div ref={ref}>
         {/* ---- top row: grid feed -> meter -> split ---- */}
         <div

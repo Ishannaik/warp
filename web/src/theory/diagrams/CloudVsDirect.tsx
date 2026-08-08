@@ -72,7 +72,11 @@ export default function CloudVsDirect() {
   const directActive = resting || phase >= 4;
 
   return (
-    <DiagramFrame caption="FIG 01 · CLOUD VS DIRECT" tone="amb">
+    <DiagramFrame
+      caption="FIG 01 · CLOUD VS DIRECT"
+      tone="amb"
+      ariaLabel="Side-by-side comparison of a two-leg cloud transfer that leaves a stored copy behind, against a single direct beam between sender and receiver."
+    >
       <div
         style={{
           display: "grid",

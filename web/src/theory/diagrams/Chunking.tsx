@@ -90,6 +90,7 @@ export default function Chunking() {
       <DiagramFrame
         caption="FIG 05 · CHUNKING + BACKPRESSURE"
         tone={valveOpen ? "acc" : "amb"}
+        ariaLabel="A file sliced into 16 KB chunks streaming across a channel, gated by a backpressure valve that pauses the sender when the send buffer's high-water mark is crossed and resumes it once drained."
       >
         <div
           style={{

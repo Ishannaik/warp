@@ -55,7 +55,11 @@ export default function L6Energy() {
   const sourceCols = narrow ? "1fr" : "repeat(3, minmax(0,1fr))";
 
   return (
-    <DiagramFrame caption="L6 · FINITE SOURCES" tone="amb">
+    <DiagramFrame
+      caption="L6 · FINITE SOURCES"
+      tone="amb"
+      ariaLabel="Fossil, nuclear, and renewable generation sources feeding a shared grid bus, each bounded by a finite reserve, fuel supply, or built capacity."
+    >
       <div ref={ref}>
         {/* generation sources */}
         <div

@@ -74,7 +74,11 @@ export default function L0Direct() {
   }
 
   return (
-    <DiagramFrame caption="L0 · DIRECT P2P — $0 MARGINAL" tone="acc">
+    <DiagramFrame
+      caption="L0 · DIRECT P2P — $0 MARGINAL"
+      tone="acc"
+      ariaLabel="Two peers connected by a single direct beam, each reusing an already-paid access link so the marginal cost of the transfer is zero."
+    >
       <div ref={ref}>
         {/* ambient halo behind the channel */}
         <div style={{ position: "relative" }}>

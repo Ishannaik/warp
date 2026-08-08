@@ -37,7 +37,11 @@ export default function L7Bedrock() {
   const animate = inView && !reduced;
 
   return (
-    <DiagramFrame caption="L7 · BEDROCK" tone="neutral">
+    <DiagramFrame
+      caption="L7 · BEDROCK"
+      tone="neutral"
+      ariaLabel="Three physical laws carved as plates: Landauer's bit-erasure energy floor, Shannon's channel capacity ceiling, and scarcity of finite supply against demand."
+    >
       <div ref={ref}>
         <div
           style={{

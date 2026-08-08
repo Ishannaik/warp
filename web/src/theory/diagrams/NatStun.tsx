@@ -50,7 +50,11 @@ export default function NatStun() {
   }, [reduced]);
 
   return (
-    <DiagramFrame caption="FIG 04 · NAT TRAVERSAL · STUN" tone="neutral">
+    <DiagramFrame
+      caption="FIG 04 · NAT TRAVERSAL · STUN"
+      tone="neutral"
+      ariaLabel="Two NAT scenarios: a full-cone NAT keeps a stable port so STUN enables a direct connection, while a symmetric or CGNAT NAT assigns a different port per destination and traversal fails."
+    >
       {/* ============================== FULL-CONE / OPEN — success ====== */}
       <Scenario
         tone="acc"

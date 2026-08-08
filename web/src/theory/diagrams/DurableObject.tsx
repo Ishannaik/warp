@@ -87,6 +87,7 @@ export default function DurableObject() {
       <DiagramFrame
         caption="FIG 07 · HIBERNATING DURABLE OBJECT"
         tone={dormant ? "neutral" : "acc"}
+        ariaLabel="A Durable Object cycling between a dormant, zero-cost hibernating state and a brief awake state where it brokers offer, answer, and ICE messages before peers connect directly."
       >
         {/* stage label + billing chip */}
         <div

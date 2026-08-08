@@ -103,7 +103,11 @@ export default function L3Transit() {
   const H = 80;
 
   return (
-    <DiagramFrame caption="L3 · TRANSIT — PEERING vs PAID CROSSINGS" tone="amb">
+    <DiagramFrame
+      caption="L3 · TRANSIT — PEERING vs PAID CROSSINGS"
+      tone="amb"
+      ariaLabel="A packet crossing several Autonomous Systems, where each boundary is either free settlement-free peering or paid transit at a per-Mbps price."
+    >
       <div ref={ref}>
         <div
           style={{

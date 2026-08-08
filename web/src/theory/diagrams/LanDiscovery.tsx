@@ -61,7 +61,11 @@ export default function LanDiscovery() {
 
   return (
     <div ref={ref}>
-      <DiagramFrame caption="FIG 06 · LAN DISCOVERY" tone="acc">
+      <DiagramFrame
+        caption="FIG 06 · LAN DISCOVERY"
+        tone="acc"
+        ariaLabel="Devices sharing the same public IPv4 address or IPv6 /64 prefix are clustered as nearby, letting them connect directly without a room code."
+      >
         {/* ---------------------------------------- the signaling server -- */}
         <div
           style={{

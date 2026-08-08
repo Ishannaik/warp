@@ -158,7 +158,11 @@ export default function L2Edge() {
   }
 
   return (
-    <DiagramFrame caption="L2 · EDGE — CACHE HIT vs UNIQUE EGRESS" tone="amb">
+    <DiagramFrame
+      caption="L2 · EDGE — CACHE HIT vs UNIQUE EGRESS"
+      tone="amb"
+      ariaLabel="Two workloads through an edge node: cacheable requests fan out as cheap repeated hits, while unique encrypted transfers each cost a full egress miss."
+    >
       <div
         ref={ref}
         style={{
