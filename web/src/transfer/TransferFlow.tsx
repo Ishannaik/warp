@@ -450,6 +450,7 @@ function QueueList({
               <div style={{ width: "8px", height: "8px", background: "var(--acc)" }} />
             </div>
             <span
+              title={q.file.name}
               style={{
                 fontSize: "14px",
                 fontWeight: 500,

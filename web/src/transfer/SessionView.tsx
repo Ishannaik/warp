@@ -177,6 +177,7 @@ const ItemRow = memo(function ItemRow({
 
         <span style={{ minWidth: 0, flex: 1 }}>
           <span
+            title={isText ? undefined : item.name}
             style={{
               display: "block",
               fontSize: "14px",
@@ -623,6 +624,7 @@ function PendingTray({
           >
             <Thumb item={{ mime: p.file.type, kind: "file" }} size={isMobile ? 34 : 38} />
             <span
+              title={p.file.name}
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -913,6 +915,7 @@ export function AcceptModal({
             >
               <Thumb item={it} size={isMobile ? 34 : 38} />
               <span
+                title={it.name}
                 style={{
                   flex: 1,
                   minWidth: 0,
