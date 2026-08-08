@@ -293,7 +293,9 @@ const sections: Sec[] = [
           <li style={{ fontFamily: BODY, fontSize: "16.5px", lineHeight: 1.72, color: "#bdb7a8", marginBottom: "8px" }}>
             <strong style={{ color: "#efe9da" }}>Signaling drop.</strong> The socket that helped the two devices
             find each other reconnects and rejoins the same room on a capped backoff — a session that's ever
-            joined keeps retrying for the life of the tab.
+            joined keeps retrying for the life of the tab, as long as the room itself is still there. If both
+            devices lose signaling at once, the room only holds the code open for 3 minutes before it's released;
+            past that, reconnecting gets an honest "room's gone" instead of silently working forever.
           </li>
           <li style={{ fontFamily: BODY, fontSize: "16.5px", lineHeight: 1.72, color: "#bdb7a8", marginBottom: "8px" }}>
             <strong style={{ color: "#efe9da" }}>Wi-Fi flap or a locked phone.</strong> The data connection gets a

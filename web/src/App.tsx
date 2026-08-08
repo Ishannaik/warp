@@ -79,7 +79,7 @@ export default function App() {
   const { path, code } = useRoute();
 
   const { title, description } = seoForRoute(path);
-  useDocumentSeo(title, description);
+  useDocumentSeo(title, description, path);
 
   if (path === "/") return <Landing />;
   if (path === "/send") return <TransferFlow />;
