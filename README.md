@@ -59,6 +59,10 @@ Warp is open source and **we welcome PRs**, from a one-line typo fix to engine w
 
 ---
 
+## Governance & privacy
+
+Warp is MIT-licensed, and its privacy guarantee comes from its architecture rather than a policy promise. The project's $0, no-TURN, and no-storage constraints keep file bytes out of Warp's infrastructure; introducing a hosted file relay or storage tier would require a visible architecture change, not a quiet policy edit. See [SECURITY.md](./SECURITY.md) and [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the trust boundary and technical design.
+
 ## Why it's different
 
 - 🔒 **End-to-end encrypted by default.** Every transfer rides DTLS on the WebRTC data channel, and the keys live only in the two browsers. Your ISP, the café Wi-Fi, and Warp itself all see nothing but ciphertext.
