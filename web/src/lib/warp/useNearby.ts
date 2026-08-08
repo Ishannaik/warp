@@ -33,7 +33,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignalingClient, type SignalData } from "./signaling";
 import { WarpPeer } from "./peer";
 
-const DEVICE_NAME_KEY = "wrap.deviceName";
+const DEVICE_NAME_KEY = "warp.deviceName";
+/** Pre-rename key; still read once so an existing name survives the migration. */
+const LEGACY_DEVICE_NAME_KEY = "wrap.deviceName";
 
 /** A discoverable peer on the same public IP. */
 export interface NearbyDevice {
@@ -121,6 +123,17 @@ function loadDeviceName(): string {
   try {
     const existing = localStorage.getItem(DEVICE_NAME_KEY);
     if (existing && existing.trim()) return existing;
+
+    const legacy = localStorage.getItem(LEGACY_DEVICE_NAME_KEY);
+    if (legacy && legacy.trim()) {
+      localStorage.setItem(DEVICE_NAME_KEY, legacy);
+      try {
+        localStorage.removeItem(LEGACY_DEVICE_NAME_KEY);
+      } catch {
+        /* best-effort cleanup */
+      }
+      return legacy;
+    }
   } catch {
     /* storage unavailable (private mode / SSR) — fall through to a fresh name */
   }
