@@ -156,7 +156,6 @@ export default function NearbyDevices() {
                   background: "rgba(239,233,218,.06)",
                   border: "1px solid var(--acc)",
                   padding: "2px 6px",
-                  outline: "none",
                   width: "140px",
                 }}
               />

@@ -53,6 +53,7 @@ export default function ReceiveEntry({
       <style>{`
         .rcv-back:hover{color:#efe9da}
         .rcv-input:focus{border-color:var(--acc);outline:none}
+        .rcv-input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
         .rcv-cta:not([data-disabled="true"]):hover{background:#6470ff}
       `}</style>
 
