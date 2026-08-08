@@ -32,24 +32,25 @@ globalThis.window = { addEventListener() {}, removeEventListener() {} };
 if (typeof globalThis.document === "undefined") globalThis.document = { addEventListener() {}, removeEventListener() {} };
 
 let SignalingClient;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const url = await import("node:url");
-  const path = await import("node:path");
-  const here = path.dirname(url.fileURLToPath(import.meta.url));
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "signaling.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-  });
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
-  ({ SignalingClient } = await import(dataUrl));
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
 }
+const url = await import("node:url");
+const path = await import("node:path");
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "signaling.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
+({ SignalingClient } = await import(dataUrl));
 
 // --- 1. Once joined (room set), reconnect NEVER gives up ------------------
 {

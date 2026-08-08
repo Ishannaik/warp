@@ -16,24 +16,25 @@ const nav = { userAgent: "", maxTouchPoints: 0, storage: { estimate: async () =>
 Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true, writable: true });
 
 let estimateFits, storageFits;
+let esbuild;
 try {
-  const esbuild = await import("esbuild");
-  const url = await import("node:url");
-  const path = await import("node:path");
-  const here = path.dirname(url.fileURLToPath(import.meta.url));
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "idbStage.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-  });
-  const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
-  ({ estimateFits, storageFits } = await import(dataUrl));
+  esbuild = await import("esbuild");
 } catch (e) {
   console.error("SKIP: esbuild not available —", e.message);
   process.exit(0);
 }
+const url = await import("node:url");
+const path = await import("node:path");
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "idbStage.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
+({ estimateFits, storageFits } = await import(dataUrl));
 
 // --- iOS hard memory cap: refuse a multi-GB file even if storage says fine --------
 nav.userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
