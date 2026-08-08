@@ -9,6 +9,7 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no ambiguous 0/O/1
 const CODE_LEN = 6;
 const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
 const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
+const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-guessed UA hint, relayed as-is
 
 export default {
   async fetch(request, env) {
@@ -140,6 +141,9 @@ export class SignalingRoom {
       ip: prev.ip,                                        // keep the IP stamped at connect time
       peerId,
       name: String(msg.name || 'Device').slice(0, 40),
+      // Client-guessed display hint (phone/tablet/desktop icon) — relayed as-is,
+      // never interpreted server-side; unrecognized values fall back to 'desktop'.
+      deviceType: DEVICE_TYPES.has(msg.deviceType) ? msg.deviceType : 'desktop',
       discoverable: true,
     });
     this.broadcastNearby(prev.ip);
@@ -165,7 +169,7 @@ export class SignalingRoom {
         .filter((x) => x !== m)
         .map((x) => {
           const xa = x.deserializeAttachment();
-          return { peerId: xa.peerId, name: xa.name };
+          return { peerId: xa.peerId, name: xa.name, deviceType: xa.deviceType || 'desktop' };
         });
       this.send(m, { type: 'nearby', selfId: a.peerId, devices });
     }
