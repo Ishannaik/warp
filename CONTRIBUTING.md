@@ -29,7 +29,7 @@ The WebRTC transfer engine is `web/src/lib/warp/` — plain TypeScript, UI-free,
 
 Plus two supporting modules: [`idbStage.ts`](./web/src/lib/warp/idbStage.ts) (IndexedDB staging for big receives on browsers without the File System Access API) and [`useNearby.ts`](./web/src/lib/warp/useNearby.ts) (same-network device discovery).
 
-For the full picture — handshake sequence, wire protocol, resume design, mesh rules — read [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). The server's protocol contract is in [`server/README.md`](./server/README.md).
+For the full picture — handshake sequence, wire protocol, resume design, mesh rules — read [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). The server's protocol contract is in [`server/README.md`](./server/README.md). Want to add a language instead? See [`docs/TRANSLATING.md`](./docs/TRANSLATING.md) — it's one file and a great first PR.
 
 ## Dev setup
 

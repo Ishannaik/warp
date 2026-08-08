@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import en from "../locales/en";
+import id from "../locales/id";
 import {
   AVAILABLE_LOCALES,
   DEFAULT_LOCALE,
@@ -51,10 +52,10 @@ import {
 export type Strings = typeof en;
 export type StringKey = keyof Strings;
 
-const localeDictionaries: Record<string, Partial<Strings>> = { en };
+const localeDictionaries: Record<string, Partial<Strings>> = { en, id };
 
 // AVAILABLE_LOCALES (switcher metadata) and localeDictionaries (actual
-// translations) are two registries that #164 is expected to update
+// translations) are two registries that a new locale needs to update
 // together — catch it here if a future locale only makes it into one.
 for (const { code } of AVAILABLE_LOCALES) {
   if (!localeDictionaries[code]) {

@@ -13,11 +13,14 @@ export interface LocaleMeta {
 }
 
 /**
- * Every locale with a dictionary. `#164` adds entries here alongside a
+ * Every locale with a dictionary. New locales add an entry here alongside a
  * `web/src/locales/<code>.ts` file — nothing else in the switcher needs to
- * change.
+ * change (see `docs/TRANSLATING.md`).
  */
-export const AVAILABLE_LOCALES: readonly LocaleMeta[] = [{ code: "en", label: "EN", name: "English" }];
+export const AVAILABLE_LOCALES: readonly LocaleMeta[] = [
+  { code: "en", label: "EN", name: "English" },
+  { code: "id", label: "ID", name: "Bahasa Indonesia" },
+];
 
 export const DEFAULT_LOCALE = "en";
 export const LOCALE_STORAGE_KEY = "warp.locale";
