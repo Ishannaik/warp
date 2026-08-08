@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useT } from "../lib/i18n";
 import { CODE_LEN, VALID_RE, sanitize } from "../lib/warp/roomCode";
 
 /**
@@ -25,6 +26,7 @@ export default function ReceiveEntry({
   initialCode?: string;
 }) {
   const isMobile = useIsMobile();
+  const t = useT();
   const [code, setCode] = useState(() => sanitize(initialCode));
 
   const valid = useMemo(() => VALID_RE.test(code), [code]);
@@ -77,7 +79,7 @@ export default function ReceiveEntry({
         >
           <WarpLogo size={24} />
           <span style={{ fontFamily: DISPLAY, fontSize: "19px", fontWeight: 800, letterSpacing: "-.02em" }}>
-            WARP
+            {t("common_wordmark")}
           </span>
         </a>
 
@@ -96,7 +98,7 @@ export default function ReceiveEntry({
             textDecoration: "none",
           }}
         >
-          ← BACK
+          {t("common_back")}
         </a>
       </div>
 
@@ -121,7 +123,7 @@ export default function ReceiveEntry({
               marginBottom: "12px",
             }}
           >
-            Receive · enter a code
+            {t("receive_eyebrow")}
           </div>
           <h1
             style={{
@@ -133,7 +135,7 @@ export default function ReceiveEntry({
               margin: "0 0 16px",
             }}
           >
-            Receive a file
+            {t("receive_heading")}
           </h1>
           <p
             style={{
@@ -143,7 +145,7 @@ export default function ReceiveEntry({
               margin: "0 0 30px",
             }}
           >
-            Enter the 6-character code from the sending device, or open their link / scan their QR.
+            {t("receive_description")}
           </p>
 
           {/* code input */}
@@ -159,7 +161,7 @@ export default function ReceiveEntry({
               marginBottom: "10px",
             }}
           >
-            Room code
+            {t("receive_code_label")}
           </label>
           <input
             id="rcv-code"
@@ -185,7 +187,7 @@ export default function ReceiveEntry({
             maxLength={CODE_LEN}
             aria-invalid={showHint}
             aria-describedby={showHint ? "rcv-hint" : undefined}
-            placeholder="••••••"
+            placeholder={t("receive_code_placeholder")}
             style={{
               width: "100%",
               boxSizing: "border-box",
@@ -215,9 +217,7 @@ export default function ReceiveEntry({
               color: showHint ? "var(--amb)" : "#6f6a5d",
             }}
           >
-            {showHint
-              ? "That doesn't look like a valid code — check the sending device."
-              : "Letters A–Z (no I, L, O) and digits 2–9."}
+            {showHint ? t("receive_hint_invalid") : t("receive_hint_format")}
           </div>
 
           {/* connect button */}
@@ -243,7 +243,7 @@ export default function ReceiveEntry({
               cursor: valid ? "pointer" : "not-allowed",
             }}
           >
-            Connect &nbsp;→
+            {t("receive_connect")}
           </button>
 
           <div
@@ -256,7 +256,7 @@ export default function ReceiveEntry({
               textAlign: "center",
             }}
           >
-            Got a link instead? Just open it — it connects you automatically.
+            {t("receive_footer")}
           </div>
         </div>
       </div>
