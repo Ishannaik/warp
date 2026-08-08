@@ -72,12 +72,24 @@ const probes = [];
 for (let c = 0x20; c <= 0x7e; c += 1) probes.push(String.fromCharCode(c));
 probes.push("Ø", "é", "０" /* fullwidth zero */, "Ａ" /* fullwidth A */);
 
-const acceptedByRe = probes.filter((ch) => VALID_RE.test(ch.repeat(CODE_LEN)));
-assert.deepEqual(
-  acceptedByRe.slice().sort(),
-  serverAlphabet.split("").sort(),
-  "VALID_RE accepts exactly the server's CODE_ALPHABET — no more, no less",
-);
+// Probe each position independently rather than with ch.repeat(CODE_LEN). Repeating
+// asks "is this character valid in every position at once", which is a different and
+// weaker question: a class like /^[A-Z][A-HJ-KM-NP-Z2-9]{5}$/ accepts "I" at index 0
+// only, and "IIIIII" still fails, so a repeat-based probe would report "I" rejected and
+// miss the divergence entirely. Filling the other slots with a known-good character
+// isolates one position at a time.
+const filler = serverAlphabet[0];
+for (let pos = 0; pos < CODE_LEN; pos += 1) {
+  const acceptedHere = probes.filter((ch) => {
+    const candidate = filler.repeat(pos) + ch + filler.repeat(CODE_LEN - pos - 1);
+    return VALID_RE.test(candidate);
+  });
+  assert.deepEqual(
+    acceptedHere.slice().sort(),
+    serverAlphabet.split("").sort(),
+    `at index ${pos}, VALID_RE accepts exactly the server's CODE_ALPHABET — no more, no less`,
+  );
+}
 
 // sanitize must keep exactly that alphabet too (after uppercasing), or a user
 // pasting a valid code could have a character silently eaten.
@@ -122,7 +134,7 @@ for (const raw of ["ab cd-ef", "0A12B3IC4L", "A2B3C4D5", ""]) {
 assert.ok(VALID_RE.test("A2B3C4"), "VALID_RE accepts a well-formed code");
 assert.ok(!VALID_RE.test("a2b3c4"), "VALID_RE rejects lowercase — sanitize uppercases first, the regex does not");
 assert.ok(!VALID_RE.test("A2B3C"), "VALID_RE rejects a code one character short");
-assert.ok(!VALID_RE.test("A2B3C45"), "VALID_RE rejects a code one character long");
+assert.ok(!VALID_RE.test("A2B3C45"), "VALID_RE rejects a code one character too long");
 assert.ok(!VALID_RE.test(""), "VALID_RE rejects the empty string");
 assert.ok(!VALID_RE.test(" A2B3C4"), "VALID_RE is anchored at the start");
 assert.ok(!VALID_RE.test("A2B3C4 "), "VALID_RE is anchored at the end");
