@@ -252,8 +252,12 @@ const sections: Sec[] = [
           Warp streams your file straight from your device to the other person's over a WebRTC data channel &mdash;
           in chunks, sent as fast as the channel's own backpressure allows, with nothing landing on a server in
           between. There's no bucket to fill, so there's no plan tier gating how full it's allowed to get. A 300 MB
-          file and a 30 GB file take the same code path; the only ceilings are your connection speed and how much
-          free disk space is on the receiving end.
+          file and a 30 GB file take the same code path, with no plan-tier cap in the way &mdash; though a few
+          real-world things still gate it: connection speed, whichever browser storage the receiving end falls back
+          to when it can't stream straight to a picked file or folder (Safari doesn't have the File System Access
+          API, so it's staging through IndexedDB with its own quota), and getting a direct path between the two
+          devices at all &mdash; Warp is STUN-only, so a strict/symmetric NAT on both sides gets an honest failure
+          instead of a silent server relay.
         </P>
         <P>
           See the mechanics &mdash; and what the signaling server actually touches &mdash; in{" "}
