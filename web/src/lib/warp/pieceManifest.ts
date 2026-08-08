@@ -33,7 +33,7 @@
  * runs in the browser and under `node src/lib/warp/pieceManifest.check.mjs`.
  *
  * Piece size: 256 KiB, matching `TARGET_SEND_CHUNK` in peer.ts. The issue sketches
- * 16 KiB (the design-copy `CHUNK_SIZE`), but the wire actually ships ~256 KiB
+ * 16 KiB, but the wire actually ships ~256 KiB
  * SCTP messages, and the research (§3) recommends 256 KiB–1 MiB pieces aligned to
  * the send chunk. 256 KiB keeps the manifest compact (a 1 GiB file is 4096 hashes,
  * ~256 KiB of hex, not 65536) and maps one-to-one onto the dominant wire message,

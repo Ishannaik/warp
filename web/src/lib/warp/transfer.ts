@@ -25,9 +25,6 @@
 import type { Codec } from "./compress";
 import type { PieceManifest } from "./pieceManifest";
 
-/** 16 KiB chunk size — the SCTP-friendly sweet spot used across the design copy. */
-export const CHUNK_SIZE = 16 * 1024;
-
 /** Text snippets stay as one JSON control frame; keep them below old SCTP caps. */
 export const TEXT_SNIPPET_MAX_BYTES = 64 * 1024;
 const TEXT_SNIPPET_SIZE_PROBE_ID = "xxxxxxxx";
