@@ -10,9 +10,10 @@ import VsPage, { A, P, type VsFeatureRow, type VsSection } from "./VsPage";
  * peers connected with private IPs are discoverable by each other." License
  * is GPL-3.0, confirmed via the GitHub API. That TURN relay for
  * off-LAN devices — the exact thing Warp refuses to run, ever — is the
- * whole story here, alongside PairDrop owning the zero-code LAN-discovery
- * experience Warp doesn't have yet (docs/competitive-intel-2026-07.md §1,
- * §5 item 6).
+ * real divide. Warp's own zero-code "Nearby" radar (`web/src/nearby/`,
+ * `useNearby.ts`) landed since the competitive-intel doc was written, so
+ * this page compares it against PairDrop's LAN discovery directly instead
+ * of treating it as a Warp gap.
  */
 
 const FEATURES: VsFeatureRow[] = [
@@ -28,7 +29,7 @@ const FEATURES: VsFeatureRow[] = [
   },
   {
     label: "Zero-code auto-discovery of nearby devices",
-    warp: { value: "✗", ok: false },
+    warp: { value: "✓", ok: true },
     rival: { value: "✓", ok: true },
   },
   {
@@ -51,18 +52,22 @@ const FEATURES: VsFeatureRow[] = [
 const SECTIONS: VsSection[] = [
   {
     n: "01",
-    heading: "The LAN experience is genuinely better",
+    heading: "Both do zero-code discovery, differently",
     body: (
       <>
         <P>
-          PairDrop's whole pitch is Snapdrop-style discovery: open the app on two devices on the same network and
-          they just find each other, no code to type or read out loud. Its own README puts it plainly — "all peers
-          connected with private IPs are discoverable by each other." Warp doesn't have that yet. Every transfer
-          starts with a room code, on every network, LAN or not.
+          PairDrop's pitch is Snapdrop-style discovery: open the app on two devices on the same network and they
+          just find each other, no code to type or read out loud. Its own README puts it plainly — "all peers
+          connected with private IPs are discoverable by each other." Warp has its own version of this — the
+          "Nearby" radar on the home screen surfaces other devices sharing your public IP and lets you send
+          straight to one, no code either.
         </P>
         <P>
-          If you're moving a file between your own laptop and phone on the same Wi-Fi, PairDrop's zero-code flow is
-          the faster path today.
+          The mechanism differs: PairDrop groups devices by local (private) IP, so it stays accurate through
+          double-NAT or carrier-grade setups where several LANs can share one public address. Warp groups by
+          public IP, which is right for the common case (one router, one Wi-Fi network) but can occasionally
+          surface a device that's on the same public IP but a different local network, or miss one behind its
+          own separate NAT.
         </P>
       </>
     ),
@@ -98,11 +103,11 @@ const SECTIONS: VsSection[] = [
     heading: "Verdict",
     body: (
       <P>
-        Both are free, open-source, and ask nothing of you but a browser. If you want zero-code discovery between
-        devices on the same network, or a relay that'll push a file through when direct WebRTC can't connect,
-        PairDrop covers that today. If you want the guarantee that no server — including a relay you didn't choose
-        to trust — ever sees the file's bytes, on any network, that's what Warp is built to hold to, even when it
-        means the transfer fails instead.
+        Both are free, open-source, and give you zero-code discovery between nearby devices without a browser
+        extension or account. Where they split is off-network: PairDrop's TURN relay pushes a file through when
+        direct WebRTC can't connect, and its private-IP discovery holds up on trickier network topologies. Warp's
+        answer is the guarantee that no server — including a relay you didn't choose to trust — ever sees the
+        file's bytes, on any network, even when it means the transfer fails instead.
       </P>
     ),
   },
@@ -116,10 +121,10 @@ export default function PairDrop() {
       title="Warp vs PairDrop"
       lead={
         <P>
-          PairDrop nails zero-code discovery between devices on the same network, and falls back to its own TURN
-          relay once you leave it. Warp skips the relay entirely, on every network — at the cost of failing outright
-          on the restrictive networks where PairDrop's relay still gets through, and not yet having PairDrop's
-          same-network auto-discovery.
+          PairDrop and Warp both do zero-code discovery of nearby devices, and both fall back to a room code when
+          you're not on the same network — but PairDrop backs its off-network path with its own TURN relay, while
+          Warp skips the relay entirely, on every network, at the cost of failing outright on the restrictive
+          networks where PairDrop's relay still gets through.
         </P>
       }
       features={FEATURES}
