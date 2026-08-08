@@ -37,10 +37,15 @@ const DEVICE_NAME_KEY = "warp.deviceName";
 /** Pre-rename key; still read once so an existing name survives the migration. */
 const LEGACY_DEVICE_NAME_KEY = "wrap.deviceName";
 
+/** Coarse device shape, guessed client-side for the nearby list's icon. */
+export type DeviceType = "mobile" | "tablet" | "desktop";
+
 /** A discoverable peer on the same public IP. */
 export interface NearbyDevice {
   peerId: string;
   name: string;
+  /** Best-effort UA guess from the announcing device; "desktop" if unrecognized. */
+  deviceType: DeviceType;
 }
 
 /** Server -> client discovery snapshot. */
@@ -49,6 +54,40 @@ interface NearbyMessage {
   selfId: string;
   devices: NearbyDevice[];
   crowded?: boolean;
+}
+
+/** The `navigator.userAgentData` surface Chromium exposes (unstandardized, optional). */
+interface UserAgentDataLike {
+  mobile?: boolean;
+}
+
+/**
+ * Best-effort phone/tablet/desktop guess from the UA — never throws, never blocks.
+ * iPadOS 13+ reports a Mac UA, so a touch-capable "Macintosh" is treated as a tablet
+ * before the mobile checks run. Anything that doesn't clearly read as a handheld
+ * falls back to "desktop", which is also the generic/unrecognized-UA icon.
+ */
+function guessDeviceType(): DeviceType {
+  try {
+    const ua = navigator.userAgent || "";
+    const uaData = (navigator as Navigator & { userAgentData?: UserAgentDataLike })
+      .userAgentData;
+
+    if (/iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) {
+      return "tablet";
+    }
+    if (/Tablet|PlayBook|Kindle|Silk/i.test(ua)) return "tablet";
+    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return "tablet";
+
+    if (uaData && typeof uaData.mobile === "boolean") {
+      return uaData.mobile ? "mobile" : "desktop";
+    }
+    if (/Mobi|iPhone|iPod|Android|Windows Phone/i.test(ua)) return "mobile";
+
+    return "desktop";
+  } catch {
+    return "desktop";
+  }
 }
 
 /**
@@ -152,6 +191,9 @@ export function useNearby(): UseNearby {
   const [crowded, setCrowded] = useState(false);
   const [deviceName, setDeviceName] = useState<string>(() => loadDeviceName());
 
+  /** Computed once per session — the UA doesn't change while the tab is open. */
+  const deviceTypeRef = useRef<DeviceType>(guessDeviceType());
+
   const sigRef = useRef<SignalingClient | null>(null);
   /** Latest snapshot, kept in a ref so callbacks resolve names without re-binding. */
   const devicesRef = useRef<NearbyDevice[]>([]);
@@ -177,7 +219,7 @@ export function useNearby(): UseNearby {
 
   /** Send our announce frame (queued by retry-on-open if the socket is cold). */
   const announce = useCallback(
-    (name: string) => rawSend({ type: "announce", name }),
+    (name: string) => rawSend({ type: "announce", name, deviceType: deviceTypeRef.current }),
     [rawSend],
   );
 
@@ -254,7 +296,17 @@ export function useNearby(): UseNearby {
           const m = msg as NearbyMessage;
           setSelfId(m.selfId ?? null);
           setCrowded(Boolean(m.crowded));
-          const next = Array.isArray(m.devices) ? m.devices : [];
+          const raw = Array.isArray(m.devices) ? m.devices : [];
+          // The wire payload is server-relayed, unvalidated JSON — normalize an
+          // unrecognized/missing deviceType to the generic "desktop" icon rather
+          // than letting a bad value reach the renderer.
+          const next: NearbyDevice[] = raw.map((d) => ({
+            ...d,
+            deviceType:
+              d.deviceType === "mobile" || d.deviceType === "tablet"
+                ? d.deviceType
+                : ("desktop" as const),
+          }));
           devicesRef.current = next;
           setDevices(next);
         }

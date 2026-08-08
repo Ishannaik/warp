@@ -4,6 +4,7 @@ import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
 import { AcceptModal, SessionView } from "../transfer/SessionView";
 import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
+import type { DeviceType } from "../lib/warp/useNearby";
 
 /**
  * "On your network" — LAN auto-discovery surface for the landing page.
@@ -294,6 +295,52 @@ export default function NearbyDevices() {
   );
 }
 
+/* ----------------------------------------------------------------- device icon */
+
+/**
+ * Phone / tablet / desktop glyph, guessed client-side from the announcing
+ * device's UA (see `useNearby.ts`). Unrecognized types already normalize to
+ * "desktop" upstream, so this always has a shape to draw.
+ */
+function DeviceTypeIcon({ type }: { type: DeviceType }) {
+  const common = {
+    width: 15,
+    height: 15,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "var(--acc)",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+
+  if (type === "mobile") {
+    return (
+      <svg {...common}>
+        <rect x="7" y="2" width="10" height="20" rx="2" />
+        <line x1="11" y1="18" x2="13" y2="18" />
+      </svg>
+    );
+  }
+
+  if (type === "tablet") {
+    return (
+      <svg {...common}>
+        <rect x="4" y="3" width="16" height="18" rx="2" />
+        <line x1="11" y1="17.5" x2="13" y2="17.5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common}>
+      <rect x="2" y="4" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="18" x2="12" y2="21" />
+    </svg>
+  );
+}
+
 /* ----------------------------------------------------------------- device card */
 
 function DeviceCard({
@@ -343,7 +390,7 @@ function DeviceCard({
           justifyContent: "center",
         }}
       >
-        <span style={{ width: "10px", height: "10px", background: "var(--acc)" }} />
+        <DeviceTypeIcon type={device.deviceType} />
         <span
           style={{
             position: "absolute",
