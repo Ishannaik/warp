@@ -72,6 +72,7 @@ cd web
 node src/lib/warp/peer.check.mjs               # offer -> accept -> stream -> received round-trip, decline, cancel
 node src/lib/warp/useWarpTransfer.check.mjs    # hook orchestration / salvage-on-reconnect
 node src/lib/warp/opfsStage.check.mjs          # OPFS receive sink (primary large-receive fallback)
+node src/lib/warp/roomCode.check.mjs           # sanitize/VALID_RE + alphabet parity with server/src/index.js
 ```
 
 **If you touch a file in `web/src/lib/warp/`, run its `.check.mjs` — and extend it to cover your change.** These harnesses are the engine's regression net.
