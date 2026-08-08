@@ -25,6 +25,7 @@ import {
   type TransferItem,
 } from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
+import { useT } from "../lib/i18n";
 import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
@@ -94,15 +95,17 @@ function Thumb({ item, size = 40 }: { item: { thumb?: string; mime: string; kind
 
 /* ----------------------------------------------------------------- tray row */
 
-const STATUS_COPY: Record<TransferItem["status"], string> = {
-  offered: "WAITING",
-  transferring: "MOVING",
-  reconnecting: "RESUMING",
-  done: "DONE",
-  declined: "DECLINED",
-  cancelled: "CANCELLED",
-  error: "ERROR",
-};
+function statusCopy(t: ReturnType<typeof useT>): Record<TransferItem["status"], string> {
+  return {
+    offered: t("transfer_status_offered"),
+    transferring: t("transfer_status_transferring"),
+    reconnecting: t("transfer_status_reconnecting"),
+    done: t("transfer_status_done"),
+    declined: t("transfer_status_declined"),
+    cancelled: t("transfer_status_cancelled"),
+    error: t("transfer_status_error"),
+  };
+}
 
 function statusColor(status: TransferItem["status"]): string {
   if (status === "done") return "var(--acc)";
@@ -129,6 +132,7 @@ const ItemRow = memo(function ItemRow({
   /** Which device this item is to/from — shown only in a multi-device room. */
   peerLabel?: string;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const col = statusColor(item.status);
@@ -187,7 +191,7 @@ const ItemRow = memo(function ItemRow({
               color: "#efe9da",
             }}
           >
-            {isText ? "Text snippet" : item.name}
+            {isText ? t("transfer_text_snippet_label") : item.name}
           </span>
           <span
             style={{
@@ -202,16 +206,16 @@ const ItemRow = memo(function ItemRow({
             }}
           >
             <span style={{ color: item.direction === "receive" ? "var(--acc)" : "#908a7b" }}>
-              {item.direction === "receive" ? "↓ IN" : "↑ OUT"}
+              {item.direction === "receive" ? t("transfer_direction_in") : t("transfer_direction_out")}
             </span>
             {peerLabel && (
               <span style={{ color: "#908a7b" }}>
-                · {item.direction === "receive" ? "from" : "to"}{" "}
+                · {item.direction === "receive" ? t("transfer_direction_from") : t("transfer_direction_to")}{" "}
                 <span style={{ color: "var(--acc)" }}>{peerLabel}</span>
               </span>
             )}
             {!isText && <span>· {formatBytes(item.size)}</span>}
-            <span style={{ color: col }}>· {STATUS_COPY[item.status]}</span>
+            <span style={{ color: col }}>· {statusCopy(t)[item.status]}</span>
           </span>
         </span>
 
@@ -222,7 +226,7 @@ const ItemRow = memo(function ItemRow({
               type="button"
               className="warp-rowbtn"
               onClick={() => onCancel(item.id)}
-              aria-label="Cancel transfer"
+              aria-label={t("transfer_cancel_aria")}
               style={iconBtn}
             >
               ✕
@@ -246,7 +250,7 @@ const ItemRow = memo(function ItemRow({
                 cursor: "pointer",
               }}
             >
-              Download
+              {t("transfer_download")}
             </button>
           )}
           {savedToDisk && (
@@ -267,7 +271,7 @@ const ItemRow = memo(function ItemRow({
                 whiteSpace: "nowrap",
               }}
             >
-              ✓ Saved to disk
+              {t("transfer_saved_to_disk")}
             </span>
           )}
         </span>
@@ -310,7 +314,11 @@ const ItemRow = memo(function ItemRow({
               cursor: "pointer",
             }}
           >
-            {copyFailed ? "✕ copy failed" : copied ? "✓ copied" : "⧉ copy"}
+            {copyFailed
+              ? t("transfer_copy_failed")
+              : copied
+                ? t("transfer_copy_text_success")
+                : t("transfer_copy_text_default")}
           </button>
         </div>
       )}
@@ -391,6 +399,7 @@ function Composer({
   /** Connected devices a send fans out to (>1 in a mesh room). */
   deviceCount?: number;
 }) {
+  const t = useT();
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
@@ -402,7 +411,7 @@ function Composer({
   const acceptFiles = staging ? onAddFiles! : onSendFiles;
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
-  const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
+  const fanout = deviceCount > 1 ? t("transfer_fanout")(deviceCount) : "";
   const trimmedText = text.trim();
   const frameBytes = textSnippetFrameBytes(trimmedText);
   const textTooLarge = frameBytes > TEXT_SNIPPET_MAX_BYTES;
@@ -430,17 +439,17 @@ function Composer({
           color: "#6f6a5d",
         }}
       >
-        Compose
+        {t("transfer_compose_label")}
       </div>
 
       <div style={{ padding: isMobile ? "14px" : "16px 15px", display: "flex", flexDirection: "column", gap: "14px" }}>
         {/* file pickers */}
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: "10px" }}>
           <button type="button" className="warp-ghost" onClick={pickFiles} style={composerBtn(isMobile)}>
-            ＋ {staging ? "Add files" : "Send files"}
+            {staging ? t("transfer_composer_add_files") : t("transfer_composer_send_files")}
           </button>
           <button type="button" className="warp-ghost" onClick={pickFolder} style={composerBtn(isMobile)}>
-            ▤ {staging ? "Add a folder" : "Send a folder"}
+            {staging ? t("transfer_composer_add_folder") : t("transfer_composer_send_folder")}
           </button>
         </div>
 
@@ -462,7 +471,7 @@ function Composer({
             aria-describedby={textTooLarge ? "text-size-hint" : undefined}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="…or paste a link / note to send as text"
+            placeholder={t("transfer_text_placeholder")}
             rows={isMobile ? 3 : 2}
             onKeyDown={(e) => {
               // Cmd/Ctrl+Enter sends, like a chat composer.
@@ -496,7 +505,7 @@ function Composer({
                 overflowWrap: "anywhere",
               }}
             >
-              Too long to send as text ({formatBytes(frameBytes)}). Save it as a .txt file and send that instead.
+              {t("transfer_text_too_large")(formatBytes(frameBytes))}
             </div>
           )}
           <button
@@ -518,7 +527,7 @@ function Composer({
               cursor: canSendText ? "pointer" : "not-allowed",
             }}
           >
-            Send text{fanout} →
+            {t("transfer_send_text_cta")(fanout)}
           </button>
         </div>
       </div>
@@ -578,6 +587,7 @@ function PendingTray({
   /** " to N devices" suffix for the send button (mesh room); "" when 1-to-1. */
   fanout?: string;
 }) {
+  const t = useT();
   const total = pending.reduce((s, p) => s + p.file.size, 0);
   const count = pending.length;
 
@@ -597,7 +607,8 @@ function PendingTray({
         }}
       >
         <span>
-          Ready to send · <span style={{ color: "#efe9da" }}>{String(count).padStart(2, "0")}</span>
+          {t("transfer_ready_to_send_prefix")}
+          <span style={{ color: "#efe9da" }}>{String(count).padStart(2, "0")}</span>
         </span>
         <span style={{ letterSpacing: ".06em", color: "#908a7b" }}>{formatBytes(total)}</span>
       </div>
@@ -643,7 +654,7 @@ function PendingTray({
               type="button"
               className="warp-rowbtn"
               onClick={() => onRemovePending(p.id)}
-              aria-label={`Remove ${p.file.name}`}
+              aria-label={t("transfer_remove_file_aria")(p.file.name)}
               style={{ ...iconBtn, flexShrink: 0 }}
             >
               ✕
@@ -671,7 +682,7 @@ function PendingTray({
           cursor: "pointer",
         }}
       >
-        Send {count} {count === 1 ? "file" : "files"}{fanout} →
+        {t("transfer_send_files_cta")(count, fanout)}
       </button>
     </div>
   );
@@ -712,10 +723,11 @@ function Tray({
   /** Resolve a row's peer label; returns undefined to hide the tag (1-to-1). */
   labelForPeer?: (peerId?: string) => string | undefined;
 }) {
+  const t = useT();
   // "Download all (.zip)" only zips in-memory items — disk-streamed items are
   // already on disk and carry no blob, so they're excluded here.
   const receivedFiles = items.filter(
-    (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && !t.savedToDisk && t.blob,
+    (it) => it.direction === "receive" && it.kind === "file" && it.status === "done" && !it.savedToDisk && it.blob,
   ).length;
 
   return (
@@ -739,7 +751,8 @@ function Tray({
             color: "#6f6a5d",
           }}
         >
-          Tray · <span style={{ color: "#efe9da" }}>{String(items.length).padStart(2, "0")}</span>
+          {t("transfer_tray_label_prefix")}
+          <span style={{ color: "#efe9da" }}>{String(items.length).padStart(2, "0")}</span>
         </span>
         {receivedFiles > 0 && (
           <button
@@ -758,7 +771,7 @@ function Tray({
               cursor: "pointer",
             }}
           >
-            ⤓ Download all (.zip)
+            {t("transfer_download_all")}
           </button>
         )}
       </div>
@@ -773,7 +786,7 @@ function Tray({
             color: "#6f6a5d",
           }}
         >
-          Nothing yet — send files or text, or wait for the other side.
+          {t("transfer_tray_empty")}
         </div>
       ) : (
         items.map((item) => (
@@ -806,6 +819,7 @@ export function AcceptModal({
   peerName?: string;
   isMobile: boolean;
 }) {
+  const t = useT();
   const total = totalBytes(items);
   // A large batch will surface a native folder/file picker on Accept (the hook
   // streams it to disk), so we tell the user to expect that and to choose a spot.
@@ -814,7 +828,7 @@ export function AcceptModal({
   const fs = detectFsAccessSupport();
   const biggest = items.reduce((m, it) => Math.max(m, it.size), 0);
   const large = (fs.canSaveFile || fs.canPickDirectory) && isLargeBatch(total, biggest);
-  const pickTarget = items.length > 1 ? "folder" : "file";
+  const pickTarget = items.length > 1 ? t("transfer_pick_target_folder") : t("transfer_pick_target_file");
 
   return (
     <div
@@ -861,7 +875,7 @@ export function AcceptModal({
               marginBottom: "10px",
             }}
           >
-            Incoming · review before receiving
+            {t("transfer_accept_eyebrow")}
           </div>
           <h3
             style={{
@@ -875,25 +889,22 @@ export function AcceptModal({
           >
             {peerName ? (
               <>
-                <span style={{ fontFamily: MONO, color: "var(--acc)" }}>{peerName}</span> wants to send you{" "}
-                {items.length} {items.length === 1 ? "item" : "items"}
+                <span style={{ fontFamily: MONO, color: "var(--acc)" }}>{peerName}</span>
+                {t("transfer_accept_wants_send_suffix")(items.length)}
               </>
             ) : (
-              <>Accept {items.length} {items.length === 1 ? "item" : "items"}?</>
+              t("transfer_accept_anon")(items.length)
             )}
           </h3>
           <p style={{ fontSize: "13.5px", color: "#a8a293", margin: "8px 0 0", lineHeight: 1.5 }}>
             {large ? (
               <>
-                {formatBytes(total)} total —{" "}
-                <span style={{ color: "var(--acc)" }}>large transfer</span>. On Accept you'll choose a{" "}
-                {pickTarget} to save to, and it streams straight to disk.
+                {t("transfer_accept_large_prefix")(formatBytes(total))}
+                <span style={{ color: "var(--acc)" }}>{t("transfer_accept_large_emphasis")}</span>
+                {t("transfer_accept_large_suffix")(pickTarget)}
               </>
             ) : (
-              <>
-                {formatBytes(total)} total. Nothing is saved to disk — accepted files land in your tray to
-                download when you're ready.
-              </>
+              t("transfer_accept_small_desc")(formatBytes(total))
             )}
           </p>
         </div>
@@ -960,7 +971,7 @@ export function AcceptModal({
               cursor: "pointer",
             }}
           >
-            Decline
+            {t("transfer_decline")}
           </button>
           <button
             type="button"
@@ -980,7 +991,7 @@ export function AcceptModal({
               cursor: "pointer",
             }}
           >
-            {large ? <>Accept &amp; choose {pickTarget}</> : <>Accept &amp; receive</>}
+            {large ? t("transfer_accept_cta_large")(pickTarget) : t("transfer_accept_cta")}
           </button>
         </div>
       </div>
@@ -992,6 +1003,7 @@ export function AcceptModal({
 
 /** One device in the mesh header: status dot + short label. */
 function DeviceChip({ label, connected }: { label: string; connected: boolean }) {
+  const t = useT();
   return (
     <span
       style={{
@@ -1019,7 +1031,7 @@ function DeviceChip({ label, connected }: { label: string; connected: boolean })
       />
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {label}
-        {!connected && <span style={{ color: "#6f6a5d" }}> · linking</span>}
+        {!connected && <span style={{ color: "#6f6a5d" }}> · {t("transfer_linking_suffix")}</span>}
       </span>
     </span>
   );
@@ -1118,7 +1130,7 @@ export function SessionView({
   onDownloadOne,
   onDownloadAll,
   isMobile,
-  heading = "Session open",
+  heading,
   stats,
   pending,
   onAddFiles,
@@ -1152,6 +1164,8 @@ export function SessionView({
    */
   connections?: Connection[];
 }) {
+  const t = useT();
+  const resolvedHeading = heading ?? t("transfer_heading_session_open");
   const liveConnections = connections ?? [];
   const connectedCount = liveConnections.filter((c) => c.connected).length;
   // Mesh chrome (device list + per-row tags + fan-out copy) only when there are
@@ -1198,8 +1212,8 @@ export function SessionView({
             }}
           >
             {multiDevice
-              ? `${connectedCount} of ${liveConnections.length} devices connected · direct P2P`
-              : `${heading} · direct P2P`}
+              ? t("transfer_devices_connected")(connectedCount, liveConnections.length)
+              : t("transfer_heading_direct_p2p")(resolvedHeading)}
           </span>
 
           {multiDevice ? (
@@ -1265,7 +1279,7 @@ export function SessionView({
           textAlign: "center",
         }}
       >
-        Channel stays open — send again or send back any time · do not close this tab
+        {t("transfer_session_footer")}
       </div>
     </div>
   );

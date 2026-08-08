@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useT } from "../lib/i18n";
 import { AcceptModal, SessionView } from "../transfer/SessionView";
 import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
 
@@ -25,6 +26,7 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 
 export default function NearbyDevices() {
   const isMobile = useIsMobile();
+  const t = useT();
   const nearby = useNearbyTransfer();
   const { devices, crowded, deviceName, session, incoming, rename } = nearby;
 
@@ -117,7 +119,7 @@ export default function NearbyDevices() {
                 color: "#6f6a5d",
               }}
             >
-              On your network
+              {t("nearby_eyebrow")}
             </span>
           </div>
           {isEditing ? (
@@ -132,7 +134,7 @@ export default function NearbyDevices() {
                 color: "#6f6a5d",
               }}
             >
-              <span>You appear as</span>
+              <span>{t("nearby_you_appear_as")}</span>
               <input
                 ref={(el) => el?.focus()}
                 type="text"
@@ -172,14 +174,14 @@ export default function NearbyDevices() {
                 color: "#6f6a5d",
               }}
             >
-              <span>You appear as</span>
+              <span>{t("nearby_you_appear_as")}</span>
               <span style={{ color: "#a8a293" }}>{deviceName}</span>
               <button
                 type="button"
                 className="nearby-edit-btn"
                 onClick={handleStartEdit}
-                title="Rename device"
-                aria-label="Rename device"
+                title={t("nearby_rename_device")}
+                aria-label={t("nearby_rename_device")}
                 style={{
                   background: "none",
                   border: "none",
@@ -221,7 +223,7 @@ export default function NearbyDevices() {
             margin: "0 0 8px",
           }}
         >
-          Devices nearby.
+          {t("nearby_heading")}
         </h2>
         <p
           style={{
@@ -232,8 +234,7 @@ export default function NearbyDevices() {
             maxWidth: "560px",
           }}
         >
-          Same Wi-Fi, no code. Tap a device to offer files straight across — they review and accept
-          before anything moves, and the bytes go peer-to-peer, never touching a server.
+          {t("nearby_description")}
         </p>
 
         {crowded ? (
@@ -285,7 +286,7 @@ export default function NearbyDevices() {
               onDownloadOne={nearby.downloadOne}
               onDownloadAll={nearby.downloadAll}
               isMobile={isMobile}
-              heading={session.connected ? "Connected" : "Opening channel"}
+              heading={session.connected ? t("transfer_heading_connected") : t("nearby_heading_opening")}
             />
           )}
         </SessionModal>
@@ -303,6 +304,7 @@ function DeviceCard({
   device: NearbyDevice;
   onPickFiles: (list: FileList | null) => void;
 }) {
+  const t = useT();
   return (
     <label
       className="nearby-card"
@@ -385,7 +387,7 @@ function DeviceCard({
             marginTop: "3px",
           }}
         >
-          Tap to send
+          {t("nearby_tap_to_send")}
         </span>
       </span>
 
@@ -407,6 +409,7 @@ function DeviceCard({
 /* ----------------------------------------------------------------- empty / crowded */
 
 function EmptyState({ isMobile }: { isMobile: boolean }) {
+  const t = useT();
   return (
     <div
       style={{
@@ -432,16 +435,17 @@ function EmptyState({ isMobile }: { isMobile: boolean }) {
         ))}
       </div>
       <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "17px", marginBottom: "6px" }}>
-        No other devices yet
+        {t("nearby_empty_heading")}
       </div>
       <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", lineHeight: 1.6 }}>
-        Open Warp on another device on the same Wi-Fi.
+        {t("nearby_empty_hint")}
       </div>
     </div>
   );
 }
 
 function CrowdedNote({ isMobile }: { isMobile: boolean }) {
+  const t = useT();
   return (
     <div
       style={{
@@ -474,7 +478,7 @@ function CrowdedNote({ isMobile }: { isMobile: boolean }) {
           !
         </span>
         <span style={{ fontFamily: MONO, fontSize: "12px", lineHeight: 1.55, color: "#a8a293" }}>
-          Too many devices on this network to auto-list — use a code instead.
+          {t("nearby_crowded_message")}
         </span>
       </div>
       <a
@@ -499,7 +503,7 @@ function CrowdedNote({ isMobile }: { isMobile: boolean }) {
           textAlign: "center",
         }}
       >
-        Use a code →
+        {t("nearby_use_code")}
       </a>
     </div>
   );
@@ -516,6 +520,7 @@ function SessionError({
   onClose: () => void;
   isMobile: boolean;
 }) {
+  const t = useT();
   return (
     <div style={{ padding: isMobile ? "26px 20px" : "32px 28px", textAlign: "center" }}>
       <div
@@ -545,10 +550,10 @@ function SessionError({
           marginBottom: "10px",
         }}
       >
-        Channel failed
+        {t("transfer_error_eyebrow")}
       </div>
       <p style={{ fontSize: "14px", color: "#a8a293", margin: "0 0 22px", lineHeight: 1.55 }}>
-        {message} Warp is STUN-only — some networks can't be bridged directly.
+        {message} {t("nearby_error_suffix")}
       </p>
       <button
         type="button"
@@ -568,7 +573,7 @@ function SessionError({
           transition: "border-color .15s ease, color .15s ease",
         }}
       >
-        Close
+        {t("common_close")}
       </button>
     </div>
   );
@@ -583,6 +588,7 @@ function SessionModal({
   children: React.ReactNode;
   onClose: () => void;
 }) {
+  const t = useT();
   // Lock background scroll while the modal is open.
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -631,7 +637,7 @@ function SessionModal({
           type="button"
           className="nearby-link"
           onClick={onClose}
-          aria-label="Close session"
+          aria-label={t("nearby_close_session_aria")}
           style={{
             position: "absolute",
             top: "12px",
