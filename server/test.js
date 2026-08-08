@@ -136,7 +136,45 @@ async function run() {
   e.close();
   f.close();
 
-  for (const ws of [a, c, d]) ws.close();
+  // 9. Malformed `signal` frames are refused instead of silently dropped or half-relayed.
+  //    A non-string `to` used to fail the peer lookup and disappear with no reply; a
+  //    missing `data` still reached the peer as `data: undefined`.
+  const s1 = await connect();
+  sendj(s1, { type: 'join' });
+  const s1j = await next(s1, (m) => m.type === 'joined');
+  const s2 = await connect();
+  sendj(s2, { type: 'join', room: s1j.room });
+  const s2j = await next(s2, (m) => m.type === 'joined');
+  await next(s1, (m) => m.type === 'peer-joined');
+
+  for (const bad of [
+    { type: 'signal', to: 42, data: { sdp: 'x' } },
+    { type: 'signal', to: null, data: { sdp: 'x' } },
+    { type: 'signal', to: { id: s1j.selfId }, data: { sdp: 'x' } },
+    { type: 'signal', to: [s1j.selfId], data: { sdp: 'x' } },
+    { type: 'signal', data: { sdp: 'x' } },              // no `to` at all
+    { type: 'signal', to: s1j.selfId },                  // no `data` at all
+  ]) {
+    sendj(s2, bad);
+    const err = await next(s2, (m) => m.type === 'error');
+    assert.equal(err.error, 'bad-message', `rejects ${JSON.stringify(bad)}`);
+  }
+  await delay(300);
+  assert.equal(s1.queue.filter((m) => m.type === 'signal').length, 0, 'no malformed frame reached the peer');
+
+  // The guard must not have broken the relay path it sits in front of.
+  sendj(s2, { type: 'signal', to: s1j.selfId, data: { sdp: 'ok' } });
+  const good = await next(s1, (m) => m.type === 'signal');
+  assert.equal(good.from, s2j.selfId, 'a valid frame still relays with a server-stamped from');
+  assert.deepEqual(good.data, { sdp: 'ok' }, 'valid payload relayed intact');
+
+  // `data: null` is a present value, not an absence. The guard checks for the key, not
+  // its contents, so null relays — that is what keeping `data` opaque means.
+  sendj(s2, { type: 'signal', to: s1j.selfId, data: null });
+  const nulled = await next(s1, (m) => m.type === 'signal');
+  assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
+
+  for (const ws of [a, c, d, s1, s2]) ws.close();
 }
 
 // Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.
