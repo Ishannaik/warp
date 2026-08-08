@@ -140,4 +140,41 @@ Given that, the honest summary of the room code's strength is:
 
 ## Client-side Attack Surface
 
-(To be documented.)
+The signaling relay is a dumb intermediary and the room code is a rendezvous secret, not a durable one. Once two browsers are on a live data channel, the remaining question is what a peer — malicious or merely buggy — can make the *other tab* do with the bytes and names it sends. This section covers the XSS/CSP gap, what a received file can and cannot reach, and what the "INTEGRITY ✓ SHA-256" claim on the hero actually verifies today.
+
+### XSS and the missing CSP
+
+`web/public/_headers` sets five headers (`X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, `Strict-Transport-Security`, `Permissions-Policy`) but no `Content-Security-Policy`. There is no defense-in-depth layer against script injection: if an XSS bug ever exists anywhere in the render path — a received filename, a text-snippet message, a dependency (`qrcode`, `fflate`) — there's nothing today stopping injected script from running with the page's full origin, including `fetch` to arbitrary hosts and read access to whatever the tab holds in memory (in-flight file blobs, the signaling WebSocket).
+
+React escapes JSX children and attributes by default, so a received filename or a text snippet rendered as `{name}` cannot inject markup. The one place that bypasses that guard is the QR code in `web/src/transfer/TransferFlow.tsx`, which sets `dangerouslySetInnerHTML` from `qrSvg` — but that string is the output of the `qrcode` library encoding the room's own share URL, not attacker-controlled peer input, so it isn't a peer-reachable injection point. No other `dangerouslySetInnerHTML` exists in `web/src`.
+
+That leaves the CSP gap itself as the open item: a same-origin defense that would contain the blast radius of a future bug (in this codebase or a dependency) is simply absent. [Issue #48](https://github.com/Ishannaik/warp/issues/48) tracks adding it, starting Report-Only before enforcing. It is **open and unmerged as of this writing**.
+
+### What a received file can do
+
+Warp never auto-opens, auto-executes, or auto-previews a received file. The receive path (`web/src/lib/warp/receiveController.ts`, `web/src/lib/warp/useWarpTransfer.ts`) is write-only plumbing:
+
+- `memorySink()` and `diskSink()` (`receiveController.ts:46-133`) only ever call `Blob(...)`/`writable.write(buf)` against a `FileSystemWritableFileStream` opened from an explicit `showSaveFilePicker`/`showDirectoryPicker` call. Neither sink reads back or interprets file contents — a poisoned write (`failed`) just stops the byte count from advancing.
+- Getting bytes onto disk or into the tray at all requires the recipient to click **Accept** on the offer modal (`useWarpTransfer.ts` `accept()`, around line 730 onward). Nothing streams before that gesture.
+- Handing a file to the OS is a second explicit action: `downloadOne`/`downloadAll` (`useWarpTransfer.ts:864-914`) build a transient `URL.createObjectURL` anchor and call `.click()` themselves, only in response to the user clicking a download button in the tray — the browser's own save-file/open-file prompt is what runs next, same as any other same-origin download link. The `savedToDisk` case (large batches via the File System Access API) writes straight into the folder or file handle the user picked at accept time; there is no separate reveal-and-run step.
+
+So a malicious peer can name a file `evil.exe` or `report.pdf.scr` and send arbitrary bytes, but Warp treats that identically to any other browser download: it lands where the user chose to put it, and the OS's own execute-on-open behavior (or lack of it) is what governs from there, not anything Warp does.
+
+### File-integrity story: what's wired up today
+
+The hashing infrastructure (`web/src/lib/warp/hash.ts`, `hashWorker.ts`) exists and runs on both ends of a transfer: `peer.ts` opens a `createHashSession()` for a fresh (non-resumed) send at line 792 and a fresh receive at line 1004, feeds it every chunk, and emits a `hash-computed` event with the resulting SHA-256 hex digest once the file completes (`peer.ts:839-840`, `:1089-1090`).
+
+That is where it stops. Grepping the codebase for consumers of `hash-computed` turns up none — no listener in `useWarpTransfer.ts`, no UI component reads a digest. The sender's digest is never put on the wire (no field in the offer/manifest or a `file-end` message carries it), so the receiver has no value to compare its own digest against. Today's SHA-256 is two independent local checksums with no cross-peer verification and no user-visible result.
+
+The hero's **"INTEGRITY ✓ SHA-256"** claim (`web/src/hero/Hero.tsx:45`) currently rests on the transfer's resume mechanism, not on this hashing: `bytesWritten` is only advanced after a disk/memory write resolves (`receiveController.ts:6-18`), and the manifest's declared byte count is what resume and completion are checked against. That guards against dropped or truncated writes, not against bit-level corruption that preserves length, and it says nothing about a compromised or malicious peer sending bytes that don't match what it claims to be sending.
+
+[Issue #6](https://github.com/Ishannaik/warp/issues/6) is what would close the gap: transmit the sender's digest, compare it on receipt, and surface a real verified badge (or a failure) instead of the current silent, uncompared local hash. It is **open and unmerged as of this writing**.
+
+## Known open items
+
+| Item | Status | Tracking issue |
+| --- | --- | --- |
+| No `Content-Security-Policy` header | Open | [#48](https://github.com/Ishannaik/warp/issues/48) |
+| SHA-256 digests computed but never compared cross-peer (no verified badge) | Open | [#6](https://github.com/Ishannaik/warp/issues/6) |
+| No rate limit on signaling `join` guesses (room-code brute force) | Open | [#31](https://github.com/Ishannaik/warp/issues/31) |
+| Malicious Peer section | Not yet written | [#158](https://github.com/Ishannaik/warp/issues/158) |
