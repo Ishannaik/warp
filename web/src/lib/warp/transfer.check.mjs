@@ -30,8 +30,15 @@ const code = out.outputFiles[0].text;
 const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
 mod = await import(dataUrl);
 
-const { fileKey, newResumeToken, formatBytes, textSnippetFrameBytes, TEXT_SNIPPET_MAX_BYTES, fileId } =
-  mod;
+const {
+  fileKey,
+  newResumeToken,
+  formatBytes,
+  textSnippetFrameBytes,
+  TEXT_SNIPPET_MAX_BYTES,
+  fileId,
+  summarizeBatches,
+} = mod;
 
 // --- fileKey: stable per (name,size,mtime); changes when any of them changes ---
 const a = { name: "clip.mp4", size: 1234, lastModified: 42 };
@@ -133,6 +140,65 @@ assert.ok(
   "a shorter id yields a smaller frame than the probe id estimate",
 );
 
+// --- summarizeBatches: aggregate rollup for a multi-file batch (#134) ------
+const mkItem = (over) => ({
+  id: over.id ?? "i",
+  batchId: over.batchId ?? "b1",
+  name: over.name ?? "f",
+  size: over.size ?? 100,
+  mime: "application/octet-stream",
+  kind: "file",
+  direction: over.direction ?? "send",
+  status: over.status ?? "transferring",
+  transferred: over.transferred ?? 0,
+  progress: over.progress ?? 0,
+  peerId: over.peerId,
+});
+
+// A single-item batch is never summarized — the item's own row IS the aggregate.
+assert.deepEqual(
+  summarizeBatches([mkItem({ id: "a", batchId: "solo" })]),
+  [],
+  "a lone item's batch produces no summary",
+);
+
+// Two items, one done and one half-through: byte-weighted progress, not a flat average.
+const twoFile = [
+  mkItem({ id: "a", batchId: "b1", size: 900, transferred: 900, status: "done" }),
+  mkItem({ id: "b", batchId: "b1", size: 100, transferred: 50, status: "transferring" }),
+];
+const [b1] = summarizeBatches(twoFile);
+assert.equal(b1.total, 2, "counts every item in the batch");
+assert.equal(b1.done, 1, "counts only status:done items as finished");
+assert.equal(b1.bytesTotal, 1000, "sums size across the batch");
+assert.equal(b1.bytesDone, 950, "sums transferred across the batch");
+assert.equal(b1.progress, 95, "byte-weighted progress, not a flat 50/50 average of item percentages");
+
+// A batch fully done reports 100% and done === total.
+const doneBatch = [
+  mkItem({ id: "a", batchId: "b2", size: 10, transferred: 10, status: "done" }),
+  mkItem({ id: "b", batchId: "b2", size: 10, transferred: 10, status: "done" }),
+];
+const [b2] = summarizeBatches(doneBatch);
+assert.equal(b2.done, 2);
+assert.equal(b2.progress, 100, "a fully-done batch is 100%, not truncated by rounding");
+
+// Two independent multi-file batches (e.g. two devices in a mesh room) summarize separately,
+// each keyed by its own batchId, in first-appearance order.
+const mixed = [
+  mkItem({ id: "a", batchId: "b3", peerId: "p1" }),
+  mkItem({ id: "c", batchId: "b4", peerId: "p2" }),
+  mkItem({ id: "b", batchId: "b3", peerId: "p1" }),
+  mkItem({ id: "d", batchId: "b4", peerId: "p2" }),
+];
+const mixedSummaries = summarizeBatches(mixed);
+assert.equal(mixedSummaries.length, 2, "each multi-file batchId gets its own summary");
+assert.deepEqual(
+  mixedSummaries.map((b) => b.batchId),
+  ["b3", "b4"],
+  "batches are ordered by first appearance in the item list",
+);
+
 console.log(
-  "OK: transfer.ts resume identity helpers (fileKey stability + token uniqueness) + formatBytes boundaries + textSnippetFrameBytes envelope/UTF-8/escaping/cap",
+  "OK: transfer.ts resume identity helpers (fileKey stability + token uniqueness) + formatBytes boundaries + textSnippetFrameBytes envelope/UTF-8/escaping/cap + summarizeBatches byte-weighted aggregate rollup",
 );
