@@ -7,6 +7,7 @@ import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/us
 import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { copyToClipboard } from "../lib/copyToClipboard";
+import { useT } from "../lib/i18n";
 import { AcceptModal, SessionView } from "./SessionView";
 
 /**
@@ -39,6 +40,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWarpTransfer(joinCode);
   const { mode, code, shareUrl, status, items, incoming, error, connections } = wrap;
   const isMobile = useIsMobile();
+  const t = useT();
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
@@ -110,8 +112,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const peerLabel = useMemo(() => {
     const others = wrap.peers;
     if (others.length) return others[0].slice(0, 8);
-    return mode === "receive" ? "the sender" : "your peer";
-  }, [wrap.peers, mode]);
+    return mode === "receive" ? t("transfer_peer_label_receiver") : t("transfer_peer_label_sender");
+  }, [wrap.peers, mode, t]);
 
   // The accept modal names the exact device an offer came from (mesh-aware).
   const incomingPeerLabel = useMemo(() => {
@@ -151,7 +153,15 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
       `}</style>
 
       <TopBar
-        label={showSession ? "Session" : showPair ? "Pair" : error ? "Error" : "Select"}
+        label={
+          showSession
+            ? t("transfer_step_session")
+            : showPair
+              ? t("transfer_step_pair")
+              : error
+                ? t("transfer_step_error")
+                : t("transfer_step_select")
+        }
         isMobile={isMobile}
       />
 
@@ -166,12 +176,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
       >
         <div style={{ width: "100%", maxWidth: "720px" }}>
           {error ? (
-            <ErrorPanel
-              kind={error.kind}
-              message={error.message}
-              onRetry={wrap.retry}
-              isMobile={isMobile}
-            />
+            <ErrorPanel error={error} onRetry={wrap.retry} isMobile={isMobile} />
           ) : showSession ? (
             <>
               {reconnecting && (
@@ -199,7 +204,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                       animation: "pulse 1.2s ease-in-out infinite",
                     }}
                   />
-                  CONNECTION DROPPED — RECONNECTING… TRANSFERS RESUME AUTOMATICALLY
+                  {t("transfer_reconnecting_banner")}
                 </div>
               )}
               <SessionView
@@ -215,10 +220,10 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 isMobile={isMobile}
                 heading={
                   reconnecting
-                    ? "Reconnecting…"
+                    ? t("transfer_heading_reconnecting")
                     : mode === "receive"
-                      ? "Connected to sender"
-                      : "Connected"
+                      ? t("transfer_heading_connected_receiver")
+                      : t("transfer_heading_connected")
                 }
                 // Sender only: the staged queue stays editable until they hit Send.
                 // The receiver has no pre-queue, so these stay undefined.
@@ -296,6 +301,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 /* ------------------------------------------------------------------ top bar */
 
 function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
+  const t = useT();
   return (
     <div
       style={{
@@ -316,7 +322,7 @@ function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
       >
         <WarpLogo size={24} />
         <span style={{ fontFamily: DISPLAY, fontSize: "19px", fontWeight: 800, letterSpacing: "-.02em" }}>
-          WARP
+          {t("common_wordmark")}
         </span>
       </a>
 
@@ -357,7 +363,7 @@ function TopBar({ label, isMobile }: { label: string; isMobile: boolean }) {
           textDecoration: "none",
         }}
       >
-        ← EXIT
+        {t("transfer_exit")}
       </a>
     </div>
   );
@@ -389,6 +395,7 @@ function QueueList({
   isMobile: boolean;
   style?: CSSProperties;
 }) {
+  const t = useT();
   return (
     <div style={{ border: "1px solid rgba(239,233,218,.14)", ...style }}>
       <div
@@ -405,9 +412,10 @@ function QueueList({
           color: "#6f6a5d",
         }}
       >
-        <span>Queue</span>
+        <span>{t("transfer_queue_label")}</span>
         <span>
-          <span style={{ color: "#efe9da" }}>{fileCount}</span> files · {formatBytes(totalBytes)}
+          <span style={{ color: "#efe9da" }}>{fileCount}</span>
+          {t("transfer_queue_files_suffix")(formatBytes(totalBytes))}
         </span>
       </div>
 
@@ -421,7 +429,7 @@ function QueueList({
             color: "#6f6a5d",
           }}
         >
-          Nothing queued yet — drop files above to begin.
+          {t("transfer_queue_empty")}
         </div>
       ) : (
         queue.map((q) => (
@@ -480,7 +488,7 @@ function QueueList({
                 border: 0,
                 padding: 0,
               }}
-              aria-label={`Remove ${q.file.name}`}
+              aria-label={t("transfer_remove_file_aria")(q.file.name)}
             >
               ✕
             </button>
@@ -514,9 +522,10 @@ function SelectStep({
   onOpenChannel: () => void;
   isMobile: boolean;
 }) {
+  const t = useT();
   return (
     <div style={{ animation: "warpFade .5s ease both" }}>
-      <div style={{ ...stepLabel, marginBottom: "10px" }}>Step 01 / Select</div>
+      <div style={{ ...stepLabel, marginBottom: "10px" }}>{t("transfer_step01_select")}</div>
       <h1
         style={{
           fontFamily: DISPLAY,
@@ -527,7 +536,7 @@ function SelectStep({
           margin: "0 0 28px",
         }}
       >
-        What are you sending?
+        {t("transfer_select_heading")}
       </h1>
 
       <div
@@ -565,9 +574,9 @@ function SelectStep({
             }}
           />
         </div>
-        <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "20px" }}>Drop files here</div>
+        <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "20px" }}>{t("transfer_drop_here")}</div>
         <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", marginTop: "8px" }}>
-          or click to browse · any size, any type
+          {t("transfer_drop_hint")}
         </div>
       </div>
 
@@ -598,7 +607,7 @@ function SelectStep({
             textAlign: isMobile ? "center" : "left",
           }}
         >
-          Files stay on your device until a peer accepts.
+          {t("transfer_files_local_note")}
         </span>
         <button
           type="button"
@@ -620,7 +629,7 @@ function SelectStep({
             cursor: files.length ? "pointer" : "not-allowed",
           }}
         >
-          Open secure channel &nbsp;→
+          {t("transfer_open_channel")}
         </button>
       </div>
     </div>
@@ -656,6 +665,7 @@ function PairStep({
   onRemove: (id: string) => void;
   isMobile: boolean;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState<"link" | "code" | null>(null);
   const [copyFailed, setCopyFailed] = useState<"link" | "code" | null>(null);
   const [qrSvg, setQrSvg] = useState<string>("");
@@ -718,17 +728,17 @@ function PairStep({
   const joiners = connections;
   const waitingText = isReceiver
     ? connecting
-      ? "Joining channel"
-      : "Waiting for sender"
+      ? t("transfer_waiting_joining")
+      : t("transfer_waiting_for_sender")
     : joiners.length === 1
-      ? "1 device joining — opening channel"
+      ? t("transfer_waiting_one_joining")
       : joiners.length > 1
-        ? `${joiners.length} devices joining — opening channels`
-        : "Waiting for devices to join";
+        ? t("transfer_waiting_many_joining")(joiners.length)
+        : t("transfer_waiting_for_devices");
 
   return (
     <div style={{ animation: "warpFade .5s ease both", textAlign: "center" }}>
-      <div style={{ ...stepLabel, marginBottom: "30px" }}>Step 02 / Pair</div>
+      <div style={{ ...stepLabel, marginBottom: "30px" }}>{t("transfer_step02_pair")}</div>
 
       <div
         style={{
@@ -807,7 +817,7 @@ function PairStep({
           margin: "18px 0 6px",
         }}
       >
-        {isReceiver ? "Connecting you in" : "Share this code"}
+        {isReceiver ? t("transfer_connecting_heading") : t("transfer_share_heading")}
       </h1>
 
       <div
@@ -826,12 +836,12 @@ function PairStep({
 
       {isReceiver ? (
         <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d" }}>
-          Hold tight — opening a direct channel to the sender.
+          {t("transfer_receiver_hint")}
         </div>
       ) : (
         <>
           <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d" }}>
-            {fileCount} files · {formatBytes(totalBytes)} ready to offer
+            {t("transfer_pair_ready")(fileCount, formatBytes(totalBytes))}
           </div>
 
           {/* JOINERS — devices show up here the instant they enter the room, even
@@ -871,7 +881,7 @@ function PairStep({
                     }}
                   />
                   {c.label}
-                  {!c.connected && <span style={{ color: "#6f6a5d" }}>· linking</span>}
+                  {!c.connected && <span style={{ color: "#6f6a5d" }}>· {t("transfer_linking_suffix")}</span>}
                 </span>
               ))}
             </div>
@@ -908,7 +918,11 @@ function PairStep({
                     }
               }
             >
-              {copyFailed === "link" ? "✕ copy failed" : copied === "link" ? "✓ copied!" : "⧉ Copy link"}
+              {copyFailed === "link"
+                ? t("transfer_copy_failed")
+                : copied === "link"
+                  ? t("transfer_copy_success_link")
+                  : t("transfer_copy_link_default")}
             </button>
             <button
               type="button"
@@ -929,7 +943,11 @@ function PairStep({
                     }
               }
             >
-              {copyFailed === "code" ? "✕ copy failed" : copied === "code" ? "✓ copied!" : "⬚ Copy code"}
+              {copyFailed === "code"
+                ? t("transfer_copy_failed")
+                : copied === "code"
+                  ? t("transfer_copy_success_link")
+                  : t("transfer_copy_code_default")}
             </button>
             {canShare && (
               <button
@@ -939,7 +957,7 @@ function PairStep({
                 disabled={!shareUrl}
                 style={isMobile ? { ...shareBtn, display: "block", textAlign: "center" } : shareBtn}
               >
-                ↗ Share
+                {t("transfer_share_button")}
               </button>
             )}
           </div>
@@ -956,7 +974,7 @@ function PairStep({
                 alignItems: "center",
                 justifyContent: "center",
               }}
-              aria-label="QR code linking to this transfer"
+              aria-label={t("transfer_qr_aria")}
               dangerouslySetInnerHTML={{ __html: qrSvg }}
             />
           )}
@@ -995,10 +1013,10 @@ function PairStep({
               }}
             >
               <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "16px" }}>
-                Add more files
+                {t("transfer_add_more_files")}
               </div>
               <div style={{ fontFamily: MONO, fontSize: "11px", color: "#6f6a5d", marginTop: "6px" }}>
-                drop or click — edit the queue until your peer joins
+                {t("transfer_add_more_hint")}
               </div>
             </div>
 
@@ -1032,30 +1050,41 @@ const shareBtn: CSSProperties = {
 
 /* -------------------------------------------------------------- error panel */
 
-/** Eyebrow + headline per error kind — the NAT/STUN framing is only true for
- *  `nat-failed`; every other kind gets its own honest chrome instead of
- *  borrowing "No direct route." (issue #174). */
-const ERROR_PANEL_COPY: Record<WarpError["kind"], { eyebrow: string; title: string; natFooter?: boolean }> = {
-  "nat-failed": { eyebrow: "Channel failed", title: "No direct route.", natFooter: true },
-  disconnected: { eyebrow: "Connection lost", title: "Connection dropped." },
-  "channel-error": { eyebrow: "Channel failed", title: "The channel broke." },
-  signaling: { eyebrow: "Couldn't connect", title: "Couldn't reach the room." },
-  "no-files": { eyebrow: "Nothing to send", title: "Add a file first." },
-  "too-large": { eyebrow: "Too large", title: "File too large." },
+/** Static kinds whose engine message never varies, so they're worth a fixed
+ *  dictionary key. `signaling` and `too-large` carry a dynamic server/probe
+ *  reason and stay as the engine's raw (English) message. */
+const STATIC_ERROR_KEYS: Partial<Record<WarpError["kind"], "error_nat_failed" | "error_disconnected" | "error_channel_error" | "error_no_files">> = {
+  "nat-failed": "error_nat_failed",
+  disconnected: "error_disconnected",
+  "channel-error": "error_channel_error",
+  "no-files": "error_no_files",
+};
+
+/** Eyebrow + headline dictionary keys per error kind — the NAT/STUN framing
+ *  is only true for `nat-failed`; every other kind gets its own honest
+ *  chrome instead of borrowing "No direct route." (issue #174). */
+const ERROR_PANEL_COPY: Record<WarpError["kind"], { eyebrow: "error_eyebrow_nat_failed" | "error_eyebrow_disconnected" | "error_eyebrow_channel_error" | "error_eyebrow_signaling" | "error_eyebrow_no_files" | "error_eyebrow_too_large"; title: "error_title_nat_failed" | "error_title_disconnected" | "error_title_channel_error" | "error_title_signaling" | "error_title_no_files" | "error_title_too_large"; natFooter?: boolean }> = {
+  "nat-failed": { eyebrow: "error_eyebrow_nat_failed", title: "error_title_nat_failed", natFooter: true },
+  disconnected: { eyebrow: "error_eyebrow_disconnected", title: "error_title_disconnected" },
+  "channel-error": { eyebrow: "error_eyebrow_channel_error", title: "error_title_channel_error" },
+  signaling: { eyebrow: "error_eyebrow_signaling", title: "error_title_signaling" },
+  "no-files": { eyebrow: "error_eyebrow_no_files", title: "error_title_no_files" },
+  "too-large": { eyebrow: "error_eyebrow_too_large", title: "error_title_too_large" },
 };
 
 function ErrorPanel({
-  kind,
-  message,
+  error,
   onRetry,
   isMobile,
 }: {
-  kind: WarpError["kind"];
-  message: string;
+  error: WarpError;
   onRetry: () => void;
   isMobile: boolean;
 }) {
-  const copy = ERROR_PANEL_COPY[kind];
+  const t = useT();
+  const key = STATIC_ERROR_KEYS[error.kind];
+  const message = key ? t(key) : error.message;
+  const copy = ERROR_PANEL_COPY[error.kind];
   return (
     <div style={{ animation: "warpFade .5s ease both", textAlign: "center" }}>
       <div
@@ -1085,7 +1114,7 @@ function ErrorPanel({
           marginBottom: "12px",
         }}
       >
-        {copy.eyebrow}
+        {t(copy.eyebrow)}
       </div>
       <h1
         style={{
@@ -1097,12 +1126,11 @@ function ErrorPanel({
           margin: "0 0 12px",
         }}
       >
-        {copy.title}
+        {t(copy.title)}
       </h1>
       <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>
         {message}
-        {copy.natFooter &&
-          " Warp is STUN-only — there's no relay fallback, so some networks simply can't be bridged."}
+        {copy.natFooter && t("transfer_error_suffix")}
       </p>
       <div
         style={{
@@ -1132,7 +1160,7 @@ function ErrorPanel({
             cursor: "pointer",
           }}
         >
-          Try again
+          {t("transfer_retry")}
         </button>
         <a
           href="/"
@@ -1154,7 +1182,7 @@ function ErrorPanel({
             textDecoration: "none",
           }}
         >
-          Back to Warp
+          {t("transfer_back_to_warp")}
         </a>
       </div>
     </div>
@@ -1164,6 +1192,7 @@ function ErrorPanel({
 /* ------------------------------------------------------------- drop overlay */
 
 function DropOverlay() {
+  const t = useT();
   return (
     <div
       style={{
@@ -1216,7 +1245,7 @@ function DropOverlay() {
             textTransform: "uppercase",
           }}
         >
-          Drop to send
+          {t("transfer_drop_send")}
         </div>
         <div
           style={{
@@ -1228,7 +1257,7 @@ function DropOverlay() {
             marginTop: "10px",
           }}
         >
-          Release anywhere
+          {t("transfer_release_anywhere")}
         </div>
       </div>
     </div>
