@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import Toffeeshare from "./vs/Toffeeshare";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -54,6 +55,13 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path === "/vs/toffeeshare") {
+    return {
+      title: "Warp vs ToffeeShare · Warp",
+      description:
+        "ToffeeShare is Warp's closest architectural twin — WebRTC, peer-to-peer, no size limit. Warp reconnects and resumes after a dropped connection; ToffeeShare's own fix is to restart.",
+    };
+  }
   if (path !== "/") {
     return {
       title: "Page not found · Warp",
@@ -91,6 +99,7 @@ export default function App() {
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
+  if (path === "/vs/toffeeshare") return <Toffeeshare />;
 
   return <NotFound />;
 }
