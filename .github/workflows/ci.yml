@@ -38,6 +38,22 @@ jobs:
               - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
 
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Report high/critical advisories on every run without blocking contributor
+      # CI yet; once the signal proves stable this can become a hard gate.
+      - name: Audit dependencies (high+)
+        continue-on-error: true
+        run: pnpm audit --audit-level=high
+
   web:
     needs: changes
     if: ${{ needs.changes.outputs.web == 'true' }}
