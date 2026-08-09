@@ -11,12 +11,43 @@ const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
 const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
 const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-guessed UA hint, relayed as-is
 
+// #99: built-in allowed origins for the production app + documented custom domains.
+// Self-hosters: set the ALLOWED_ORIGINS env var (comma-separated full origins,
+// e.g. "https://my.domain.com,https://other.domain.com") to add your own without
+// editing this file — see the self-hosting guide (issue #24).
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://warp.ishannaik.com',
+  'https://warp.pixalabs.net',
+  'https://wrap-3qq.pages.dev',
+];
+
+function isOriginAllowed(origin, env) {
+  // No Origin header → non-browser client (curl, wrangler dev, server tests).
+  // Browsers always send Origin on WebSocket upgrades, so absence is safe.
+  if (!origin) return true;
+  // Localhost/loopback for local development — any port, http or https.
+  try {
+    const u = new URL(origin);
+    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return true;
+  } catch { /* malformed origin — fall through to the list check */ }
+  const allowed = env.ALLOWED_ORIGINS
+    ? env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
+    : DEFAULT_ALLOWED_ORIGINS;
+  return allowed.includes(origin);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('warp signaling server\n', { headers: { 'content-type': 'text/plain' } });
+    }
+    // #99: reject WebSocket upgrades from unlisted origins before they reach the
+    // Durable Object — stops unrelated sites from piggybacking on this free relay.
+    const origin = request.headers.get('Origin');
+    if (!isOriginAllowed(origin, env)) {
+      return new Response('Forbidden: origin not allowed.\n', { status: 403 });
     }
     // One Durable Object holds all rooms. Plenty for a hobby signaling server;
     // shard by room (idFromName(roomCode)) later if you ever outgrow it.
