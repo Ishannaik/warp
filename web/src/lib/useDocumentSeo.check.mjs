@@ -10,39 +10,32 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-
-let useDocumentSeo;
-try {
-  const esbuild = await import("esbuild");
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "useDocumentSeo.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-    plugins: [
-      {
-        name: "react-effect-stub",
-        setup(build) {
-          build.onResolve({ filter: /^react$/ }, () => ({
-            path: "react-stub",
-            namespace: "hook-stub",
-          }));
-          build.onLoad({ filter: /.*/, namespace: "hook-stub" }, () => ({
-            loader: "js",
-            contents: "export function useEffect(effect) { effect(); }",
-          }));
-        },
+const esbuild = await import("esbuild");
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "useDocumentSeo.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+  plugins: [
+    {
+      name: "react-effect-stub",
+      setup(build) {
+        build.onResolve({ filter: /^react$/ }, () => ({
+          path: "react-stub",
+          namespace: "hook-stub",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "hook-stub" }, () => ({
+          loader: "js",
+          contents: "export function useEffect(effect) { effect(); }",
+        }));
       },
-    ],
-  });
-  const code = out.outputFiles[0].text;
-  const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
-  ({ useDocumentSeo } = await import(dataUrl));
-} catch (error) {
-  console.error("SKIP: esbuild not available to transpile useDocumentSeo.ts —", error.message);
-  process.exit(0);
-}
+    },
+  ],
+});
+const code = out.outputFiles[0].text;
+const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+const { useDocumentSeo } = await import(dataUrl);
 
 function makeElement(tagName) {
   const attrs = new Map();
