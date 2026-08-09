@@ -41,6 +41,8 @@ class FakePeer {
     this.acceptTargets = [];
     this.declined = [];
     this.cancelled = [];
+    this.paused = [];
+    this.resumeRequested = [];
     this.resumes = [];
     this.closed = false;
     this._listeners = {};
@@ -68,6 +70,12 @@ class FakePeer {
   }
   cancel(id) {
     this.cancelled.push(id);
+  }
+  pause(id) {
+    this.paused.push(id);
+  }
+  requestResume(id) {
+    this.resumeRequested.push(id);
   }
   close() {
     this.closed = true;
@@ -363,6 +371,7 @@ assert(fsPickers.fileCalls === 0 && fsPickers.dirCalls === 0, "no picker is prom
 // inactive entry auto-accepts with the durable offset and NO modal.
 const receiveReg = new Map();
 const cancelledKeys = new Set();
+const pausedKeys = new Set();
 
 function fakeSink(bytes, failed = false) {
   return { bytesWritten: bytes, failed, async quiesce() {}, async abort() {} };
@@ -382,7 +391,8 @@ async function handleOffer(peerId, info) {
         !e.sink.failed &&
         !!it.resumeToken &&
         e.resumeToken === it.resumeToken &&
-        !cancelledKeys.has(it.key)
+        !cancelledKeys.has(it.key) &&
+        !pausedKeys.has(it.key)
       );
     });
   if (!allResumable) {
@@ -463,6 +473,73 @@ rp.accepted.length = 0;
 await handleOffer(rp.remoteId, { batchId: "re7", items: [{ id: "s1", key: "sick|8|7", size: 8, resumeToken: "tok-F" }] });
 assert(incoming && incoming.batchId === "re7", "a re-offer onto a POISONED sink surfaces the modal, not auto-resume");
 assert(rp.accepted.length === 0, "a poisoned-sink re-offer is NOT auto-accepted");
+
+// 6h. Pause/resume guard (#247): a paused key is NOT auto-resumed by an unrelated
+// reconnect; explicit resume clears the guard; cancel after pause poisons the sink.
+receiveReg.set("held.bin|20|3", {
+  key: "held.bin|20|3",
+  size: 20,
+  resumeToken: "tok-P",
+  sink: fakeSink(8),
+  active: false,
+  target: undefined,
+});
+pausedKeys.add("held.bin|20|3");
+incoming = null;
+rp.accepted.length = 0;
+await handleOffer(rp.remoteId, {
+  batchId: "re8",
+  items: [{ id: "p1", key: "held.bin|20|3", size: 20, resumeToken: "tok-P" }],
+});
+assert(incoming && incoming.batchId === "re8", "a paused key is not auto-resumed by an unrelated reconnect");
+assert(rp.accepted.length === 0, "paused-key re-offer is NOT auto-accepted");
+
+// Explicit resume clears the paused key — a following re-offer auto-resumes.
+pausedKeys.delete("held.bin|20|3");
+incoming = null;
+await handleOffer(rp.remoteId, {
+  batchId: "re9",
+  items: [{ id: "p2", key: "held.bin|20|3", size: 20, resumeToken: "tok-P" }],
+});
+assert(incoming === null, "explicit resume clears the paused key and auto-resumes");
+assert(rp.resumes.at(-1) && rp.resumes.at(-1)["p2"] === 8, "post-resume auto-accept reports the durable offset");
+
+// Cancel after pause poisons the sink; a later re-offer surfaces the modal.
+receiveReg.set("held.bin|20|3", {
+  key: "held.bin|20|3",
+  size: 20,
+  resumeToken: "tok-P",
+  sink: fakeSink(8),
+  active: false,
+  target: undefined,
+});
+pausedKeys.add("held.bin|20|3");
+// cancel(id) mirror: poison + drop entry + cancelledKeys (and clear pausedKeys)
+{
+  const key = "held.bin|20|3";
+  cancelledKeys.add(key);
+  pausedKeys.delete(key);
+  const e = receiveReg.get(key);
+  if (e) void e.sink.abort();
+  receiveReg.delete(key);
+}
+incoming = null;
+rp.accepted.length = 0;
+// Even if a stale entry were re-created with a healthy sink, cancelledKeys blocks resume:
+receiveReg.set("held.bin|20|3", {
+  key: "held.bin|20|3",
+  size: 20,
+  resumeToken: "tok-P",
+  sink: fakeSink(8),
+  active: false,
+  target: undefined,
+});
+await handleOffer(rp.remoteId, {
+  batchId: "re10",
+  items: [{ id: "p3", key: "held.bin|20|3", size: 20, resumeToken: "tok-P" }],
+});
+assert(incoming && incoming.batchId === "re10", "cancel after pause poisons the path — re-offer surfaces the modal");
+assert(rp.accepted.length === 0, "cancel-after-pause re-offer is NOT auto-accepted");
 
 // 7. Reload-resume (issue #36, extended to OPFS by #169): the registry is repopulated
 // from the durable ledger on mount, and the EXISTING auto-resume path then continues

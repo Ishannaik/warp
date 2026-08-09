@@ -210,6 +210,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 onSendFiles={wrap.sendFiles}
                 onSendText={wrap.sendText}
                 onCancel={wrap.cancel}
+                onPause={wrap.pause}
+                onResume={wrap.resume}
                 onDownloadOne={wrap.downloadOne}
                 onDownloadAll={wrap.downloadAll}
                 isMobile={isMobile}

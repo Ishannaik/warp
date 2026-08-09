@@ -65,6 +65,10 @@ export interface UseNearbyTransfer {
   declineIncoming: () => void;
   /** Cancel an in-flight item (either direction). */
   cancel: (id: string) => void;
+  /** Pause an in-flight item (sink stays open). */
+  pause: (id: string) => void;
+  /** Resume a paused item. */
+  resume: (id: string) => void;
   /** Save one received file's blob via an anchor download. */
   downloadOne: (id: string) => void;
   /** Zip all received, done file-items into nearby-files.zip and download. */
@@ -109,6 +113,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
   const peerNameRef = useRef<string>("Device");
   /** Discovery id of the active session peer. */
   const peerIdRef = useRef<string>("");
+  /** Last files offered this session — resume re-offers from here. */
+  const lastFilesRef = useRef<File[]>([]);
 
   // ---- session-state plumbing ---------------------------------------------
 
@@ -149,6 +155,19 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
+      peer.on("resume-requested", ({ id }) => {
+        const item = itemsRef.current.find((t) => t.id === id);
+        if (!item || item.direction !== "send" || item.status !== "paused") return;
+        const file = lastFilesRef.current.find((f) => f.name === item.name && f.size === item.size);
+        if (!file) return;
+        setSession((prev) => {
+          if (!prev) return prev;
+          const items = prev.items.filter((t) => t.id !== id);
+          itemsRef.current = items;
+          return { ...prev, items };
+        });
+        void peer.offerFiles([file]).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
+      });
       peer.on("error", (kind) => failSession(PEER_ERROR_COPY[kind] ?? "The transfer failed."));
     },
     [failSession, upsertItem],
@@ -226,6 +245,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       }
       if (!peer) return;
       const activePeer = peer;
+      lastFilesRef.current = [...lastFilesRef.current, ...files];
 
       // Offer the files once the channel is open (offerFiles requires an open channel).
       const offer = () =>
@@ -256,6 +276,30 @@ export function useNearbyTransfer(): UseNearbyTransfer {
   const cancel = useCallback((id: string) => {
     peerRef.current?.cancel(id);
   }, []);
+
+  const pause = useCallback((id: string) => {
+    peerRef.current?.pause(id);
+  }, []);
+
+  const resume = useCallback((id: string) => {
+    const item = itemsRef.current.find((t) => t.id === id);
+    const peer = peerRef.current;
+    if (!item || item.status !== "paused" || !peer) return;
+    if (item.direction === "send") {
+      const file = lastFilesRef.current.find((f) => f.name === item.name && f.size === item.size);
+      if (!file) return;
+      setSession((prev) => {
+        if (!prev) return prev;
+        const items = prev.items.filter((t) => t.id !== id);
+        itemsRef.current = items;
+        return { ...prev, items };
+      });
+      peer.requestResume(id);
+      void peer.offerFiles([file]).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
+      return;
+    }
+    peer.requestResume(id);
+  }, [failSession]);
 
   const downloadOne = useCallback((id: string) => {
     const item = itemsRef.current.find((t) => t.id === id);
@@ -298,6 +342,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       acceptIncoming,
       declineIncoming,
       cancel,
+      pause,
+      resume,
       downloadOne,
       downloadAll,
       rename,
@@ -315,6 +361,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       acceptIncoming,
       declineIncoming,
       cancel,
+      pause,
+      resume,
       downloadOne,
       downloadAll,
       rename,

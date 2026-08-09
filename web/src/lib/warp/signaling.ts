@@ -42,7 +42,9 @@ export type SignalData =
   | { kind: "offer"; sdp: string }
   | { kind: "answer"; sdp: string }
   | { kind: "ice"; candidate: RTCIceCandidateInit }
-  | { kind: "cancel"; id: string };
+  | { kind: "cancel"; id: string }
+  | { kind: "pause"; id: string }
+  | { kind: "resume"; id: string };
 
 /** Messages we receive from the server, discriminated on `type`. */
 export type ServerMessage =

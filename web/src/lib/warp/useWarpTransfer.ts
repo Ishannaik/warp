@@ -179,6 +179,10 @@ export interface UseWarpTransfer {
   decline: () => void;
   /** Cancel an in-flight item (either direction) by id — routed to its peer. */
   cancel: (id: string) => void;
+  /** Pause an in-flight item — sink stays healthy; resume continues from the durable offset. */
+  pause: (id: string) => void;
+  /** Resume a paused item — re-offers with the same resumeToken (or asks the sender to). */
+  resume: (id: string) => void;
   /** Save one received file's blob to disk via an anchor download. */
   downloadOne: (id: string) => void;
   /** Zip all received, done file-items into warp-files.zip and download it. */
@@ -298,6 +302,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   const receiveRegRef = useRef<Map<string, RxEntry>>(new Map());
   /** Keys the user explicitly cancelled — a re-offer of these must NOT auto-resume. */
   const cancelledKeysRef = useRef<Set<string>>(new Set());
+  /** Keys the user paused — skipped by auto-resume until an explicit resume() clears them. */
+  const pausedKeysRef = useRef<Set<string>>(new Set());
   /** Receive item id -> file key, so cancel(id) can find & poison the right entry. */
   const rxIdKeyRef = useRef<Map<string, string>>(new Map());
   /** Ref mirrors so long-lived peer event listeners never read stale state. */
@@ -363,6 +369,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** Salvage-and-rebuild for a dead peer; assigned below (breaks the
    *  bindPeer <-> salvagePeer <-> addInitiator callback cycle). */
   const salvageRef = useRef<(peerId: string) => void>(() => {});
+  /** Late-bound resume so bindPeer's resume-requested listener stays stable. */
+  const resumeRef = useRef<(id: string) => void>(() => {});
   /** Late-bound self-reference so connect's own handlers can re-connect. */
   const connectRef = useRef<(room?: string) => void>(() => {});
 
@@ -434,7 +442,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
             !e.sink.failed &&
             !!it.resumeToken &&
             e.resumeToken === it.resumeToken &&
-            !cancelledKeysRef.current.has(it.key!)
+            !cancelledKeysRef.current.has(it.key!) &&
+            !pausedKeysRef.current.has(it.key!)
           );
         });
 
@@ -497,6 +506,17 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       // device it belongs to so the UI can tag tray rows / route cancels.
       peer.on("transfer", (item) => {
         upsertItem({ ...item, peerId });
+        // A pause (local or remote) must park the durable entry inactive and
+        // remember the key so an unrelated reconnect does not auto-resume.
+        // Unlike cancel, the sink stays healthy.
+        if (item.status === "paused" && item.direction === "receive") {
+          const key = rxIdKeyRef.current.get(item.id);
+          if (key) {
+            pausedKeysRef.current.add(key);
+            const e = receiveRegRef.current.get(key);
+            if (e) e.active = false;
+          }
+        }
         // Reload-resume (#36): persist a resumable receive's DURABLE offset to the
         // ledger. For a receive, item.transferred IS sink.bytesWritten (durable), and
         // the peer throttles these emits to ~1% deltas, so this is a cheap upsert on
@@ -538,6 +558,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
+
+      peer.on("resume-requested", ({ id }) => {
+        resumeRef.current(id);
+      });
 
       peer.on("error", (kind) => {
         // A mid-session transport death is salvageable: rebuild the link and
@@ -717,7 +741,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           t.kind === "file" &&
           t.status !== "done" &&
           t.status !== "declined" &&
-          t.status !== "cancelled",
+          t.status !== "cancelled" &&
+          t.status !== "paused", // user-held; wait for explicit resume()
       );
 
       // Sender side: put the Files behind unfinished sends back on the staging
@@ -983,6 +1008,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       const key = rxIdKeyRef.current.get(id);
       if (key) {
         cancelledKeysRef.current.add(key);
+        pausedKeysRef.current.delete(key); // cancel wins over pause
         const e = receiveRegRef.current.get(key);
         if (e) void e.sink.abort();
         receiveRegRef.current.delete(key);
@@ -1006,6 +1032,66 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     },
     [],
   );
+
+  const pause = useCallback((id: string) => {
+    // Do NOT poison the sink (that is cancel's job). The transfer handler adds
+    // the key to pausedKeysRef when status flips to paused.
+    const item = itemsRef.current.find((t) => t.id === id);
+    const peer = item?.peerId ? peersRef.current.get(item.peerId) : undefined;
+    if (peer) {
+      peer.pause(id);
+      return;
+    }
+    for (const p of peersRef.current.values()) p.pause(id);
+  }, []);
+
+  /** Re-offer a paused send item. `notifyPeer` asks the receiver to clear its
+   *  pausedKeys before the offer arrives; skip it when WE are answering their
+   *  resume-requested (otherwise the two sides ping-pong). */
+  const reofferPausedSend = useCallback((id: string, notifyPeer: boolean) => {
+    const item = itemsRef.current.find((t) => t.id === id);
+    if (!item || item.direction !== "send" || item.status !== "paused") return;
+    const peer = item.peerId ? peersRef.current.get(item.peerId) : undefined;
+    const pool = allFilesRef.current;
+    const i = pool.findIndex((f) => f.name === item.name && f.size === item.size);
+    if (i === -1 || !peer) return;
+    const file = pool[i];
+    setItems((prev) => prev.filter((t) => t.id !== id));
+    if (notifyPeer) peer.requestResume(id);
+    void peer.offerFiles([file]).catch(() => {
+      pendingFilesRef.current = [file];
+    });
+  }, []);
+
+  const resume = useCallback(
+    (id: string) => {
+      const item = itemsRef.current.find((t) => t.id === id);
+      if (!item || item.status !== "paused") return;
+
+      // Clear the auto-resume guard so a re-offer continues from the durable offset.
+      const key = rxIdKeyRef.current.get(id);
+      if (key) pausedKeysRef.current.delete(key);
+
+      if (item.direction === "send") {
+        reofferPausedSend(id, true);
+        return;
+      }
+
+      // Receive side: ask the sender to re-offer.
+      const peer = item.peerId ? peersRef.current.get(item.peerId) : undefined;
+      if (peer) peer.requestResume(id);
+      else for (const p of peersRef.current.values()) p.requestResume(id);
+    },
+    [reofferPausedSend],
+  );
+
+  // resume-requested from the other side: clear our guard, and re-offer if we
+  // hold the File. Do NOT echo requestResume — that would loop.
+  resumeRef.current = (id: string) => {
+    const key = rxIdKeyRef.current.get(id);
+    if (key) pausedKeysRef.current.delete(key);
+    reofferPausedSend(id, false);
+  };
 
   const downloadOne = useCallback(
     (id: string) => {
@@ -1258,6 +1344,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     accept,
     decline,
     cancel,
+    pause,
+    resume,
     downloadOne,
     downloadAll,
     retry,

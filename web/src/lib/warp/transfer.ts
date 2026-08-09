@@ -100,6 +100,8 @@ export type ControlMessage =
   | { t: "piece"; id: string; index: number }
   /** Either side cancels a file in flight (sender stops; receiver discards partial). */
   | { t: "cancel"; id: string }
+  /** Either side pauses a file in flight (sender stops the pump; receiver keeps the sink). */
+  | { t: "pause"; id: string }
   /** A text snippet — shown directly in the other side's tray (no accept needed). */
   | { t: "text"; id: string; text: string };
 
@@ -114,6 +116,7 @@ export type TransferStatus =
   | "offered" // announced, awaiting accept (send) / awaiting bytes (receive)
   | "transferring" // bytes in flight
   | "reconnecting" // transport dropped mid-file; holding progress, will resume
+  | "paused" // held by the user; sink intact, will continue from the durable offset
   | "done" // fully transferred
   | "declined" // the receiver declined the batch
   | "cancelled" // cancelled mid-flight by either side
