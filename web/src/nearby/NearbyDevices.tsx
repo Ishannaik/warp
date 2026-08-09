@@ -414,6 +414,7 @@ function DeviceCard({
 
       <span style={{ minWidth: 0, flex: 1 }}>
         <span
+          title={device.name}
           style={{
             display: "block",
             fontFamily: MONO,
