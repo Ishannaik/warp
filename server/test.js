@@ -174,7 +174,28 @@ async function run() {
   const nulled = await next(s1, (m) => m.type === 'signal');
   assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
 
-  for (const ws of [a, c, d, s1, s2]) ws.close();
+  // 10. Rate limit (#31): failed joins (bad code, room not found) are capped
+  //     at 10 per IP per minute. The test sockets all share the 'unknown' IP
+  //     so some failures are already counted. We loop until we hit the limit.
+  const rl = await connect();
+  let hitLimit = false;
+  for (let i = 0; i < 15; i++) {
+    sendj(rl, { type: 'join', room: 'ZZZZZ' + i });
+    const err = await next(rl, (m) => m.type === 'error');
+    if (err.error === 'rate-limited') {
+      hitLimit = true;
+      break;
+    }
+    assert.ok(['bad-room', 'room-not-found'].includes(err.error), 'returns bad-room or room-not-found');
+  }
+  assert.ok(hitLimit, 'eventually hits rate-limited');
+
+  // A fresh room creation should not be blocked by the rate limit.
+  sendj(rl, { type: 'join' });
+  const rlJoined = await next(rl, (m) => m.type === 'joined');
+  assert.ok(rlJoined.room, 'can still create a fresh room even if rate-limited from guessing codes');
+
+  for (const ws of [a, c, d, s1, s2, rl]) ws.close();
 }
 
 // Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.

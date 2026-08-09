@@ -693,6 +693,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           "room-not-found": "That room is no longer open — ask the sender for a fresh link.",
           "room-full": "That room is full (up to 8 devices).",
           "bad-room": "That room code looks invalid.",
+          "rate-limited": "Too many attempts — wait a minute.",
           "signaling-lost": "Lost contact with the signaling server — check your connection and retry.",
         };
         fail("signaling", map[err]);
