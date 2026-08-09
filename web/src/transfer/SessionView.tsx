@@ -1143,7 +1143,7 @@ function DeviceChip({ label, connected }: { label: string; connected: boolean })
           animation: connected ? "warpBlink 1.6s steps(1) infinite" : undefined,
         }}
       />
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <span title={label} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {label}
         {!connected && <span style={{ color: "#6f6a5d" }}> · linking</span>}
       </span>
@@ -1347,6 +1347,7 @@ export function SessionView({
             </span>
           ) : (
             <span
+              title={peerLabel}
               style={{
                 display: "block",
                 fontFamily: MONO,
