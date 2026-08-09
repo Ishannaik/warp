@@ -127,6 +127,8 @@ Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` U
 
 ## Architecture & protocol
 
+Receive behavior varies by browser capability and file size; see the [browser support and receive-strategy matrix](./docs/BROWSER-SUPPORT.md) for the current disk, OPFS, IndexedDB, and memory paths.
+
 See [`server/README.md`](./server/README.md) for the signaling protocol: message contract, room lifecycle, and mesh rules.
 
 ## Brand
