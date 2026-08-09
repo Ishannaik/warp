@@ -10,52 +10,45 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-
-let useIsMobile;
-try {
-  const esbuild = await import("esbuild");
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "useIsMobile.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-    plugins: [
-      {
-        name: "react-hook-stub",
-        setup(build) {
-          build.onResolve({ filter: /^react$/ }, () => ({
-            path: "react-stub",
-            namespace: "hook-stub",
-          }));
-          build.onLoad({ filter: /.*/, namespace: "hook-stub" }, () => ({
-            loader: "js",
-            contents: `
-              export function useState(initial) {
-                const value = typeof initial === "function" ? initial() : initial;
-                globalThis.__hookState = value;
-                return [value, (next) => {
-                  globalThis.__hookState = typeof next === "function"
-                    ? next(globalThis.__hookState)
-                    : next;
-                }];
-              }
-              export function useEffect(effect) {
-                globalThis.__hookCleanup = effect();
-              }
-            `,
-          }));
-        },
+const esbuild = await import("esbuild");
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "useIsMobile.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+  plugins: [
+    {
+      name: "react-hook-stub",
+      setup(build) {
+        build.onResolve({ filter: /^react$/ }, () => ({
+          path: "react-stub",
+          namespace: "hook-stub",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "hook-stub" }, () => ({
+          loader: "js",
+          contents: `
+            export function useState(initial) {
+              const value = typeof initial === "function" ? initial() : initial;
+              globalThis.__hookState = value;
+              return [value, (next) => {
+                globalThis.__hookState = typeof next === "function"
+                  ? next(globalThis.__hookState)
+                  : next;
+              }];
+            }
+            export function useEffect(effect) {
+              globalThis.__hookCleanup = effect();
+            }
+          `,
+        }));
       },
-    ],
-  });
-  const code = out.outputFiles[0].text;
-  const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
-  ({ useIsMobile } = await import(dataUrl));
-} catch (error) {
-  console.error("SKIP: esbuild not available to transpile useIsMobile.ts —", error.message);
-  process.exit(0);
-}
+    },
+  ],
+});
+const code = out.outputFiles[0].text;
+const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+const { useIsMobile } = await import(dataUrl);
 
 function setWindow(value) {
   if (value === undefined) {
@@ -91,11 +84,19 @@ function mediaQuery(matches) {
   };
 }
 
-// SSR / environments without matchMedia: safe desktop default.
+// SSR: no window means a safe desktop default.
 setWindow(undefined);
 globalThis.__hookCleanup = undefined;
 assert.equal(useIsMobile(), false);
 assert.equal(globalThis.__hookState, false);
+assert.equal(globalThis.__hookCleanup, undefined);
+
+// Browser-like environment where window exists but matchMedia is unavailable.
+setWindow({});
+globalThis.__hookCleanup = undefined;
+assert.equal(useIsMobile(), false);
+assert.equal(globalThis.__hookState, false);
+assert.equal(globalThis.__hookCleanup, undefined);
 
 // Boundary is inclusive and read synchronously on the first render.
 {
@@ -132,4 +133,4 @@ assert.equal(globalThis.__hookState, false);
   globalThis.__hookCleanup?.();
 }
 
-console.log("OK: useIsMobile (initial state, breakpoint, change subscription, cleanup, SSR guard)");
+console.log("OK: useIsMobile (initial state, breakpoint, change subscription, cleanup, SSR + missing-matchMedia guards)");
