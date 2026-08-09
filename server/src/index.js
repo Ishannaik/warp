@@ -10,6 +10,8 @@ const CODE_LEN = 6;
 const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
 const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
 const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-guessed UA hint, relayed as-is
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
 export default {
   async fetch(request, env) {
@@ -28,6 +30,11 @@ export default {
 export class SignalingRoom {
   constructor(state) {
     this.state = state;
+    // #31: track failed joins per IP to prevent brute-forcing room codes.
+    // In-memory Map is fine; it resets on hibernation but that is an acceptable
+    // trade-off for a rate limiter (an attacker forcing hibernation would slow
+    // themselves down anyway).
+    this.failedJoins = new Map(); // ip -> { count, windowStart }
   }
 
   async fetch(request) {
@@ -104,25 +111,54 @@ export class SignalingRoom {
     const prev = ws.deserializeAttachment();
     if (prev && prev.room != null) this.notifyLeft(ws, prev); // one room per socket; ignore an ip-only attachment
 
+    const ip = prev?.ip || 'unknown';
+
     let code = msg.room;
     if (code == null) {
       code = this.makeCode();                             // no code given => create a room
-    } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
-      return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
-    } else if (!this.roomExists(code)) {
-      // Room has no live sockets — but if it was reserved within the reclaim window
-      // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
-      // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
-      // (an alarm can be delayed/coalesced). No transfer state is restored — the
-      // client registry + resumeToken carry the file resume; the server only owes
-      // the same rendezvous code.
-      const rec = await this.state.storage.get('reclaim:' + code);
-      if (!rec || rec.expiresAt < Date.now()) {
-        return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+    } else {
+      // Before checking the code, apply the rate limit for this IP
+      if (typeof code === 'string') {
+        const now = Date.now();
+        let limit = this.failedJoins.get(ip);
+        if (limit && now - limit.windowStart > RATE_LIMIT_WINDOW_MS) {
+          this.failedJoins.delete(ip);
+          limit = undefined;
+        }
+        if (limit && limit.count >= RATE_LIMIT_MAX) {
+          return this.send(ws, { type: 'error', error: 'rate-limited', message: 'Too many attempts — wait a minute.' });
+        }
       }
-      await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
-    } else if (this.sockets(code, null).length >= MAX_PEERS) {
-      return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+
+      const incrementFail = () => {
+        const now = Date.now();
+        const limit = this.failedJoins.get(ip);
+        if (limit && now - limit.windowStart <= RATE_LIMIT_WINDOW_MS) {
+          limit.count++;
+        } else {
+          this.failedJoins.set(ip, { count: 1, windowStart: now });
+        }
+      };
+
+      if (typeof code !== 'string' || !ROOM_RE.test(code)) {
+        incrementFail();
+        return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
+      } else if (!this.roomExists(code)) {
+        // Room has no live sockets — but if it was reserved within the reclaim window
+        // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
+        // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
+        // (an alarm can be delayed/coalesced). No transfer state is restored — the
+        // client registry + resumeToken carry the file resume; the server only owes
+        // the same rendezvous code.
+        const rec = await this.state.storage.get('reclaim:' + code);
+        if (!rec || rec.expiresAt < Date.now()) {
+          incrementFail();
+          return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+        }
+        await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
+      } else if (this.sockets(code, null).length >= MAX_PEERS) {
+        return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+      }
     }
 
     const existing = this.sockets(code, ws);              // current members, before we join
