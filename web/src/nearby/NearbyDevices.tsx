@@ -81,6 +81,7 @@ export default function NearbyDevices() {
     >
       <style>{`
         .nearby-card:hover{border-color:var(--acc) !important;background:rgba(var(--acc-rgb),.06) !important}
+        .nearby-card:has(:focus-visible){outline:2px solid var(--acc);outline-offset:2px}
         .nearby-card:hover .nearby-go{color:var(--acc) !important;transform:translateX(2px)}
         .nearby-link:hover{color:#efe9da !important}
         .nearby-cta:hover{filter:brightness(1.08)}
@@ -377,7 +378,16 @@ function DeviceCard({
       <input
         type="file"
         multiple
-        style={{ display: "none" }}
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          padding: 0,
+          margin: "-1px",
+          overflow: "hidden",
+          clip: "rect(0, 0, 0, 0)",
+          border: 0,
+        }}
         onChange={(e) => {
           onPickFiles(e.target.files);
           e.target.value = "";
