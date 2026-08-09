@@ -174,6 +174,35 @@ async function run() {
   const nulled = await next(s1, (m) => m.type === 'signal');
   assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
 
+  // 10. Origin allow-list (#99): a WebSocket upgrade from an unlisted origin is
+  //     rejected before reaching the Durable Object. Node's WebSocket doesn't
+  //     send an Origin header, so all existing tests implicitly cover the "no
+  //     origin = allow" path. Here we test the reject path via a raw HTTP
+  //     request with the headers that a browser would send for a WebSocket
+  //     upgrade from a disallowed origin.
+  if (!REMOTE) {
+    const http = await import('node:http');
+    const rejected = await new Promise((resolve, reject) => {
+      const req = http.request(`${HTTP}/`, {
+        headers: {
+          'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
+          'Origin': 'https://evil.example.com',
+          'Sec-WebSocket-Version': '13',
+          'Sec-WebSocket-Key': Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64'),
+        },
+      }, (res) => {
+        let body = '';
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(rejected.status, 403, 'disallowed origin gets 403');
+    assert.ok(rejected.body.includes('origin not allowed'), '403 body explains why');
+  }
+
   for (const ws of [a, c, d, s1, s2]) ws.close();
 }
 
