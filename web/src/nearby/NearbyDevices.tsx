@@ -283,6 +283,8 @@ export default function NearbyDevices() {
               onSendFiles={(files) => nearby.sendTo(session.peerId, files)}
               onSendText={nearby.sendText}
               onCancel={nearby.cancel}
+              onPause={nearby.pause}
+              onResume={nearby.resume}
               onDownloadOne={nearby.downloadOne}
               onDownloadAll={nearby.downloadAll}
               isMobile={isMobile}

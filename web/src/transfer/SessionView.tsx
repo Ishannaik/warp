@@ -100,6 +100,7 @@ const STATUS_COPY: Record<TransferItem["status"], string> = {
   offered: "WAITING",
   transferring: "MOVING",
   reconnecting: "RESUMING",
+  paused: "PAUSED",
   done: "DONE",
   declined: "DECLINED",
   cancelled: "CANCELLED",
@@ -109,6 +110,7 @@ const STATUS_COPY: Record<TransferItem["status"], string> = {
 function statusColor(status: TransferItem["status"]): string {
   if (status === "done") return "var(--acc)";
   if (status === "transferring" || status === "reconnecting") return "var(--amb)";
+  if (status === "paused") return "#efe9da";
   if (status === "declined" || status === "cancelled" || status === "error") return "#6f6a5d";
   return "#908a7b";
 }
@@ -120,12 +122,16 @@ function statusColor(status: TransferItem["status"]): string {
 const ItemRow = memo(function ItemRow({
   item,
   onCancel,
+  onPause,
+  onResume,
   onDownload,
   isMobile,
   peerLabel,
 }: {
   item: TransferItem;
   onCancel: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDownload: (id: string) => void;
   isMobile: boolean;
   /** Which device this item is to/from — shown only in a multi-device room. */
@@ -136,7 +142,9 @@ const ItemRow = memo(function ItemRow({
   const col = statusColor(item.status);
   // "reconnecting" holds the bar at its last % and shows RESUMING; it's still an
   // active, cancellable transfer, so it renders like transferring but labeled.
+  // "paused" is user-held: same bar, not an error, with a resume affordance.
   const active = item.status === "transferring" || item.status === "reconnecting";
+  const paused = item.status === "paused";
   const reconnecting = item.status === "reconnecting";
   const isText = item.kind === "text";
   // Items streamed straight to disk have no in-memory blob — they're already
@@ -218,18 +226,41 @@ const ItemRow = memo(function ItemRow({
           </span>
         </span>
 
-        {/* row actions */}
-        <span style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-          {active && (
-            <button
-              type="button"
-              className="warp-rowbtn"
-              onClick={() => onCancel(item.id)}
-              aria-label="Cancel transfer"
-              style={iconBtn}
+        {/* row actions — at 360px a two-button group replaces the single cancel
+            affordance; never a third control on the same line */}
+        <span style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+          {(active || paused) && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0,
+                border: `1px solid ${HAIRLINE}`,
+              }}
             >
-              ✕
-            </button>
+              <button
+                type="button"
+                className="warp-rowbtn"
+                onClick={() => (paused ? onResume(item.id) : onPause(item.id))}
+                aria-label={paused ? "Resume transfer" : "Pause transfer"}
+                style={{ ...iconBtn, border: "none", width: isMobile ? "28px" : "30px" }}
+              >
+                {paused ? "▶" : "Ⅱ"}
+              </button>
+              <span
+                aria-hidden
+                style={{ width: "1px", alignSelf: "stretch", background: HAIRLINE }}
+              />
+              <button
+                type="button"
+                className="warp-rowbtn"
+                onClick={() => onCancel(item.id)}
+                aria-label="Cancel transfer"
+                style={{ ...iconBtn, border: "none", width: isMobile ? "28px" : "30px" }}
+              >
+                ✕
+              </button>
+            </span>
           )}
           {canDownload && (
             <button
@@ -318,38 +349,37 @@ const ItemRow = memo(function ItemRow({
         </div>
       )}
 
-      {/* progress bar while transferring */}
-      {active && (
+      {/* progress bar while transferring or paused (held % — not an error) */}
+      {(active || paused) && (
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span
+          <div
             style={{
               flex: 1,
-              height: "6px",
-              background: "rgba(239,233,218,.09)",
+              height: "3px",
+              background: "rgba(239,233,218,.08)",
               overflow: "hidden",
             }}
           >
-            <span
+            <div
               style={{
-                display: "block",
                 height: "100%",
                 width: `${item.progress}%`,
-                background: col,
-                transition: "width .12s linear",
+                background: paused ? "#efe9da" : reconnecting ? "var(--amb)" : "var(--acc)",
+                transition: "width .2s linear",
               }}
             />
-          </span>
+          </div>
           <span
             style={{
               fontFamily: MONO,
               fontSize: "10.5px",
-              color: reconnecting ? "var(--amb)" : "#a8a293",
-              width: reconnecting ? "auto" : "34px",
-              whiteSpace: "nowrap",
+              letterSpacing: ".04em",
+              color: paused ? "#efe9da" : reconnecting ? "var(--amb)" : "#6f6a5d",
+              minWidth: "44px",
               textAlign: "right",
             }}
           >
-            {reconnecting ? `⟳ ${item.progress}%` : `${item.progress}%`}
+            {paused ? `Ⅱ ${item.progress}%` : reconnecting ? `⟳ ${item.progress}%` : `${item.progress}%`}
           </span>
         </div>
       )}
@@ -781,6 +811,8 @@ function BatchBar({ batch, isMobile }: { batch: BatchSummary; isMobile: boolean 
 function Tray({
   items,
   onCancel,
+  onPause,
+  onResume,
   onDownload,
   onDownloadAll,
   isMobile,
@@ -788,6 +820,8 @@ function Tray({
 }: {
   items: TransferItem[];
   onCancel: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDownload: (id: string) => void;
   onDownloadAll: () => void;
   isMobile: boolean;
@@ -870,6 +904,8 @@ function Tray({
             key={item.id}
             item={item}
             onCancel={onCancel}
+            onPause={onPause}
+            onResume={onResume}
             onDownload={onDownload}
             isMobile={isMobile}
             peerLabel={labelForPeer?.(item.peerId)}
@@ -1205,6 +1241,8 @@ export function SessionView({
   onSendFiles,
   onSendText,
   onCancel,
+  onPause,
+  onResume,
   onDownloadOne,
   onDownloadAll,
   isMobile,
@@ -1221,6 +1259,8 @@ export function SessionView({
   onSendFiles: (files: File[]) => void;
   onSendText: (text: string) => void;
   onCancel: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDownloadOne: (id: string) => void;
   onDownloadAll: () => void;
   isMobile: boolean;
@@ -1340,6 +1380,8 @@ export function SessionView({
       <Tray
         items={items}
         onCancel={onCancel}
+        onPause={onPause}
+        onResume={onResume}
         onDownload={onDownloadOne}
         onDownloadAll={onDownloadAll}
         isMobile={isMobile}

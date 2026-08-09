@@ -172,6 +172,8 @@ export interface PeerEvents {
   declined: (info: { batchId: string }) => void;
   /** A file in flight was cancelled by either side. */
   cancelled: (info: { id: string }) => void;
+  /** The other side asked us to resume a paused file (re-offer if we are the sender). */
+  "resume-requested": (info: { id: string }) => void;
   /** SHA-256 hex digest of a completed file's session bytes. Emitted once per
    *  successfully-transferred file (both send and receive) that hashed a whole
    *  session — resumed transfers (startOffset > 0 on send, resume offset > 0 on
@@ -331,6 +333,7 @@ export class WarpPeer {
     "text-received": new Set(),
     declined: new Set(),
     cancelled: new Set(),
+    "resume-requested": new Set(),
     "hash-computed": new Set(),
     error: new Set(),
   };
@@ -364,6 +367,9 @@ export class WarpPeer {
 
   /** File ids the local side asked to cancel, so we drop their remaining chunks. */
   private cancelledIds = new Set<string>();
+
+  /** File ids paused mid-send: the pump exits without file-end so the sink stays open. */
+  private pausedIds = new Set<string>();
 
   /** Files we sent WITH a piece manifest (#137), keyed by file id, so a receiver's
    *  `piece-request` can re-read and re-send just that piece. Holds lazy File
@@ -515,6 +521,20 @@ export class WarpPeer {
       // this beats the in-band {t:"cancel"} that's stuck behind the byte backlog.
       // Idempotent, so the later in-band dup is a harmless no-op.
       this.applyCancel(data.id);
+      return;
+    }
+
+    if (data.kind === "pause") {
+      // Out-of-band pause: stop the pump / mark paused without poisoning the sink.
+      // Beats the in-band {t:"pause"} stuck behind the byte backlog.
+      this.applyPause(data.id);
+      return;
+    }
+
+    if (data.kind === "resume") {
+      // Out-of-band resume request: the hook clears pausedKeys and re-offers if
+      // this side holds the File. No in-band twin — the pump is already stopped.
+      this.emit("resume-requested", { id: data.id });
       return;
     }
 
@@ -675,6 +695,10 @@ export class WarpPeer {
           this.cancelledIds.delete(id);
           continue; // cancelled before it started; status already set by cancel()
         }
+        if (this.pausedIds.has(id)) {
+          this.pausedIds.delete(id);
+          continue; // paused before it started; status already set by pause()
+        }
 
         // Resume offset the receiver asked for, validated (Fable L1). A garbage
         // or >size offset falls back to 0 (full restart); the echoed file-begin
@@ -722,8 +746,13 @@ export class WarpPeer {
         this.send(ch, { t: "file-begin", id, offset, ...(codec ? { codec } : {}), ...(pieces ? { pieces } : {}) });
         const finishedClean = await this.streamFile(ch, file, item, offset, codec);
         if (!finishedClean) {
-          // Cancelled mid-flight: tell the receiver and stop this file.
           this.manifestSends.delete(id);
+          // Pause leaves the receiver's sink open — no file-end, no cancel.
+          // Cancel (or a remote cancel that raced the pump) still needs the
+          // in-band cancel so a receiver that missed the OOB frame tears down.
+          // Re-read from the map: streamFile / applyPause mutate status on the
+          // shared object, but TS still sees the pre-stream narrowed union.
+          if (this.items.get(id)?.status === "paused") continue;
           this.send(ch, { t: "cancel", id });
           continue;
         }
@@ -857,6 +886,35 @@ export class WarpPeer {
   }
 
   /**
+   * Pause a file in flight from either side. The sender's pump exits WITHOUT
+   * sending file-end, so the receiver's durable sink stays open at the last
+   * acknowledged offset. Resume is a re-offer with the same resumeToken.
+   *
+   * Announced two ways, mirroring cancel:
+   *   1. OUT-OF-BAND over signaling — beats the data-channel byte backlog.
+   *   2. IN-BAND over the data channel — survives a dropped signaling socket.
+   * Both are idempotent (see applyPause).
+   *
+   * Unlike cancel, this does NOT abort or end the receive sink.
+   */
+  pause(id: string): void {
+    if (!this.applyPause(id)) return;
+
+    if (this.remoteId) this.signaling.signal(this.remoteId, { kind: "pause", id });
+    const ch = this.channel;
+    if (ch && ch.readyState === "open") this.send(ch, { t: "pause", id });
+  }
+
+  /**
+   * Ask the other side to resume a paused file (clear their pausedKeys / re-offer
+   * if they hold the File). Out-of-band only — the pump is already stopped, so
+   * there is no byte backlog to jump.
+   */
+  requestResume(id: string): void {
+    if (this.remoteId) this.signaling.signal(this.remoteId, { kind: "resume", id });
+  }
+
+  /**
    * Idempotently mark a file cancelled and abort any in-flight send/receive for
    * it. Returns false (a no-op) if the item is unknown or already done/cancelled,
    * so a redundant in-band + out-of-band cancel is safe. Emits "cancelled" exactly
@@ -867,6 +925,7 @@ export class WarpPeer {
     if (!item || item.status === "done" || item.status === "cancelled") return false;
 
     this.cancelledIds.add(id); // streamFile checks this per chunk to abort sends
+    this.pausedIds.delete(id); // cancel wins over a prior pause
     this.manifestSends.delete(id); // no piece re-requests for a cancelled file (#137)
     this.markStatus(id, "cancelled");
 
@@ -886,6 +945,41 @@ export class WarpPeer {
   }
 
   /**
+   * Idempotently mark a file paused. Stops the send pump (via pausedIds) and
+   * detaches the receive path WITHOUT aborting or ending the sink — that is the
+   * whole difference from cancel, and what lets resume continue from the durable
+   * offset. Returns false if unknown or already terminal/paused.
+   */
+  private applyPause(id: string): boolean {
+    const item = this.items.get(id);
+    if (
+      !item ||
+      item.status === "done" ||
+      item.status === "cancelled" ||
+      item.status === "paused" ||
+      item.status === "declined" ||
+      item.status === "error"
+    ) {
+      return false;
+    }
+
+    this.pausedIds.add(id); // streamFile checks this per chunk to exit without file-end
+    this.markStatus(id, "paused");
+
+    // Detach the receive path so late chunks are dropped (sender will resend
+    // from the durable offset on resume). Do NOT abort the sink or host.end —
+    // the partial must stay healthy for the auto-resume path.
+    if (this.incoming && this.incoming.item.id === id) {
+      const inc = this.incoming;
+      inc.cancelled = true;
+      this.incoming = null;
+      inc.hash?.dispose();
+    }
+
+    return true;
+  }
+
+  /**
    * The per-message send size for this connection: as large as the negotiated
    * SCTP limit allows, capped at our 256 KiB target and floored at 16 KiB.
    * pc.sctp / maxMessageSize is undefined until the transport is up (and absent
@@ -899,8 +993,9 @@ export class WarpPeer {
   }
 
   /**
-   * Pump one file's bytes through the channel. Returns false if cancelled
-   * mid-flight.
+   * Pump one file's bytes through the channel. Returns false if cancelled or
+   * paused mid-flight (caller distinguishes via item.status — pause must not
+   * send cancel/file-end).
    *
    * Speed: read the file in large READ_BLOCK (~4 MiB) gulps via
    * blob.arrayBuffer(), then ship each block as a run of sendChunk-sized
@@ -938,6 +1033,10 @@ export class WarpPeer {
           this.cancelledIds.delete(item.id);
           return false;
         }
+        if (this.pausedIds.has(item.id)) {
+          this.pausedIds.delete(item.id);
+          return false;
+        }
 
         // Read one large block, then slice it into sendChunk-sized SCTP messages.
         const block = await file.slice(offset, offset + READ_BLOCK).arrayBuffer();
@@ -948,12 +1047,26 @@ export class WarpPeer {
             this.cancelledIds.delete(item.id);
             return false;
           }
+          if (this.pausedIds.has(item.id)) {
+            this.pausedIds.delete(item.id);
+            return false;
+          }
           // Backpressure: wait until the send buffer drains below the high-water
           // mark. Counts the chunk we're ABOUT to send, so we can never push
           // bufferedAmount toward the browser's hard cap and blow up send().
           while (ch.bufferedAmount + sendChunk > SEND_HIGH_WATER) {
             await this.waitForDrain(ch);
             if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+            // Pause/cancel that landed while parked takes effect on this chunk
+            // boundary — never mid-send, and not inside waitForDrain itself.
+            if (this.cancelledIds.has(item.id)) {
+              this.cancelledIds.delete(item.id);
+              return false;
+            }
+            if (this.pausedIds.has(item.id)) {
+              this.pausedIds.delete(item.id);
+              return false;
+            }
           }
           if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
 
@@ -1128,6 +1241,11 @@ export class WarpPeer {
         // cancelled. Idempotent — a no-op if the out-of-band signaling cancel
         // already landed (or vice-versa).
         this.applyCancel(msg.id);
+        break;
+      }
+      case "pause": {
+        // Remote paused this file (in-band path). Leave the sink alone.
+        this.applyPause(msg.id);
         break;
       }
       case "text": {

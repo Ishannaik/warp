@@ -1088,6 +1088,206 @@ bigFile.slice = Blob.prototype.slice;
   await lSendP;
 }
 
+// --- pause / resume (#247) ---------------------------------------------------
+// Pause stops the pump WITHOUT file-end so the receiver's sink stays healthy at
+// the durable offset. Resume is a re-offer with resume offsets — same path as a
+// network-drop recovery, triggered on purpose.
+{
+  // Shared durable sink across begin() calls (mirrors the hook's registry): a
+  // pause must NOT end/abort it, and a resumed file-begin must append onto it.
+  let heldSink = null;
+  const makeHeldSink = () => {
+    const chunks = [];
+    let n = 0;
+    return {
+      get bytesWritten() {
+        return n;
+      },
+      get failed() {
+        return false;
+      },
+      append(buf) {
+        chunks.push(new Uint8Array(buf));
+        n += buf.byteLength;
+      },
+      async quiesce() {},
+      async finalize() {
+        const out = new Uint8Array(n);
+        let off = 0;
+        for (const c of chunks) {
+          out.set(c, off);
+          off += c.byteLength;
+        }
+        return new Blob([out]);
+      },
+      async abort() {
+        chunks.length = 0;
+        n = 0;
+      },
+    };
+  };
+  const pauseHost = {
+    begin() {
+      if (!heldSink) heldSink = makeHeldSink();
+      return heldSink;
+    },
+    get() {
+      return heldSink;
+    },
+    savedName() {
+      return undefined;
+    },
+    end() {
+      /* keep the sink across pause — host.end would drop the partial */
+    },
+  };
+
+  const savedPc = globalThis.RTCPeerConnection;
+  globalThis.RTCPeerConnection = BackpressurePC;
+  const pSender = new WarpPeer(sig, "pause-remote", true);
+  globalThis.RTCPeerConnection = savedPc;
+  const pReceiver = new WarpPeer(sig, "pause-local", false, pauseHost);
+  const pSenderCh = pSender.pc.localChannel;
+  const pReceiverCh = new FakeChannel();
+  pSenderCh.peer = pReceiverCh;
+  pReceiverCh.peer = pSenderCh;
+  pReceiver.pc.dispatchEvent(Object.assign(new Event("datachannel"), { channel: pReceiverCh }));
+
+  // Spy: count file-end / cancel frames so pause must send neither.
+  let fileEnds = 0;
+  let cancels = 0;
+  const pRawSend = pSenderCh.send.bind(pSenderCh);
+  pSenderCh.send = (d) => {
+    if (typeof d === "string") {
+      const msg = JSON.parse(d);
+      if (msg.t === "file-end") fileEnds += 1;
+      if (msg.t === "cancel") cancels += 1;
+    }
+    return pRawSend(d);
+  };
+
+  // Use the >high-water big file so the pump parks; we drain just enough for a
+  // partial durable write, then pause before the rest can finish.
+  const pauseFile = new Blob([bigBytes], { type: "application/octet-stream" });
+  pauseFile.name = "pause.bin";
+  pauseFile.slice = Blob.prototype.slice;
+
+  const pOfferSeen = waitFor(pReceiver, "incoming-offer");
+  const pSendP = pSender.offerFiles([pauseFile]);
+  const pOffer = await pOfferSeen;
+  const livePauseId = pOffer.items[0].id;
+  pReceiver.acceptOffer(pOffer.batchId);
+
+  // Wait until the send queue is full (pump parked mid-file). Bytes already
+  // delivered to the receiver are durable in heldSink — that is the pause offset.
+  await waitForCondition(
+    () => pSenderCh.bufferedAmount + 256 * 1024 > SEND_HIGH_WATER,
+    "pump parked before pause",
+  );
+  await waitForCondition(
+    () => (heldSink?.bytesWritten ?? 0) > 256 * 1024,
+    "receiver has a durable partial before pause",
+  );
+
+  const pausedAt = heldSink.bytesWritten;
+  assert.ok(pausedAt > 0 && pausedAt < BIG_N, "pause lands mid-file");
+
+  sigSent.length = 0;
+  pSender.pause(livePauseId);
+  assert.equal(sigSent.length, 1, "pause() emits one out-of-band signaling pause");
+  assert.deepEqual(sigSent[0].data, { kind: "pause", id: livePauseId }, "signaling pause carries kind:'pause' + id");
+
+  // Wake the pump so it observes pausedIds on the chunk boundary after drain.
+  for (let i = 0; i < 10; i += 1) {
+    pSenderCh.bufferedAmount = Math.max(0, pSenderCh.bufferedAmount - 2 * 1024 * 1024);
+    pSenderCh.dispatchEvent(new Event("bufferedamountlow"));
+    await new Promise((res) => setImmediate(res));
+  }
+  await pSendP;
+  await new Promise((r) => setTimeout(r, 30));
+  const durableAtPause = heldSink.bytesWritten;
+
+  assert.equal(fileEnds, 0, "pause stops the pump with no file-end");
+  assert.equal(cancels, 0, "pause must not send cancel (that would poison the sink path)");
+  assert.ok(
+    durableAtPause >= pausedAt && durableAtPause < BIG_N,
+    "sink retains the acknowledged mid-file bytes (no reset, no completion)",
+  );
+
+  // Resume: re-offer the same file; accept with the durable offset so the sender
+  // streams only the tail onto the SAME healthy sink.
+  const resumeOfferSeen = waitFor(pReceiver, "incoming-offer");
+  const resumeSendP = pSender.offerFiles([pauseFile]);
+  const resumeOffer = await resumeOfferSeen;
+  const resumeId = resumeOffer.items[0].id;
+  assert.equal(
+    resumeOffer.items[0].resumeToken,
+    pOffer.items[0].resumeToken,
+    "resume re-offers with the SAME resumeToken",
+  );
+
+  const gotResumed = waitFor(pReceiver, "file-received");
+  pReceiver.acceptOffer(resumeOffer.batchId, undefined, { [resumeId]: heldSink.bytesWritten });
+
+  // Drain the backpressure channel so the resume pump can finish.
+  const drainResume = setInterval(() => {
+    if (pSenderCh.bufferedAmount > 0) {
+      pSenderCh.bufferedAmount = Math.max(0, pSenderCh.bufferedAmount - 2 * 1024 * 1024);
+      pSenderCh.dispatchEvent(new Event("bufferedamountlow"));
+    }
+  }, 5);
+
+  const resumed = await Promise.race([
+    gotResumed,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("resume after pause hung")), 8000)),
+  ]);
+  clearInterval(drainResume);
+  await resumeSendP;
+
+  assert.equal(fileEnds, 1, "resume completes with exactly one file-end");
+  const out = new Uint8Array(await resumed.blob.arrayBuffer());
+  assert.equal(out.byteLength, BIG_N, "resumed file is full length");
+  assert.deepEqual(out, bigBytes, "resumed file is byte-identical to the source");
+}
+
+// Pause while the pump is parked in waitForDrain: must take effect on the next
+// chunk boundary (after drain returns), not mid-chunk / inside the wait.
+{
+  const { s, r, sCh } = makeBackpressurePair();
+  const drainFile = new Blob([bigBytes], { type: "application/octet-stream" });
+  drainFile.name = "drain-pause.bin";
+  drainFile.slice = Blob.prototype.slice;
+
+  let ends = 0;
+  const raw = sCh.send.bind(sCh);
+  sCh.send = (d) => {
+    if (typeof d === "string" && JSON.parse(d).t === "file-end") ends += 1;
+    return raw(d);
+  };
+
+  const offerSeen = waitFor(r, "incoming-offer");
+  const sendP = s.offerFiles([drainFile]);
+  const off = await offerSeen;
+  r.acceptOffer(off.batchId);
+  const id = off.items[0].id;
+
+  // Wait until bufferedAmount is above high-water (pump parked in waitForDrain).
+  await waitForCondition(
+    () => sCh.bufferedAmount + 256 * 1024 > SEND_HIGH_WATER,
+    "pump parked in waitForDrain",
+  );
+  s.pause(id);
+
+  // Drain enough for the pump to wake, observe pause, and exit without file-end.
+  for (let i = 0; i < 20; i += 1) {
+    sCh.bufferedAmount = Math.max(0, sCh.bufferedAmount - 2 * 1024 * 1024);
+    sCh.dispatchEvent(new Event("bufferedamountlow"));
+    await new Promise((res) => setImmediate(res));
+  }
+  await sendP;
+  assert.equal(ends, 0, "pause during drain wait exits with no file-end");
+}
+
 console.log(
-  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request + unanswerable-piece liveness (#137) + resumed-tail piece verification (#171) passed",
+  "OK: offer/accept stream + text size cap + decline gating + disk-stream + instant-cancel + pending-offer channel-close rejection + send-pump backpressure + negotiated compression + piece-manifest targeted re-request + unanswerable-piece liveness (#137) + resumed-tail piece verification (#171) + pause/resume (#247) passed",
 );
