@@ -10,52 +10,45 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-
-let useReducedMotion;
-try {
-  const esbuild = await import("esbuild");
-  const out = await esbuild.build({
-    entryPoints: [path.join(here, "useReducedMotion.ts")],
-    bundle: true,
-    format: "esm",
-    write: false,
-    platform: "neutral",
-    plugins: [
-      {
-        name: "react-hook-stub",
-        setup(build) {
-          build.onResolve({ filter: /^react$/ }, () => ({
-            path: "react-stub",
-            namespace: "hook-stub",
-          }));
-          build.onLoad({ filter: /.*/, namespace: "hook-stub" }, () => ({
-            loader: "js",
-            contents: `
-              export function useState(initial) {
-                const value = typeof initial === "function" ? initial() : initial;
-                globalThis.__hookState = value;
-                return [value, (next) => {
-                  globalThis.__hookState = typeof next === "function"
-                    ? next(globalThis.__hookState)
-                    : next;
-                }];
-              }
-              export function useEffect(effect) {
-                globalThis.__hookCleanup = effect();
-              }
-            `,
-          }));
-        },
+const esbuild = await import("esbuild");
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "useReducedMotion.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+  plugins: [
+    {
+      name: "react-hook-stub",
+      setup(build) {
+        build.onResolve({ filter: /^react$/ }, () => ({
+          path: "react-stub",
+          namespace: "hook-stub",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "hook-stub" }, () => ({
+          loader: "js",
+          contents: `
+            export function useState(initial) {
+              const value = typeof initial === "function" ? initial() : initial;
+              globalThis.__hookState = value;
+              return [value, (next) => {
+                globalThis.__hookState = typeof next === "function"
+                  ? next(globalThis.__hookState)
+                  : next;
+              }];
+            }
+            export function useEffect(effect) {
+              globalThis.__hookCleanup = effect();
+            }
+          `,
+        }));
       },
-    ],
-  });
-  const code = out.outputFiles[0].text;
-  const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
-  ({ useReducedMotion } = await import(dataUrl));
-} catch (error) {
-  console.error("SKIP: esbuild not available to transpile useReducedMotion.ts —", error.message);
-  process.exit(0);
-}
+    },
+  ],
+});
+const code = out.outputFiles[0].text;
+const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+const { useReducedMotion } = await import(dataUrl);
 
 function setWindow(value) {
   if (value === undefined) {
@@ -91,11 +84,19 @@ function mediaQuery(matches) {
   };
 }
 
-// SSR / missing matchMedia falls back to normal motion without throwing.
+// SSR: no window falls back to normal motion without throwing.
 setWindow(undefined);
 globalThis.__hookCleanup = undefined;
 assert.equal(useReducedMotion(), false);
 assert.equal(globalThis.__hookState, false);
+assert.equal(globalThis.__hookCleanup, undefined);
+
+// Browser-like environment where window exists but matchMedia is unavailable.
+setWindow({});
+globalThis.__hookCleanup = undefined;
+assert.equal(useReducedMotion(), false);
+assert.equal(globalThis.__hookState, false);
+assert.equal(globalThis.__hookCleanup, undefined);
 
 // Initial preference is read synchronously and changes are subscribed to.
 {
@@ -119,4 +120,4 @@ assert.equal(globalThis.__hookState, false);
   assert.equal(mql.listenerCount(), 0, "cleanup removes the preference listener");
 }
 
-console.log("OK: useReducedMotion (initial preference, change subscription, cleanup, SSR guard)");
+console.log("OK: useReducedMotion (initial preference, change subscription, cleanup, SSR + missing-matchMedia guards)");
