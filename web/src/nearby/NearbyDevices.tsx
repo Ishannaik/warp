@@ -215,6 +215,23 @@ export default function NearbyDevices() {
             </span>
           )}
         </div>
+        <div
+          aria-live="polite"
+          aria-atomic="true"
+          style={{
+            position: "absolute",
+            width: "1px",
+            height: "1px",
+            padding: 0,
+            margin: "-1px",
+            overflow: "hidden",
+            clip: "rect(0, 0, 0, 0)",
+            whiteSpace: "nowrap",
+            border: 0,
+          }}
+        >
+          {devices.length === 0 ? "No other devices yet." : `${devices.length} device${devices.length === 1 ? "" : "s"} nearby.`}
+        </div>
 
         <h2
           style={{
