@@ -1,3 +1,6 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @warp/web build",
+  "outputDirectory": "web/dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
