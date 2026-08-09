@@ -6,6 +6,7 @@ import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/useWarpTransfer";
 import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useTransferTitle } from "../lib/useTransferTitle";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
 
@@ -39,6 +40,9 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWarpTransfer(joinCode);
   const { mode, code, shareUrl, status, items, incoming, error, connections } = wrap;
   const isMobile = useIsMobile();
+
+  // #15: live progress in the tab title while any transfer is in flight.
+  useTransferTitle(items);
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);

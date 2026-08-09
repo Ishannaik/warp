@@ -329,6 +329,23 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     setSession(null);
   }, []);
 
+  // #14: warn before the tab closes while bytes are in flight (LAN flow too).
+  // Native beforeunload prompt only while something is transferring/
+  // reconnecting/paused; removed the moment nothing is.
+  const sessionItems = session?.items ?? [];
+  const nearbyInFlight = sessionItems.some(
+    (t) => t.status === "transferring" || t.status === "reconnecting" || t.status === "paused",
+  );
+  useEffect(() => {
+    if (!nearbyInFlight) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [nearbyInFlight]);
+
   return useMemo(
     () => ({
       selfId,

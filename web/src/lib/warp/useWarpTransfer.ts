@@ -1194,6 +1194,24 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     };
   }, [transferring]);
 
+  // Warn before the tab closes while bytes are in flight — an accidental ⌘W
+  // or reload kills every in-flight transfer for all peers. Native
+  // beforeunload prompt only while something is transferring/reconnecting/
+  // paused; removed the moment nothing is (an always-on listener disables
+  // bfcache and is hostile). Mirrors the wake-lock effect's shape.
+  const inFlight = items.some(
+    (t) => t.status === "transferring" || t.status === "reconnecting" || t.status === "paused",
+  );
+  useEffect(() => {
+    if (!inFlight) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [inFlight]);
+
   // Prune abandoned staging (IDB rows + OPFS files) and stale reload-resume ledger
   // rows from crashed sessions once on mount (best-effort).
   useEffect(() => {
