@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useTransferTitle } from "../lib/useTransferTitle";
 import { AcceptModal, SessionView } from "../transfer/SessionView";
 import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
 import type { DeviceType } from "../lib/warp/useNearby";
@@ -28,6 +29,9 @@ export default function NearbyDevices() {
   const isMobile = useIsMobile();
   const nearby = useNearbyTransfer();
   const { devices, crowded, deviceName, session, incoming, rename } = nearby;
+
+  // #15: live progress in the tab title while a nearby transfer is in flight.
+  useTransferTitle(session?.items ?? []);
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(deviceName);
