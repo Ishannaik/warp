@@ -683,6 +683,30 @@ function PairStep({
     };
   }, [shareUrl]);
 
+  const downloadQrPng = () => {
+    if (!qrSvg) return;
+    const blob = new Blob([qrSvg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.fillStyle = "#efe9da";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const pngUrl = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = pngUrl;
+      a.download = `warp-${code ?? "room"}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  };
+
 
   const copy = async () => {
     if (!shareUrl) return;
@@ -952,20 +976,36 @@ function PairStep({
           </div>
 
           {qrSvg && (
-            <div
-              style={{
-                margin: "26px auto 0",
-                width: "150px",
-                height: "150px",
-                padding: "10px",
-                background: "#efe9da",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-              aria-label="QR code linking to this transfer"
-              dangerouslySetInnerHTML={{ __html: qrSvg }}
-            />
+            <div style={{ textAlign: "center", marginTop: "26px" }}>
+              <div
+                style={{
+                  margin: "0 auto",
+                  width: "150px",
+                  height: "150px",
+                  padding: "10px",
+                  background: "#efe9da",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                aria-label="QR code linking to this transfer"
+                dangerouslySetInnerHTML={{ __html: qrSvg }}
+              />
+              <button
+                type="button"
+                className="warp-share"
+                onClick={downloadQrPng}
+                style={{
+                  ...shareBtn,
+                  marginTop: "12px",
+                  padding: "8px 14px",
+                  fontSize: "10px",
+                  border: "1px solid rgba(239,233,218,.15)",
+                }}
+              >
+                Save PNG
+              </button>
+            </div>
           )}
 
           {shareUrl && (
