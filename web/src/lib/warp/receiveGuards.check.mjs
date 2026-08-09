@@ -17,8 +17,8 @@ let esbuild;
 try {
   esbuild = await import("esbuild");
 } catch (e) {
-  console.error("SKIP: esbuild not available to transpile TS for this check —", e.message);
-  process.exit(0);
+  console.error("FAIL: esbuild is required for receiveGuards.check.mjs —", e.message);
+  process.exit(1);
 }
 
 const url = await import("node:url");
