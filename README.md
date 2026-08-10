@@ -114,16 +114,8 @@ pnpm --filter @warp/server test   # signaling e2e
 
 ## Self-hosting
 
-- **Frontend** → any static host. We ship `web/` to **Cloudflare Pages**:
-  ```bash
-  cd web && wrangler pages deploy dist --project-name=<your-project>
-  ```
-- **Signaling** → a **Cloudflare Worker + Durable Object**, free on the Workers Free plan, no credit card, hibernates when idle:
-  ```bash
-  pnpm --filter @warp/server run deploy
-  ```
-
-Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` URL (see [`web/.env.example`](./web/.env.example)). Vite inlines it at build time, so rebuild after changing it.
+Warp is completely open source and designed to be self-hosted on Cloudflare's free tier. 
+See the [Self-hosting guide](./docs/SELF-HOSTING.md) for a complete, step-by-step walkthrough to deploy your own instance (no credit card required).
 
 ## Architecture & protocol
 
