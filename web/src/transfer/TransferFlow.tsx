@@ -9,6 +9,7 @@ import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
+import { useNotificationPreference, useTransferEvents } from "./useTransferEvents";
 
 /**
  * Warp Transfer flow — a real, WebRTC-backed transfer surface.
@@ -43,6 +44,9 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   // #15: live progress in the tab title while any transfer is in flight.
   useTransferTitle(items);
+
+  const { enabled: notificationsEnabled, toggle: toggleNotifications } = useNotificationPreference();
+  useTransferEvents({ incoming, items, status, notificationsEnabled });
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
@@ -226,6 +230,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                       ? "Connected to sender"
                       : "Connected"
                 }
+                notificationsEnabled={notificationsEnabled}
+                onToggleNotifications={toggleNotifications}
                 // Sender only: the staged queue stays editable until they hit Send.
                 // The receiver has no pre-queue, so these stay undefined.
                 pending={mode === "send" ? queue : undefined}
@@ -1042,8 +1048,8 @@ const shareBtn: CSSProperties = {
 /** Eyebrow + headline per error kind — the NAT/STUN framing is only true for
  *  `nat-failed`; every other kind gets its own honest chrome instead of
  *  borrowing "No direct route." (issue #174). */
-const ERROR_PANEL_COPY: Record<WarpError["kind"], { eyebrow: string; title: string; natFooter?: boolean }> = {
-  "nat-failed": { eyebrow: "Channel failed", title: "No direct route.", natFooter: true },
+const ERROR_PANEL_COPY: Record<WarpError["kind"], { eyebrow: string; title: string }> = {
+  "nat-failed": { eyebrow: "Channel failed", title: "No direct route." },
   disconnected: { eyebrow: "Connection lost", title: "Connection dropped." },
   "channel-error": { eyebrow: "Channel failed", title: "The channel broke." },
   signaling: { eyebrow: "Couldn't connect", title: "Couldn't reach the room." },
@@ -1106,11 +1112,39 @@ function ErrorPanel({
       >
         {copy.title}
       </h1>
-      <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>
-        {message}
-        {copy.natFooter &&
-          " Warp is STUN-only — there's no relay fallback, so some networks simply can't be bridged."}
-      </p>
+      {kind === "nat-failed" ? (
+        <div style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px", textAlign: "left" }}>
+          <p style={{ margin: "0 0 12px" }}>
+            Both devices are behind routers that refuse a direct path (symmetric NAT).
+          </p>
+          <p style={{ margin: "0 0 16px" }}>
+            Warp runs no TURN relay — if a direct path can't form, it stops here.{" "}
+            <a
+              href="/how#nat"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/how#nat");
+              }}
+              style={{ color: "var(--acc)", textDecoration: "none" }}
+            >
+              Read the full story →
+            </a>
+          </p>
+          <div style={{ padding: "16px", background: "rgba(239,233,218,.03)", border: "1px solid rgba(239,233,218,.12)" }}>
+            <div style={{ fontFamily: MONO, fontSize: "11px", letterSpacing: ".1em", textTransform: "uppercase", color: "#efe9da", marginBottom: "12px" }}>What works instead</div>
+            <ol style={{ margin: 0, paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <li><strong>Same Wi-Fi:</strong> put both devices on the same network (always works — LAN needs no punching).</li>
+              <li><strong>Hotspot:</strong> connect one device to the other's hotspot.</li>
+              <li><strong>Change network:</strong> turn off your VPN, or try a non-corporate network.</li>
+              <li><strong>Retry:</strong> some NATs are flaky and succeed on the second try.</li>
+            </ol>
+          </div>
+        </div>
+      ) : (
+        <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>
+          {message}
+        </p>
+      )}
       <div
         style={{
           display: "flex",
