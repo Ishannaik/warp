@@ -79,6 +79,35 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   const inSelect = !showSession && !showPair && !error;
 
+  // ---- paste handler (Select step only) ----
+  useEffect(() => {
+    if (!inSelect) return;
+    const onPaste = (e: ClipboardEvent) => {
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      const pastedFiles = Array.from(e.clipboardData?.files ?? []);
+      if (!pastedFiles.length) return;
+
+      const renamedFiles = pastedFiles.map((f) => {
+        if (f.name === "image.png") {
+          const d = new Date();
+          const pad = (n: number) => String(n).padStart(2, "0");
+          const name = `pasted-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
+          return new File([f], name, { type: f.type });
+        }
+        return f;
+      });
+      addFiles(renamedFiles);
+    };
+
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [inSelect, addFiles]);
+
   // ---- window-level drag overlay (Select step only) ----
   const onWinDragEnter = (e: DragEvent) => {
     if (!inSelect) return;

@@ -398,6 +398,33 @@ function Composer({
   // passes none, so picks fall through to the original direct-offer behavior.
   const staging = !!onAddFiles;
   const acceptFiles = staging ? onAddFiles! : onSendFiles;
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      const pastedFiles = Array.from(e.clipboardData?.files ?? []);
+      if (!pastedFiles.length) return;
+
+      const renamedFiles = pastedFiles.map((f) => {
+        if (f.name === "image.png") {
+          const d = new Date();
+          const pad = (n: number) => String(n).padStart(2, "0");
+          const name = `pasted-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
+          return new File([f], name, { type: f.type });
+        }
+        return f;
+      });
+      acceptFiles(renamedFiles);
+    };
+
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [acceptFiles]);
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
   const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
