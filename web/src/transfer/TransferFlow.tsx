@@ -226,6 +226,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                       ? "Connected to sender"
                       : "Connected"
                 }
+                status={status}
+                incoming={incoming}
                 // Sender only: the staged queue stays editable until they hit Send.
                 // The receiver has no pre-queue, so these stay undefined.
                 pending={mode === "send" ? queue : undefined}
