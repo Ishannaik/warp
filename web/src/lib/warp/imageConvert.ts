@@ -13,16 +13,33 @@ export function isHeicMime(mime: string): boolean {
   return mime === "image/heic" || mime === "image/heif";
 }
 
+// Same ceiling and reasoning as THUMB_SOURCE_MAX in peer.ts's makeThumb: this
+// runs eagerly (on receipt, not on click), so an unbounded decode + full-size
+// canvas + encode of a dimension-heavy photo would stall the tab or exhaust
+// memory before the user ever asked for a JPEG. Above this, the option is
+// skipped — the original stays downloadable either way.
+const CONVERT_SOURCE_MAX = 50 * 1024 * 1024;
+
+/** Extracted so the cap is testable on its own, independent of DOM/createImageBitmap
+ *  availability (a Node check has neither, which would otherwise mask this branch). */
+export function exceedsConvertSizeCap(byteLength: number): boolean {
+  return byteLength > CONVERT_SOURCE_MAX;
+}
+
 /**
  * Converts `source` to a JPEG Blob, or undefined if the browser can't decode
- * it. Safari decodes HEIC; most others do not — `createImageBitmap` rejecting
- * IS the feature detection here, so the caller can skip the option entirely
+ * it (or the file is too large to convert eagerly — see exceedsConvertSizeCap).
+ * Safari decodes HEIC; most others do not — `createImageBitmap` rejecting IS
+ * the feature detection here, so the caller can skip the option entirely
  * rather than shipping a ~1 MB wasm HEIC decoder for a minority file type.
  *
  * Full-size draw (not thumbnail scale, unlike makeThumb in peer.ts): this
- * produces the file the user saves, not a preview.
+ * produces the file the user saves, not a preview. Never rejects — every
+ * failure path (decode, canvas allocation, draw, encode) resolves to
+ * undefined, since the caller treats this as best-effort with no `.catch`.
  */
 export async function convertToJpeg(source: Blob, quality = 0.92): Promise<Blob | undefined> {
+  if (exceedsConvertSizeCap(source.size)) return undefined;
   if (typeof document === "undefined" || typeof createImageBitmap !== "function") return undefined;
   let bitmap: ImageBitmap;
   try {
@@ -40,6 +57,8 @@ export async function convertToJpeg(source: Blob, quality = 0.92): Promise<Blob 
     return await new Promise<Blob | undefined>((resolve) => {
       canvas.toBlob((blob) => resolve(blob ?? undefined), "image/jpeg", quality);
     });
+  } catch {
+    return undefined;
   } finally {
     bitmap.close();
   }

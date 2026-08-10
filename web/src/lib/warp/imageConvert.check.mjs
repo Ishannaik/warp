@@ -12,8 +12,8 @@ let esbuild;
 try {
   esbuild = await import("esbuild");
 } catch (e) {
-  console.error("SKIP: esbuild not available to transpile TS for this check —", e.message);
-  process.exit(0);
+  console.error("FAIL: esbuild is required for imageConvert.check.mjs —", e.message);
+  process.exit(1);
 }
 
 const url = await import("node:url");
@@ -30,7 +30,7 @@ const code = out.outputFiles[0].text;
 const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
 const mod = await import(dataUrl);
 
-const { isHeicMime, jpegFilename, convertToJpeg } = mod;
+const { isHeicMime, jpegFilename, convertToJpeg, exceedsConvertSizeCap } = mod;
 
 // --- isHeicMime ---
 assert.equal(isHeicMime("image/heic"), true, "image/heic is targeted");
@@ -51,4 +51,15 @@ assert.equal(jpegFilename("noext"), "noext.jpg", "no extension: appends one rath
 const result = await convertToJpeg(new Blob(["not a real image"]));
 assert.equal(result, undefined, "with no document/createImageBitmap, conversion is skipped, not thrown");
 
-console.log("OK: imageConvert.ts isHeicMime + jpegFilename + convertToJpeg's no-DOM feature-detect path");
+// --- exceedsConvertSizeCap: tested directly, not through convertToJpeg, since
+// in a no-DOM environment (this check) every oversized-input call would also
+// return undefined via the DOM feature-detect below it — masking a regression
+// in the cap itself. Regression coverage for the P1 finding on #260: an
+// eager, unbounded decode of a dimension-heavy photo could stall the tab or
+// exhaust memory before the user ever asked for a JPEG.
+const CAP = 50 * 1024 * 1024;
+assert.equal(exceedsConvertSizeCap(CAP), false, "exactly at the cap is allowed");
+assert.equal(exceedsConvertSizeCap(CAP + 1), true, "one byte over the cap is rejected");
+assert.equal(exceedsConvertSizeCap(0), false, "an empty source is allowed");
+
+console.log("OK: imageConvert.ts isHeicMime + jpegFilename + convertToJpeg's no-DOM feature-detect path + the size cap");
