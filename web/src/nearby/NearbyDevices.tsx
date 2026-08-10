@@ -4,6 +4,7 @@ import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
 import { AcceptModal, SessionView } from "../transfer/SessionView";
 import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
+import { useLiveTransferTitle } from "../lib/useLiveTransferTitle";
 
 /**
  * "On your network" — LAN auto-discovery surface for the landing page.
@@ -27,6 +28,7 @@ export default function NearbyDevices() {
   const isMobile = useIsMobile();
   const nearby = useNearbyTransfer();
   const { devices, crowded, deviceName, session, incoming, rename } = nearby;
+  useLiveTransferTitle(session?.items);
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(deviceName);

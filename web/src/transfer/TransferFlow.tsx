@@ -8,6 +8,7 @@ import { formatBytes, fileKey } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
+import { useLiveTransferTitle } from "../lib/useLiveTransferTitle";
 
 /**
  * Warp Transfer flow — a real, WebRTC-backed transfer surface.
@@ -39,6 +40,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWarpTransfer(joinCode);
   const { mode, code, shareUrl, status, items, incoming, error, connections } = wrap;
   const isMobile = useIsMobile();
+  useLiveTransferTitle(items);
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
