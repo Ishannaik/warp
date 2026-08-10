@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import ArchitectureNotPolicy from "./growth/ArchitectureNotPolicy";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -39,6 +40,13 @@ function seoForRoute(path: string): { title: string; description: string } {
     return {
       title: "Brand kit · Warp",
       description: "Warp logo marks, colours, and type — download the brand assets.",
+    };
+  }
+  if (path === "/architecture-not-policy") {
+    return {
+      title: "Architecture, not policy · Warp",
+      description:
+        "Warp's no-server-touches-your-file claim is structural, not a ToS promise a new owner could edit — contrasted with WeTransfer's 2025 AI-training clause and the Snapdrop/LimeWire acquisition.",
     };
   }
   if (path === "/terms") {
@@ -88,6 +96,7 @@ export default function App() {
     return <ReceiveEntry initialCode={cleaned} />;
   }
   if (path === "/how") return <Theory />;
+  if (path === "/architecture-not-policy") return <ArchitectureNotPolicy />;
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
