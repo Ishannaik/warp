@@ -15,8 +15,8 @@
  * the global keyframes media query.
  */
 
-import { memo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { memo, useEffect, useId, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import {
   TEXT_SNIPPET_MAX_BYTES,
   formatBytes,
@@ -817,6 +817,39 @@ export function AcceptModal({
     (total >= LARGE_THRESHOLD || items.some((it) => it.size >= LARGE_THRESHOLD));
   const pickTarget = items.length > 1 ? "folder" : "file";
 
+  const headingId = useId();
+  const summaryId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const declineRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    declineRef.current?.focus();
+    return () => previouslyFocused?.focus();
+  }, []);
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onDecline();
+      return;
+    }
+    if (e.key !== "Tab" || !dialogRef.current) return;
+    const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+      'button, [href], input, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div
       onClick={(e) => {
@@ -839,6 +872,12 @@ export function AcceptModal({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        aria-describedby={summaryId}
+        onKeyDown={handleKeyDown}
         style={{
           width: "100%",
           maxWidth: "520px",
@@ -865,6 +904,7 @@ export function AcceptModal({
             Incoming · review before receiving
           </div>
           <h3
+            id={headingId}
             style={{
               fontFamily: DISPLAY,
               fontWeight: 700,
@@ -883,7 +923,7 @@ export function AcceptModal({
               <>Accept {items.length} {items.length === 1 ? "item" : "items"}?</>
             )}
           </h3>
-          <p style={{ fontSize: "13.5px", color: "#a8a293", margin: "8px 0 0", lineHeight: 1.5 }}>
+          <p id={summaryId} style={{ fontSize: "13.5px", color: "#a8a293", margin: "8px 0 0", lineHeight: 1.5 }}>
             {large ? (
               <>
                 {formatBytes(total)} total —{" "}
@@ -944,6 +984,7 @@ export function AcceptModal({
           }}
         >
           <button
+            ref={declineRef}
             type="button"
             className="warp-share"
             onClick={onDecline}
