@@ -9,6 +9,7 @@ import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
+import { useNotificationPreference, useTransferEvents } from "./useTransferEvents";
 
 /**
  * Warp Transfer flow — a real, WebRTC-backed transfer surface.
@@ -43,6 +44,9 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   // #15: live progress in the tab title while any transfer is in flight.
   useTransferTitle(items);
+
+  const { enabled: notificationsEnabled, toggle: toggleNotifications } = useNotificationPreference();
+  useTransferEvents({ incoming, items, status, notificationsEnabled });
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
@@ -226,6 +230,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                       ? "Connected to sender"
                       : "Connected"
                 }
+                notificationsEnabled={notificationsEnabled}
+                onToggleNotifications={toggleNotifications}
                 // Sender only: the staged queue stays editable until they hit Send.
                 // The receiver has no pre-queue, so these stay undefined.
                 pending={mode === "send" ? queue : undefined}

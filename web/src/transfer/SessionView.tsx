@@ -1253,6 +1253,8 @@ export function SessionView({
   onRemovePending,
   onSendPending,
   connections,
+  notificationsEnabled,
+  onToggleNotifications,
 }: {
   peerLabel: string;
   items: TransferItem[];
@@ -1265,6 +1267,8 @@ export function SessionView({
   onDownloadAll: () => void;
   isMobile: boolean;
   heading?: string;
+  notificationsEnabled?: boolean;
+  onToggleNotifications?: () => void;
   /** Live speed + ETA readout (from useWarpTransfer); omitted = no strip. */
   stats?: TransferStats;
   /** Files staged but not yet offered. Editable until onSendPending fires. */
@@ -1362,6 +1366,29 @@ export function SessionView({
             </span>
           )}
         </span>
+        {onToggleNotifications && (
+          <button
+            type="button"
+            onClick={onToggleNotifications}
+            title={notificationsEnabled ? "Disable desktop notifications" : "Enable desktop notifications"}
+            style={{
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: MONO,
+              fontSize: "10px",
+              color: notificationsEnabled ? "var(--acc)" : "#6f6a5d",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "4px 8px",
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+            }}
+          >
+            🔔 {notificationsEnabled ? "NOTIFICATIONS ON" : "NOTIFY ME"}
+          </button>
+        )}
       </div>
 
       {stats && <StatsStrip stats={stats} isMobile={isMobile} />}
