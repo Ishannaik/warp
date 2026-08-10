@@ -66,7 +66,11 @@ export default function WebRtcChannel() {
   }, [reduced]);
 
   return (
-    <DiagramFrame caption="FIG 02 · WEBRTC · ENCRYPTED DATACHANNEL" tone="acc">
+    <DiagramFrame
+      caption="FIG 02 · WEBRTC · ENCRYPTED DATACHANNEL"
+      tone="acc"
+      ariaLabel="A WebRTC data channel between two endpoints, each holding a DTLS key; the payload travels as scrambling ciphertext and an outside observer sees only encrypted hex."
+    >
       {/* centerpiece: the WebRTC loop mark */}
       <div
         style={{

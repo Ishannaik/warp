@@ -249,6 +249,13 @@ export interface DiagramFrameProps {
   pad?: boolean;
   /** Use the darker (#0e0d0a) inset background instead of card. Default true. */
   inset?: boolean;
+  /**
+   * Accessible name for the diagram, e.g. "Two peers exchanging encrypted
+   * chunks directly over a WebRTC data channel." Sets role="img" and
+   * aria-label on the frame so screen readers get a description of what the
+   * diagram depicts instead of its raw animated DOM contents.
+   */
+  ariaLabel?: string;
   style?: CSSProperties;
   className?: string;
   children: ReactNode;
@@ -264,6 +271,7 @@ export function DiagramFrame({
   tone = "neutral",
   pad = true,
   inset = true,
+  ariaLabel,
   style,
   className,
   children,
@@ -275,6 +283,8 @@ export function DiagramFrame({
   return (
     <div
       className={className}
+      role={ariaLabel ? "img" : undefined}
+      aria-label={ariaLabel}
       style={{
         position: "relative",
         border: HAIR_STRONG,

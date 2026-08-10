@@ -45,13 +45,15 @@ export default function L4Physical() {
   ];
 
   return (
-    <DiagramFrame caption="L4 · SUBSEA FIBER" tone="amb">
+    <DiagramFrame
+      caption="L4 · SUBSEA FIBER"
+      tone="amb"
+      ariaLabel="Subsea fiber-optic cable spanning the ocean floor between two continents, with optical repeaters and a cable-laying ship."
+    >
       <div ref={ref}>
         <svg
           viewBox={`0 0 ${W} ${H}`}
           width="100%"
-          role="img"
-          aria-label="Subsea fiber-optic cable spanning the ocean floor between two continents, with optical repeaters and a cable-laying ship."
           style={{ display: "block" }}
         >
           <defs>

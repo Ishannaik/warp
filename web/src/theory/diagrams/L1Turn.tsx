@@ -157,7 +157,11 @@ export default function L1Turn() {
   }
 
   return (
-    <DiagramFrame caption="L1 · TURN RELAY — EVERY BYTE, TWICE" tone="amb">
+    <DiagramFrame
+      caption="L1 · TURN RELAY — EVERY BYTE, TWICE"
+      tone="amb"
+      ariaLabel="A file token climbing to a TURN relay and descending to the peer, with an ingress-plus-egress counter doubling the billed bytes."
+    >
       <div ref={ref}>
         <div
           style={{

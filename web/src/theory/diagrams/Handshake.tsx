@@ -80,7 +80,11 @@ export default function Handshake() {
   const serverDim = connected;
 
   return (
-    <DiagramFrame caption="FIG 03 · SDP / ICE HANDSHAKE" tone="acc">
+    <DiagramFrame
+      caption="FIG 03 · SDP / ICE HANDSHAKE"
+      tone="acc"
+      ariaLabel="Sequence diagram of the signaling handshake: peer A and peer B exchange an offer, an answer, and ICE candidates through the signaling server, then connect directly."
+    >
       {/* signaling server (top center) */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: "8px" }}>
         <div
