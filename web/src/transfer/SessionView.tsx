@@ -30,6 +30,7 @@ import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
+import { filterNoiseFiles } from "../lib/warp/noiseFilter";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -427,12 +428,37 @@ function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
+  const [excluded, setExcluded] = useState<ExcludedFile[]>([]);
 
   // When staging callbacks are provided (TransferFlow), file pickers ADD to the
   // editable pending queue instead of offering immediately. The nearby flow
   // passes none, so picks fall through to the original direct-offer behavior.
   const staging = !!onAddFiles;
-  const acceptFiles = staging ? onAddFiles! : onSendFiles;
+  const addPicked = staging ? onAddFiles! : onSendFiles;
+
+  // Noise filter (#141) sits in front of both pickers: a folder pick walks
+  // recursively, so node_modules/.git/etc. would otherwise queue up by
+  // default. Excluded files aren't dropped, just held here for review.
+  const acceptFiles = (files: File[]) => {
+    const { included, excluded: newlyExcluded } = filterNoiseFiles(files);
+    if (included.length) addPicked(included);
+    if (newlyExcluded.length) {
+      setExcluded((prev) => [...prev, ...newlyExcluded.map((file) => ({ id: crypto.randomUUID(), file }))]);
+    }
+  };
+  const includeExcluded = (id: string) => {
+    const item = excluded.find((e) => e.id === id);
+    if (!item) return;
+    setExcluded((prev) => prev.filter((e) => e.id !== id));
+    addPicked([item.file]);
+  };
+  const includeAllExcluded = () => {
+    if (!excluded.length) return;
+    addPicked(excluded.map((e) => e.file));
+    setExcluded([]);
+  };
+  const dismissExcluded = () => setExcluded([]);
+
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
   const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
@@ -476,6 +502,17 @@ function Composer({
             ▤ {staging ? "Add a folder" : "Send a folder"}
           </button>
         </div>
+
+        {/* excluded by the default noise filter (node_modules, .git, ...) — not a silent drop */}
+        {excluded.length > 0 && (
+          <ExcludedNotice
+            excluded={excluded}
+            onInclude={includeExcluded}
+            onIncludeAll={includeAllExcluded}
+            onDismiss={dismissExcluded}
+            isMobile={isMobile}
+          />
+        )}
 
         {/* staged "ready to send" queue — editable until you hit Send */}
         {staging && pendingList.length > 0 && onRemovePending && onSendPending && (
@@ -710,6 +747,137 @@ function PendingTray({
     </div>
   );
 }
+
+/* --------------------------------------------------- excluded ("noise filter") */
+
+interface ExcludedFile {
+  id: string;
+  file: File;
+}
+
+/**
+ * Files the default noise filter (#141) held back from a folder pick —
+ * node_modules, .git, and the like. Never a silent drop: shown with a count
+ * and a per-item (or bulk) way to include something anyway.
+ */
+function ExcludedNotice({
+  excluded,
+  onInclude,
+  onIncludeAll,
+  onDismiss,
+  isMobile,
+}: {
+  excluded: ExcludedFile[];
+  onInclude: (id: string) => void;
+  onIncludeAll: () => void;
+  onDismiss: () => void;
+  isMobile: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const count = excluded.length;
+
+  return (
+    <div style={{ border: "1px solid rgba(239,106,61,.35)", background: "rgba(239,106,61,.06)" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "10px",
+          padding: isMobile ? "10px 11px" : "10px 13px",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            fontFamily: MONO,
+            fontSize: isMobile ? "11.5px" : "12px",
+            color: "var(--amb)",
+          }}
+        >
+          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          {count} noise {count === 1 ? "file" : "files"} excluded (node_modules, .git, …)
+        </button>
+        <div style={{ display: "flex", gap: "10px", flexShrink: 0 }}>
+          <button type="button" className="warp-rowbtn" onClick={onIncludeAll} style={excludedActionBtn}>
+            Include all
+          </button>
+          <button
+            type="button"
+            className="warp-rowbtn"
+            onClick={onDismiss}
+            aria-label="Dismiss excluded files"
+            style={{ ...iconBtn, flexShrink: 0 }}
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ borderTop: "1px solid rgba(239,106,61,.2)", maxHeight: "160px", overflow: "auto" }}>
+          {excluded.map((e) => (
+            <div
+              key={e.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: isMobile ? "8px 11px" : "8px 13px",
+                borderBottom: "1px solid rgba(239,106,61,.12)",
+              }}
+            >
+              <span
+                title={e.file.webkitRelativePath || e.file.name}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontFamily: MONO,
+                  fontSize: "11.5px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  color: "#a8a293",
+                }}
+              >
+                {e.file.webkitRelativePath || e.file.name}
+              </span>
+              <button
+                type="button"
+                className="warp-rowbtn"
+                onClick={() => onInclude(e.id)}
+                style={excludedActionBtn}
+              >
+                Include
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const excludedActionBtn: CSSProperties = {
+  background: "none",
+  border: "1px solid rgba(239,106,61,.4)",
+  color: "var(--amb)",
+  fontFamily: MONO,
+  fontSize: "10.5px",
+  letterSpacing: ".04em",
+  textTransform: "uppercase",
+  padding: "4px 9px",
+  cursor: "pointer",
+  flexShrink: 0,
+};
 
 function composerBtn(isMobile: boolean): CSSProperties {
   return {
