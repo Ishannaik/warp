@@ -1362,6 +1362,7 @@ export default function Theory() {
 
       {/* A4 · NAT + STUN */}
       <Section
+        id="nat"
         eyebrow="04 / NAT traversal"
         heading="Finding a public address with STUN — and being honest when there isn't one."
         lede={

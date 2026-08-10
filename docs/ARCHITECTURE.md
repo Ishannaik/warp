@@ -1,6 +1,6 @@
 # Warp architecture
 
-For the security trust boundary of the signaling server, see [Threat Model](./THREAT-MODEL.md).
+For the security trust boundary of the signaling server, see [Threat Model](./THREAT-MODEL.md). For deployment instructions, see the [Self-hosting guide](./SELF-HOSTING.md).
 
 How a file gets from one browser to another without any server ever touching it. This is the deep tour for new contributors — everything here cites the real files and functions, so you can read along in the code.
 
