@@ -979,6 +979,18 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     };
   }, [transferring]);
 
+  // Warn before the user accidentally closes the tab during an active transfer.
+  useEffect(() => {
+    const active = items.some((i) => i.status === "transferring" || i.status === "reconnecting");
+    if (!active) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [items]);
+
   // Prune abandoned IDB staging rows from crashed sessions once on mount (best-effort).
   useEffect(() => {
     void gcOrphanStaging();
