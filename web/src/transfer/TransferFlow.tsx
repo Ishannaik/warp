@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection } from "../lib/warp/useWarpTransfer";
-import { formatBytes } from "../lib/warp/transfer";
+import { formatBytes, fileKey } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
@@ -63,7 +63,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const addFiles = useCallback((list: FileList | File[]) => {
     const incomingList = Array.from(list);
     if (!incomingList.length) return;
-    setQueue((prev) => [...prev, ...incomingList.map((file) => ({ id: crypto.randomUUID(), file }))]);
+    setQueue((prev) => {
+      const existing = new Set(prev.map(q => fileKey(q.file)));
+      const novel = incomingList.filter(f => !existing.has(fileKey(f)));
+      if (!novel.length) return prev;
+      return [...prev, ...novel.map((file) => ({ id: crypto.randomUUID(), file }))];
+    });
   }, []);
 
   const removeFile = useCallback((id: string) => {
