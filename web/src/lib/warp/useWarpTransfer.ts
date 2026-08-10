@@ -42,7 +42,7 @@ import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSinkWithIdbFallback, opf
 import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
 import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
 import { supportedCodecs } from "./compress";
-import { streamZipDownload } from "./zipDownload";
+import { saveBlob, streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 import { SpeedTracker } from "./transferStats";
 
@@ -264,19 +264,6 @@ async function uniqueName(used: Set<string>, name: string, dir?: FsDirHandle): P
     }
     candidate = `${stem} (${n})${ext}`;
   }
-}
-
-/** Trigger a browser download of a blob via a transient object-URL anchor. */
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Revoke on the next tick so the click has time to start the download.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function useWarpTransfer(joinCode?: string): UseWarpTransfer {

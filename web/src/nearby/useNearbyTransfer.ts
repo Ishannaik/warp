@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNearby, type IncomingConnection, type NearbyDevice } from "../lib/warp/useNearby";
 import type { WarpPeer } from "../lib/warp/peer";
-import { streamZipDownload } from "../lib/warp/zipDownload";
+import { saveBlob, streamZipDownload } from "../lib/warp/zipDownload";
 import { type OfferItem, type TransferItem } from "../lib/warp/transfer";
 
 export type { NearbyDevice } from "../lib/warp/useNearby";
@@ -85,18 +85,6 @@ const PEER_ERROR_COPY: Record<string, string> = {
   disconnected: "The other device disconnected before the transfer finished.",
   "channel-error": "The direct link to the other device broke.",
 };
-
-/** Trigger a browser download of a blob via a transient object-URL anchor. */
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 export function useNearbyTransfer(): UseNearbyTransfer {
   const nearby = useNearby();
