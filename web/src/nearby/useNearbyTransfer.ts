@@ -83,7 +83,7 @@ export interface UseNearbyTransfer {
 const PEER_ERROR_COPY: Record<string, string> = {
   "nat-failed": "Couldn't open a direct channel. One device may be on a restrictive network.",
   disconnected: "The other device disconnected before the transfer finished.",
-  "channel-error": "The direct link to the other device broke.",
+  "channel-error": "The connection between the devices broke during the transfer. Hit retry to pair again.",
 };
 
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
