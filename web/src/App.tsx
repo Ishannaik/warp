@@ -6,6 +6,7 @@ import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
 import BrandKit from "./brand/BrandKit";
 import Legal from "./legal/Legal";
+import PairDrop from "./vs/PairDrop";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
@@ -54,6 +55,13 @@ function seoForRoute(path: string): { title: string; description: string } {
         "How Warp handles your data — short version: your files never touch a server.",
     };
   }
+  if (path === "/vs/pairdrop") {
+    return {
+      title: "Warp vs PairDrop · Warp",
+      description:
+        "PairDrop nails zero-code LAN discovery and falls back to its own TURN relay off-network. Warp skips the relay entirely, on every network.",
+    };
+  }
   if (path !== "/") {
     return {
       title: "Page not found · Warp",
@@ -91,6 +99,7 @@ export default function App() {
   if (path === "/brand") return <BrandKit />;
   if (path === "/terms") return <Legal kind="terms" />;
   if (path === "/privacy") return <Legal kind="privacy" />;
+  if (path === "/vs/pairdrop") return <PairDrop />;
 
   return <NotFound />;
 }
