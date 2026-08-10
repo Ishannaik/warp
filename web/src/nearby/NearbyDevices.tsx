@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, DragEvent } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
@@ -80,8 +80,8 @@ export default function NearbyDevices() {
       }}
     >
       <style>{`
-        .nearby-card:hover{border-color:var(--acc) !important;background:rgba(var(--acc-rgb),.06) !important}
-        .nearby-card:hover .nearby-go{color:var(--acc) !important;transform:translateX(2px)}
+        .nearby-card:hover, .nearby-card.drag-over{border-color:var(--acc) !important;background:rgba(var(--acc-rgb),.06) !important}
+        .nearby-card:hover .nearby-go, .nearby-card.drag-over .nearby-go{color:var(--acc) !important;transform:translateX(2px)}
         .nearby-link:hover{color:#efe9da !important}
         .nearby-cta:hover{filter:brightness(1.08)}
         .nearby-ghost:hover{border-color:rgba(239,233,218,.45) !important;color:#efe9da !important}
@@ -356,9 +356,41 @@ function DeviceCard({
   device: NearbyDevice;
   onPickFiles: (list: FileList | null) => void;
 }) {
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepth = useRef(0);
+
+  const handleDragEnter = (e: DragEvent) => {
+    e.preventDefault();
+    dragDepth.current += 1;
+    setIsDragOver(true);
+  };
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragOver(false);
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setIsDragOver(false);
+    if (e.dataTransfer?.files?.length) {
+      onPickFiles(e.dataTransfer.files);
+    }
+  };
+
   return (
     <label
-      className="nearby-card"
+      className={`nearby-card ${isDragOver ? "drag-over" : ""}`}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       style={{
         display: "flex",
         alignItems: "center",
