@@ -293,6 +293,8 @@ export default function NearbyDevices() {
               onDownloadAll={nearby.downloadAll}
               isMobile={isMobile}
               heading={session.connected ? "Connected" : "Opening channel"}
+              status={session.connected ? "connected" : "connecting"}
+              incoming={incoming}
             />
           )}
         </SessionModal>

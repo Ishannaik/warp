@@ -15,7 +15,7 @@
  * the global keyframes media query.
  */
 
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 import {
   TEXT_SNIPPET_MAX_BYTES,
@@ -27,7 +27,7 @@ import {
   type TransferItem,
 } from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
-import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
+import type { Connection, TransferStats, IncomingOffer } from "../lib/warp/useWarpTransfer";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
 
@@ -1253,6 +1253,8 @@ export function SessionView({
   onRemovePending,
   onSendPending,
   connections,
+  status,
+  incoming,
 }: {
   peerLabel: string;
   items: TransferItem[];
@@ -1281,6 +1283,10 @@ export function SessionView({
    * to/from device. Omitted (or a single device) keeps the clean 1-to-1 header.
    */
   connections?: Connection[];
+  /** Hook status for aria-live announcements */
+  status?: string;
+  /** Incoming offer for aria-live announcements */
+  incoming?: IncomingOffer | null;
 }) {
   const liveConnections = connections ?? [];
   const connectedCount = liveConnections.filter((c) => c.connected).length;
@@ -1293,8 +1299,83 @@ export function SessionView({
         peerId ? liveConnections.find((c) => c.peerId === peerId)?.label ?? peerId.slice(0, 8) : undefined
     : undefined;
 
+  const [announceText, setAnnounceText] = useState("");
+  const prevConnections = useRef(liveConnections.length);
+  const prevStatus = useRef(status);
+  const prevIncomingBatch = useRef<string | null>(null);
+  const prevItems = useRef(new Map<string, { status: TransferItem["status"]; halfway: boolean }>());
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const announcements: string[] = [];
+
+    // connections
+    const currentConnections = connections ?? [];
+    const currentConnected = currentConnections.filter((c) => c.connected).length;
+    if (currentConnected > prevConnections.current) {
+      announcements.push(`Device joined — ${currentConnected} ${currentConnected === 1 ? "device" : "devices"} connected`);
+    }
+    prevConnections.current = currentConnected;
+
+    // hook status
+    if (status === "reconnecting" && prevStatus.current !== "reconnecting") {
+      announcements.push("Connection lost, reconnecting");
+    } else if (status === "connected" && prevStatus.current === "reconnecting") {
+      announcements.push("Connection recovered");
+    }
+    prevStatus.current = status;
+
+    // incoming offer
+    if (incoming && incoming.batchId !== prevIncomingBatch.current) {
+      const size = incoming.items.reduce((acc, it) => acc + it.size, 0);
+      announcements.push(
+        `Offer: ${incoming.items.length} ${incoming.items.length === 1 ? "file" : "files"}, ${formatBytes(size)} — accept or decline`
+      );
+      prevIncomingBatch.current = incoming.batchId;
+    } else if (!incoming) {
+      prevIncomingBatch.current = null;
+    }
+
+    // items
+    for (const item of items) {
+      const prev = prevItems.current.get(item.id);
+      if (!prev) {
+        prevItems.current.set(item.id, { status: item.status, halfway: item.progress >= 50 });
+        continue;
+      }
+
+      if (prev.status !== item.status) {
+        if (item.status === "transferring" && prev.status === "offered") {
+          announcements.push(`${item.direction === "receive" ? "Receiving" : "Sending"} ${item.name}`);
+        } else if (item.status === "done") {
+          announcements.push(`${item.name} ${item.direction === "receive" ? "received" : "sent"}`);
+        } else if (item.status === "cancelled") {
+          announcements.push(`${item.name} cancelled`);
+        } else if (item.status === "declined") {
+          announcements.push(`${item.name} declined`);
+        }
+      } else if (item.status === "transferring" && item.progress >= 50 && !prev.halfway) {
+        announcements.push(`${item.name} halfway`);
+        prev.halfway = true;
+      }
+
+      prev.status = item.status;
+      prevItems.current.set(item.id, prev);
+    }
+
+    if (announcements.length > 0) {
+      setAnnounceText("");
+      setTimeout(() => setAnnounceText(announcements.join(". ")), 50);
+      if (clearTimer.current) clearTimeout(clearTimer.current);
+      clearTimer.current = setTimeout(() => setAnnounceText(""), 4000);
+    }
+  }, [items, incoming, connections, status]);
+
   return (
     <div style={{ animation: "warpFade .5s ease both", display: "flex", flexDirection: "column", gap: "18px" }}>
+      <div aria-live="polite" role="status" className="sr-only">
+        {announceText}
+      </div>
       {/* connected header */}
       <div
         style={{
