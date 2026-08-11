@@ -621,6 +621,7 @@ export class WarpPeer {
     const tokens: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i];
+      if (!file) continue;
       const id = fileId();
       ids.push(id);
       const mime = file.type || "application/octet-stream";

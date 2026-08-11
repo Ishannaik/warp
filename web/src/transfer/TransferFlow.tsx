@@ -8,6 +8,7 @@ import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
 import { copyToClipboard } from "../lib/copyToClipboard";
+import { codeToWords } from "../lib/warp/roomCode";
 import { AcceptModal, SessionView } from "./SessionView";
 
 /**
@@ -113,7 +114,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   // mesh room SessionView renders the per-device chips from `connections` itself.
   const peerLabel = useMemo(() => {
     const others = wrap.peers;
-    if (others.length) return others[0].slice(0, 8);
+    if (others.length) return (others[0] ?? '').slice(0, 8);
     return mode === "receive" ? "the sender" : "your peer";
   }, [wrap.peers, mode]);
 
@@ -736,6 +737,12 @@ function PairStep({
   return (
     <div style={{ animation: "warpFade .5s ease both", textAlign: "center" }}>
       <div style={{ ...stepLabel, marginBottom: "30px" }}>Step 02 / Pair</div>
+
+      {code && (
+        <div style={{ marginBottom: "18px", fontFamily: MONO, fontSize: "12px", color: "#a8a293" }}>
+          code: <strong style={{ color: "#efe9da" }}>{code}</strong> · say it: <strong style={{ color: "#efe9da" }}>{codeToWords(code)}</strong>
+        </div>
+      )}
 
       <div
         style={{

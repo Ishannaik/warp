@@ -1617,7 +1617,7 @@ export default function Theory() {
                 activeIndex={activeLayer}
                 style={{ height: "min(440px, 72vh)" }}
                 onSelect={(i) => {
-                  const el = document.getElementById(LAYERS[i].id);
+                  const el = document.getElementById((LAYERS[i]?.id ?? ''));
                   el?.scrollIntoView({ behavior: "smooth", block: "center" });
                 }}
               />

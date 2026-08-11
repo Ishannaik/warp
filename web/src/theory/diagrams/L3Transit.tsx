@@ -213,6 +213,7 @@ export default function L3Transit() {
             {animate && hopIdx > 0 && hopIdx <= totalCrossings
               ? (() => {
                   const h = HOPS[hopIdx - 1];
+                  if (!h) return null;
                   const a = nodeById(h.from);
                   const b = nodeById(h.to);
                   return (
@@ -249,8 +250,8 @@ export default function L3Transit() {
             {/* resting packet at final node when done */}
             {hopIdx >= totalCrossings ? (
               <circle
-                cx={nodeById(HOPS[totalCrossings - 1].to).x}
-                cy={nodeById(HOPS[totalCrossings - 1].to).y}
+                cx={nodeById((HOPS[totalCrossings - 1]?.to ?? '')).x}
+                cy={nodeById((HOPS[totalCrossings - 1]?.to ?? '')).y}
                 r="2"
                 fill={AMB}
               />

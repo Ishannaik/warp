@@ -302,7 +302,7 @@ export class PieceVerifier {
   /** Pull exactly `len` bytes off the front of the pending buffer. */
   private takePiece(len: number): Uint8Array {
     // Fast path: the piece is exactly one contiguous buffered slice — no copy.
-    if (this.pending.length === 1 && this.pending[0].byteLength === len) {
+    if (this.pending.length === 1 && this.pending[0]?.byteLength === len) {
       const only = this.pending[0];
       this.pending = [];
       this.pendingLen = 0;
@@ -312,6 +312,7 @@ export class PieceVerifier {
     let off = 0;
     while (off < len) {
       const head = this.pending[0];
+      if (!head) break;
       const take = Math.min(head.byteLength, len - off);
       out.set(head.subarray(0, take), off);
       off += take;

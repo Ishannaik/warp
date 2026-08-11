@@ -14,7 +14,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    // Strictness flags required by #50
+    // typescript is pinned to 6.0.3 instead of 7.0.2 because typescript-eslint
+    // officially supports TS < 6.1.0 at this time.
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,

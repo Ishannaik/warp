@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
-import { CODE_LEN, VALID_RE, sanitize } from "../lib/warp/roomCode";
+import { CODE_LEN, VALID_RE, sanitize, wordsToCode } from "../lib/warp/roomCode";
 
 /**
  * ReceiveEntry — the "/receive" page. The second device needs a way to *enter*
@@ -27,13 +27,13 @@ export default function ReceiveEntry({
   const isMobile = useIsMobile();
   const [code, setCode] = useState(() => sanitize(initialCode));
 
-  const valid = useMemo(() => VALID_RE.test(code), [code]);
+  const valid = useMemo(() => VALID_RE.test(code) || wordsToCode(code) !== null, [code]);
   // Only nag once they've typed a full-length code that still doesn't match.
-  const showHint = code.length === CODE_LEN && !valid;
+  const showHint = (code.length === CODE_LEN && !code.includes("-") && !valid) || (code.includes("-") && code.split("-").length >= 3 && !valid);
 
   const connect = () => {
     if (!valid) return;
-    navigate("/r/" + code);
+    navigate("/r/" + (VALID_RE.test(code) ? code : wordsToCode(code) || code));
   };
 
   return (
@@ -172,6 +172,7 @@ export default function ReceiveEntry({
               setCode(next);
               // Full valid paste → connect immediately (typing the 6th char does not).
               if (VALID_RE.test(next)) navigate("/r/" + next);
+              else if (wordsToCode(next)) navigate("/r/" + wordsToCode(next));
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") connect();
@@ -182,7 +183,7 @@ export default function ReceiveEntry({
             autoCapitalize="characters"
             spellCheck={false}
             inputMode="text"
-            maxLength={CODE_LEN}
+            maxLength={40}
             aria-invalid={showHint}
             aria-describedby={showHint ? "rcv-hint" : undefined}
             placeholder="••••••"
@@ -217,7 +218,7 @@ export default function ReceiveEntry({
           >
             {showHint
               ? "That doesn't look like a valid code — check the sending device."
-              : "Letters A–Z (no I, L, O) and digits 2–9."}
+              : "6-character code (e.g. K7P2QR) or 3 words (e.g. otter-maple-fox)."}
           </div>
 
           {/* connect button */}
