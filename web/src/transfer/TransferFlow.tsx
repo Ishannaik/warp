@@ -46,9 +46,76 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
+  const [draftText, setDraftText] = useState("");
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("shared=1")) {
+      const loadShared = async () => {
+        try {
+          const req = indexedDB.open("warp-share", 1);
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+            req.onupgradeneeded = () => {
+              req.result.createObjectStore("stage");
+            };
+          });
+          const tx = db.transaction("stage", "readwrite");
+          const store = tx.objectStore("stage");
+          const getReq = store.get("shared");
+          const item = await new Promise<any>((resolve, reject) => {
+            getReq.onsuccess = () => resolve(getReq.result);
+            getReq.onerror = () => reject(getReq.error);
+          });
+          if (item) {
+            store.delete("shared");
+            if (item.files && item.files.length > 0) {
+              const validFiles = item.files.filter((f: any) => f instanceof File && f.name);
+              if (validFiles.length > 0) {
+                setQueue((prev) => [
+                  ...prev,
+                  ...validFiles.map((file: File) => ({ id: crypto.randomUUID(), file })),
+                ]);
+              }
+            }
+            if (item.text || item.title) {
+              setDraftText(item.text || item.title || "");
+            }
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      };
+      loadShared();
+
+      // Clean up URL
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, "", newUrl);
+    }
+
+    // GC stale shares
+    try {
+      const req = indexedDB.open("warp-share", 1);
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("stage")) return;
+        const tx = db.transaction("stage", "readwrite");
+        const store = tx.objectStore("stage");
+        const cursorReq = store.openCursor();
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (!cursor) return;
+          if (cursor.value.ts && Date.now() - cursor.value.ts > 24 * 60 * 60 * 1000) {
+            cursor.delete();
+          }
+          cursor.continue();
+        };
+      };
+    } catch (err) {}
+  }, []);
 
   // "reconnecting" keeps the session view up (with a banner) instead of
   // bouncing the user back to a pre-connect step — transfers auto-resume.
@@ -102,11 +169,11 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
   };
 
-  const openChannel = () => {
-    if (!files.length) return;
+  const openChannel = (broadcast?: boolean) => {
+    if (!files.length && !draftText) return;
     // Open the channel ONLY. The queue stays editable while pairing; nothing is
     // offered until the user hits "Send" in the session (ShareX stay-in-control).
-    wrap.createRoom();
+    wrap.createRoom(broadcast);
   };
 
   // Header label for the single-device (1-to-1) case + a sensible fallback. In a
@@ -260,12 +327,13 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
             <SelectStep
               files={files}
               queue={queue}
+              draftText={draftText}
               fileCount={fileCount}
               totalBytes={totalBytes}
               onBrowse={browse}
               onDropFiles={addFiles}
               onRemove={removeFile}
-              onOpenChannel={openChannel}
+              onOpenChannel={(broadcast) => openChannel(broadcast)}
               isMobile={isMobile}
             />
           )}
@@ -503,6 +571,7 @@ function QueueList({
 function SelectStep({
   files,
   queue,
+  draftText,
   fileCount,
   totalBytes,
   onBrowse,
@@ -513,12 +582,13 @@ function SelectStep({
 }: {
   files: File[];
   queue: QueuedFile[];
+  draftText?: string;
   fileCount: string;
   totalBytes: number;
   onBrowse: () => void;
   onDropFiles: (l: FileList) => void;
   onRemove: (id: string) => void;
-  onOpenChannel: () => void;
+  onOpenChannel: (broadcast?: boolean) => void;
   isMobile: boolean;
 }) {
   return (
@@ -586,6 +656,12 @@ function SelectStep({
         isMobile={isMobile}
         style={{ marginTop: "22px" }}
       />
+      
+      {draftText && (
+        <div style={{ marginTop: "12px", padding: "12px", border: "1px solid rgba(239,233,218,.14)", fontFamily: MONO, fontSize: "12px", color: "#efe9da", background: "rgba(239,233,218,.02)" }}>
+          Text snippet attached and ready to send.
+        </div>
+      )}
 
       <div
         style={{
@@ -607,28 +683,52 @@ function SelectStep({
         >
           Files stay on your device until a peer accepts.
         </span>
-        <button
-          type="button"
-          className={files.length ? "warp-cta" : undefined}
-          onClick={onOpenChannel}
-          disabled={!files.length}
-          style={{
-            display: isMobile ? "block" : "inline-block",
-            padding: "15px 26px",
-            background: files.length ? "var(--acc)" : "rgba(239,233,218,.12)",
-            border: 0,
-            color: "#fff",
-            fontFamily: MONO,
-            fontSize: "12.5px",
-            fontWeight: 600,
-            letterSpacing: ".07em",
-            textTransform: "uppercase",
-            textAlign: isMobile ? "center" : undefined,
-            cursor: files.length ? "pointer" : "not-allowed",
-          }}
-        >
-          Open secure channel &nbsp;→
-        </button>
+        <div style={{ display: "flex", gap: "10px", flexDirection: isMobile ? "column" : "row" }}>
+          <button
+            type="button"
+            className={(files.length || draftText) ? "warp-cta" : undefined}
+            onClick={() => onOpenChannel(true)}
+            disabled={!files.length && !draftText}
+            style={{
+              display: isMobile ? "block" : "inline-block",
+              padding: "15px 26px",
+              background: "transparent",
+              border: (files.length || draftText) ? "1px solid var(--acc)" : "1px solid rgba(239,233,218,.12)",
+              color: (files.length || draftText) ? "var(--acc)" : "rgba(239,233,218,.12)",
+              fontFamily: MONO,
+              fontSize: "12.5px",
+              fontWeight: 600,
+              letterSpacing: ".07em",
+              textTransform: "uppercase",
+              textAlign: isMobile ? "center" : undefined,
+              cursor: (files.length || draftText) ? "pointer" : "not-allowed",
+            }}
+          >
+            Broadcast to many
+          </button>
+          <button
+            type="button"
+            className={(files.length || draftText) ? "warp-cta" : undefined}
+            onClick={() => onOpenChannel(false)}
+            disabled={!files.length && !draftText}
+            style={{
+              display: isMobile ? "block" : "inline-block",
+              padding: "15px 26px",
+              background: (files.length || draftText) ? "var(--acc)" : "rgba(239,233,218,.12)",
+              border: 0,
+              color: "#fff",
+              fontFamily: MONO,
+              fontSize: "12.5px",
+              fontWeight: 600,
+              letterSpacing: ".07em",
+              textTransform: "uppercase",
+              textAlign: isMobile ? "center" : undefined,
+              cursor: (files.length || draftText) ? "pointer" : "not-allowed",
+            }}
+          >
+            Open secure channel &nbsp;→
+          </button>
+        </div>
       </div>
     </div>
   );

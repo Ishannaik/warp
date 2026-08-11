@@ -21,6 +21,8 @@ import type { DeviceType } from "../lib/warp/useNearby";
  * presentation + a hidden file input.
  */
 
+import { forgetPairedDevice } from "../lib/warp/pairing";
+
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
 const HAIRLINE = "rgba(239,233,218,.13)";
@@ -449,8 +451,52 @@ function DeviceCard({
           fontSize: "15px",
           color: "#6f6a5d",
           transition: "color .15s ease, transform .15s ease",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
         }}
       >
+        {device.token && (
+          <button
+            title="Forget paired device"
+            aria-label="Forget paired device"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              forgetPairedDevice(device.token!);
+            }}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "4px",
+              cursor: "pointer",
+              color: "#6f6a5d",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "color .15s ease",
+              font: "inherit",
+              borderRadius: "4px",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--amb)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "#6f6a5d")}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+          </button>
+        )}
         →
       </span>
     </label>

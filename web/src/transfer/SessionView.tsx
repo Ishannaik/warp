@@ -1219,9 +1219,10 @@ function DeviceChip({ label, connected }: { label: string; connected: boolean })
  * rolling window has enough samples; ETA shows "calculating…" until the speed
  * is stable enough to divide the remainder by — no garbage or Infinity.
  */
-function StatsStrip({ stats, isMobile }: { stats: TransferStats; isMobile: boolean }) {
+function StatsStrip({ stats, isMobile, deviceCount = 1 }: { stats: TransferStats; isMobile: boolean; deviceCount?: number }) {
   if (!stats.active) return null;
-  const speed = stats.speedBps > 0 ? formatSpeed(stats.speedBps) : "—";
+  const perDeviceSpeed = stats.speedBps > 0 ? stats.speedBps / deviceCount : 0;
+  const speed = perDeviceSpeed > 0 ? formatSpeed(perDeviceSpeed) : "—";
   const eta =
     stats.etaSeconds !== null && stats.etaSeconds > 0 ? `~${formatDuration(stats.etaSeconds)} left` : "calculating…";
   const cell: CSSProperties = {
@@ -1269,7 +1270,7 @@ function StatsStrip({ stats, isMobile }: { stats: TransferStats; isMobile: boole
         }}
       />
       <span style={cell}>
-        <span style={label}>Speed</span>
+        <span style={label}>{deviceCount > 1 ? "Speed (each)" : "Speed"}</span>
         <span style={{ ...value, color: "var(--amb)" }}>{speed}</span>
       </span>
       <span style={{ ...cell, marginLeft: "auto", alignItems: "flex-end" }}>
@@ -1422,7 +1423,7 @@ export function SessionView({
         </span>
       </div>
 
-      {stats && <StatsStrip stats={stats} isMobile={isMobile} />}
+      {stats && <StatsStrip stats={stats} isMobile={isMobile} deviceCount={multiDevice ? connectedCount : 1} />}
 
       <Composer
         onSendFiles={onSendFiles}
