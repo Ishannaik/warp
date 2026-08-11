@@ -77,6 +77,10 @@ export interface UseNearbyTransfer {
   rename: (name: string) => void;
   /** Close the active session panel and tear the peer down. */
   dismissSession: () => void;
+  /** Whether this device is discoverable to others on the same IP. */
+  isDiscoverable: boolean;
+  /** Toggle discoverability. */
+  setDiscoverable: (discoverable: boolean) => void;
 }
 
 
@@ -100,7 +104,7 @@ function saveBlob(blob: Blob, filename: string): void {
 
 export function useNearbyTransfer(): UseNearbyTransfer {
   const nearby = useNearby();
-  const { selfId, devices, crowded, deviceName, connectTo, onIncoming, rename } = nearby;
+  const { selfId, devices, crowded, deviceName, connectTo, onIncoming, rename, isDiscoverable, setDiscoverable } = nearby;
 
   const [session, setSession] = useState<NearbySession | null>(null);
   const [incoming, setIncoming] = useState<IncomingRequest | null>(null);
@@ -365,6 +369,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       downloadAll,
       rename,
       dismissSession,
+      isDiscoverable,
+      setDiscoverable,
     }),
     [
       selfId,
@@ -384,6 +390,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       downloadAll,
       rename,
       dismissSession,
+      isDiscoverable,
+      setDiscoverable,
     ],
   );
 }
