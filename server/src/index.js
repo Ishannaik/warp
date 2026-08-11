@@ -15,6 +15,22 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
+
+    const origin = request.headers.get('Origin');
+    const allowedOrigins = [
+      'https://warp.ishannaik.com',
+      'https://warp.pixalabs.net',
+      'https://wrap-3qq.pages.dev'
+    ];
+    const customOrigins = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+    if (origin) {
+      const isLocalhost = origin === 'http://localhost' || origin.startsWith('http://localhost:');
+      if (!allowedOrigins.includes(origin) && !customOrigins.includes(origin) && !isLocalhost) {
+        return new Response('Forbidden', { status: 403 });
+      }
+    }
+
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('warp signaling server\n', { headers: { 'content-type': 'text/plain' } });
     }
