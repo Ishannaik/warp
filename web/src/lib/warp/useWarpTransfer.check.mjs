@@ -378,6 +378,7 @@ function fakeSink(bytes, failed = false) {
 }
 
 async function handleOffer(peerId, info) {
+  const isTrusted = globalThis.localStorage?.getItem(`warp-trust-${peerId}`) === "true";
   const keys = info.items.map((i) => i.key);
   const dupKeys = new Set(keys).size !== keys.length;
   const allResumable =
@@ -395,7 +396,7 @@ async function handleOffer(peerId, info) {
         !pausedKeys.has(it.key)
       );
     });
-  if (!allResumable) {
+  if (!allResumable && !isTrusted) {
     incoming = { ...info, peerId };
     return;
   }
@@ -404,10 +405,14 @@ async function handleOffer(peerId, info) {
   const resume = {};
   let target;
   for (const it of info.items) {
-    const e = receiveReg.get(it.key);
-    await e.sink.quiesce();
-    resume[it.id] = e.sink.bytesWritten;
-    if (!target) target = e.target;
+    if (it.key) {
+      const e = receiveReg.get(it.key);
+      if (e) {
+        await e.sink.quiesce();
+        resume[it.id] = e.sink.bytesWritten;
+        if (!target) target = e.target;
+      }
+    }
   }
   peer.acceptOffer(info.batchId, target, resume);
 }
@@ -845,6 +850,27 @@ async function resolveBatch(dir, names) {
   const dir = fakeDir(["README"]);
   const got = await resolveBatch(dir, ["README"]);
   assert(got[0] === "README (1)", "an extensionless name de-dupes as 'README (1)'");
+}
+
+// 10. Quick Save (#132): auto-accept from trusted peer.
+globalThis.localStorage = {
+  data: {},
+  getItem(k) { return this.data[k] || null; },
+  setItem(k, v) { this.data[k] = v; },
+};
+{
+  const qPeer = new FakePeer("trustedPeer1", true);
+  qPeer.isConnected = true;
+  peersMap.set(qPeer.remoteId, qPeer);
+  bind(qPeer.remoteId, qPeer);
+
+  globalThis.localStorage.setItem(`warp-trust-${qPeer.remoteId}`, "true");
+  incoming = null;
+  
+  // A genuinely NEW key -> usually surfaces modal. But with trust -> auto-accept.
+  await handleOffer(qPeer.remoteId, { batchId: "qs1", items: [{ id: "n3", key: "qs.bin|5|9", size: 5, resumeToken: "tok-Q" }] });
+  assert(incoming === null, "an offer from a trusted peer skips the accept modal");
+  assert(qPeer.accepted.length === 1 && qPeer.accepted[0] === "qs1", "an offer from a trusted peer is auto-accepted");
 }
 
 if (failures) {
