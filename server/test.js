@@ -174,7 +174,29 @@ async function run() {
   const nulled = await next(s1, (m) => m.type === 'signal');
   assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
 
-  for (const ws of [a, c, d, s1, s2]) ws.close();
+  // 10. Rate limiting (#31): >10 failed joins per IP/socket get rate-limited, but a correct code succeeds.
+  const hammer = await connect();
+  for (let i = 0; i < 10; i++) {
+    sendj(hammer, { type: 'join', room: 'YYYYYY' });
+    assert.equal((await next(hammer, (m) => m.type === 'error')).error, 'room-not-found');
+  }
+  // 11th is rate limited
+  sendj(hammer, { type: 'join', room: 'YYYYYY' });
+  assert.equal((await next(hammer, (m) => m.type === 'error')).error, 'rate-limited', '11th failed guess is rate limited');
+  
+  // Reconnect/rejoin storm shouldn't trip it (since it's a correct code)
+  const legit = await connect();
+  for (let i = 0; i < 15; i++) {
+    sendj(legit, { type: 'join', room: s1j.room });
+    await next(legit, (m) => m.type === 'joined');
+  }
+
+  // Another IP (different socket locally) can still guess
+  const otherIp = await connect();
+  sendj(otherIp, { type: 'join', room: 'YYYYYY' });
+  assert.equal((await next(otherIp, (m) => m.type === 'error')).error, 'room-not-found', 'another IP/socket is not rate-limited');
+
+  for (const ws of [a, c, d, s1, s2, hammer, legit, otherIp]) ws.close();
 }
 
 // Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.

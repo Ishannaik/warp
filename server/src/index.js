@@ -28,6 +28,19 @@ export default {
 export class SignalingRoom {
   constructor(state) {
     this.state = state;
+    this.failedJoins = new Map();
+  }
+
+  trackFailedJoin(ws, ip) {
+    const key = (!ip || ip === 'unknown') ? ws : ip;
+    const now = Date.now();
+    let record = this.failedJoins.get(key);
+    if (!record || now - record.windowStart > 60000) {
+      record = { count: 0, windowStart: now };
+    }
+    record.count++;
+    this.failedJoins.set(key, record);
+    return record.count > 10;
   }
 
   async fetch(request) {
@@ -108,6 +121,9 @@ export class SignalingRoom {
     if (code == null) {
       code = this.makeCode();                             // no code given => create a room
     } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
+      if (this.trackFailedJoin(ws, prev && prev.ip)) {
+        return this.send(ws, { type: 'error', error: 'rate-limited', message: 'Too many attempts — wait a minute.' });
+      }
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
     } else if (!this.roomExists(code)) {
       // Room has no live sockets — but if it was reserved within the reclaim window
@@ -118,6 +134,9 @@ export class SignalingRoom {
       // the same rendezvous code.
       const rec = await this.state.storage.get('reclaim:' + code);
       if (!rec || rec.expiresAt < Date.now()) {
+        if (this.trackFailedJoin(ws, prev && prev.ip)) {
+          return this.send(ws, { type: 'error', error: 'rate-limited', message: 'Too many attempts — wait a minute.' });
+        }
         return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
       }
       await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room

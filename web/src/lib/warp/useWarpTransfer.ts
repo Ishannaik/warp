@@ -694,6 +694,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           "room-not-found": "That room is no longer open — ask the sender for a fresh link.",
           "room-full": "That room is full (up to 8 devices).",
           "bad-room": "That room code looks invalid.",
+          "rate-limited": "Too many attempts — wait a minute.",
           "signaling-lost": "Lost contact with the signaling server — check your connection and retry.",
         };
         fail("signaling", map[err]);
@@ -1057,6 +1058,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const i = pool.findIndex((f) => f.name === item.name && f.size === item.size);
     if (i === -1 || !peer) return;
     const file = pool[i];
+    if (!file) return;
     setItems((prev) => prev.filter((t) => t.id !== id));
     if (notifyPeer) peer.requestResume(id);
     void peer.offerFiles([file]).catch(() => {
