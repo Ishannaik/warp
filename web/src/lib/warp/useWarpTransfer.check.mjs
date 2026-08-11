@@ -104,13 +104,14 @@ function connectedPeers() {
   return Array.from(peersMap.values()).filter((p) => p.isConnected);
 }
 
-async function sendFiles(files) {
-  const open = connectedPeers();
+async function sendFiles(files, targetPeerIds) {
+  const open = connectedPeers().filter(p => !targetPeerIds || targetPeerIds.includes(p.remoteId));
   await Promise.all(open.map((p) => p.offerFiles(files)));
 }
 
-function sendText(text) {
-  for (const p of connectedPeers()) p.sendText(text);
+function sendText(text, targetPeerIds) {
+  const open = connectedPeers().filter(p => !targetPeerIds || targetPeerIds.includes(p.remoteId));
+  for (const p of open) p.sendText(text);
 }
 
 function accept() {
@@ -229,7 +230,7 @@ function salvage(peerId) {
     const i = pool.findIndex((f) => f.name === t.name && f.size === t.size);
     if (i !== -1) files.push(pool.splice(i, 1)[0]);
   }
-  if (files.length) pendingFiles = files;
+  if (files.length) pendingFiles = { files, targets: [peerId] };
 
   const gone = new Set(unfinished.map((t) => t.id));
   items = items.filter((t) => !gone.has(t.id));
@@ -257,9 +258,17 @@ await sendFiles(files);
 assert(a.offered.length === 1 && b.offered.length === 1, "sendFiles fans out to every connected peer");
 assert(c.offered.length === 0, "sendFiles skips unconnected peers");
 
+// Selective send: sendFiles to A only.
+await sendFiles([{ name: "y.bin" }], [a.remoteId]);
+assert(a.offered.length === 2 && b.offered.length === 1, "sendFiles targets only the specified peer");
+
 // sendText fans out the same way.
 sendText("hi");
 assert(a.texts.length === 1 && b.texts.length === 1 && c.texts.length === 0, "sendText fans out to connected peers only");
+
+// Selective sendText: to B only.
+sendText("hello", [b.remoteId]);
+assert(a.texts.length === 1 && b.texts.length === 2, "sendText targets only the specified peer");
 
 // 2. Stamping: an item emitted by B carries peerId === B.
 b._emit("transfer", { id: "f1", batchId: "btB", name: "x.bin", direction: "send", status: "transferring" });
@@ -301,8 +310,12 @@ salvage(a.remoteId);
 assert(a.closed === true && !peersMap.has(a.remoteId), "salvage closes + removes the dead peer");
 assert(incoming === null, "salvage clears a pending offer from the dead peer");
 assert(
-  pendingFiles && pendingFiles.length === 1 && pendingFiles[0].name === "x.bin",
+  pendingFiles && pendingFiles.files.length === 1 && pendingFiles.files[0].name === "x.bin",
   "salvage re-stages ONLY unfinished send files (matched by name+size)",
+);
+assert(
+  pendingFiles.targets && pendingFiles.targets[0] === a.remoteId,
+  "salvage restricts the re-offer to the original target",
 );
 assert(items.some((t) => t.id === "s-done"), "salvage keeps completed rows");
 assert(
