@@ -15,7 +15,7 @@
  * the global keyframes media query.
  */
 
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   TEXT_SNIPPET_MAX_BYTES,
@@ -30,6 +30,7 @@ import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
+import { convertToJpeg, isHeicMime, jpegFilename } from "../lib/warp/imageConvert";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -52,6 +53,20 @@ function typeGlyph(mime: string, kind: TransferItem["kind"]): string {
 /** Aggregate size label for a manifest. */
 function totalBytes(items: { size: number }[]): number {
   return items.reduce((s, i) => s + i.size, 0);
+}
+
+/** Trigger a browser download of a blob via a transient object-URL anchor
+ *  (same small helper duplicated per-file elsewhere — useWarpTransfer.ts,
+ *  useNearbyTransfer.ts, zipDownload.ts — rather than shared). */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ----------------------------------------------------------------- thumbnail */
@@ -157,6 +172,27 @@ const ItemRow = memo(function ItemRow({
     item.status === "done" &&
     !item.savedToDisk &&
     !!item.blob;
+
+  // "Save as JPEG" (#258): converted eagerly (not on click) so the option can
+  // be offered-or-skipped correctly — createImageBitmap rejecting on this
+  // browser/file IS the "can't decode HEIC" signal, and there's no way to know
+  // that without attempting it. undefined = not attempted or not decodable
+  // (button stays hidden either way); a Blob means the button appears.
+  const [jpeg, setJpeg] = useState<Blob | undefined>(undefined);
+  const wantsJpeg = canDownload && isHeicMime(item.mime);
+  useEffect(() => {
+    if (!wantsJpeg || !item.blob) return;
+    let cancelled = false;
+    convertToJpeg(item.blob).then((blob) => {
+      if (!cancelled) setJpeg(blob);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // item.blob is stable for the lifetime of a "done" item; re-running this
+    // per progress tick would re-decode the same file repeatedly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsJpeg, item.id]);
 
   const copyText = async () => {
     if (!item.text) return;
@@ -281,6 +317,28 @@ const ItemRow = memo(function ItemRow({
               }}
             >
               Download
+            </button>
+          )}
+          {canDownload && jpeg && (
+            <button
+              type="button"
+              className="warp-cta"
+              onClick={() => saveBlob(jpeg, jpegFilename(item.name))}
+              title="The original stays available via Download"
+              style={{
+                padding: "8px 14px",
+                background: "transparent",
+                color: "var(--acc)",
+                border: "1px solid var(--acc)",
+                fontFamily: MONO,
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: ".06em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+            >
+              Save as JPEG
             </button>
           )}
           {savedToDisk && (
