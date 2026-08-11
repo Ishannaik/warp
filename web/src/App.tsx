@@ -100,7 +100,7 @@ export default function App() {
 
   return (
     <Suspense fallback={<div style={{ background: "#121110", minHeight: "100vh" }} />}>
-      <PageContent path={path} code={code} />
+      <PageContent path={path} code={code || ''} />
     </Suspense>
   );
 }

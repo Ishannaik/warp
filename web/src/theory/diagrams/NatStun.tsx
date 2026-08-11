@@ -70,7 +70,7 @@ export default function NatStun() {
         tone="amb"
         title="symmetric / CGNAT"
         verdict="hole-punch fails"
-        stunReply={reduced ? PORTS[0] : PORTS[portIdx]}
+        stunReply={reduced ? (PORTS[0] ?? '') : (PORTS[portIdx] ?? '')}
         stunNote="port changes per destination"
         ball="blocked"
       >
