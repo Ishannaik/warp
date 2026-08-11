@@ -97,6 +97,7 @@ export class SignalingRoom {
     if (msg.type === 'join') return this.handleJoin(ws, msg);
     if (msg.type === 'announce') return this.handleAnnounce(ws, msg);
     if (msg.type === 'signal') return this.handleSignal(ws, msg);
+    if (msg.type === 'retire') return this.handleRetire(ws, msg);
     return this.send(ws, { type: 'error', error: 'unknown-type', message: msg.type });
   }
 
@@ -107,22 +108,31 @@ export class SignalingRoom {
     let code = msg.room;
     if (code == null) {
       code = this.makeCode();                             // no code given => create a room
+      if (msg.oneTime) {
+        await this.state.storage.put('roomOpts:' + code, { oneTime: true, retired: false });
+      }
     } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
-    } else if (!this.roomExists(code)) {
-      // Room has no live sockets — but if it was reserved within the reclaim window
-      // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
-      // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
-      // (an alarm can be delayed/coalesced). No transfer state is restored — the
-      // client registry + resumeToken carry the file resume; the server only owes
-      // the same rendezvous code.
-      const rec = await this.state.storage.get('reclaim:' + code);
-      if (!rec || rec.expiresAt < Date.now()) {
-        return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+    } else {
+      const opts = await this.state.storage.get('roomOpts:' + code);
+      if (opts && opts.retired) {
+        return this.send(ws, { type: 'error', error: 'code-expired', message: 'This code has expired.' });
       }
-      await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
-    } else if (this.sockets(code, null).length >= MAX_PEERS) {
-      return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+      if (!this.roomExists(code)) {
+        // Room has no live sockets — but if it was reserved within the reclaim window
+        // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
+        // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
+        // (an alarm can be delayed/coalesced). No transfer state is restored — the
+        // client registry + resumeToken carry the file resume; the server only owes
+        // the same rendezvous code.
+        const rec = await this.state.storage.get('reclaim:' + code);
+        if (!rec || rec.expiresAt < Date.now()) {
+          return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+        }
+        await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
+      } else if (this.sockets(code, null).length >= MAX_PEERS) {
+        return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+      }
     }
 
     const existing = this.sockets(code, ws);              // current members, before we join
@@ -132,6 +142,16 @@ export class SignalingRoom {
     // Glare-free mesh: the new peer offers to every existing peer; they wait.
     this.send(ws, { type: 'joined', selfId: peerId, room: code, peers: existing.map((p) => p.deserializeAttachment().peerId) });
     for (const p of existing) this.send(p, { type: 'peer-joined', peerId });
+  }
+
+  async handleRetire(ws, msg) {
+    const a = ws.deserializeAttachment();
+    if (!a || a.room == null) return;
+    const opts = await this.state.storage.get('roomOpts:' + a.room);
+    if (opts && opts.oneTime) {
+      opts.retired = true;
+      await this.state.storage.put('roomOpts:' + a.room, opts);
+    }
   }
 
   handleAnnounce(ws, msg) {

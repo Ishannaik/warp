@@ -47,6 +47,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [oneTime, setOneTime] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -106,8 +107,21 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     if (!files.length) return;
     // Open the channel ONLY. The queue stays editable while pairing; nothing is
     // offered until the user hits "Send" in the session (ShareX stay-in-control).
-    wrap.createRoom();
+    wrap.createRoom(oneTime);
   };
+
+  // Monitor items to retire the room after the first batch finishes
+  useEffect(() => {
+    if (!oneTime || !wrap.code) return;
+    // We only retire if we are the sender and the first batch is fully done
+    const filesSent = wrap.items.filter((i) => i.kind === "file" && i.direction === "send");
+    if (filesSent.length > 0) {
+      const allFinished = filesSent.every((i) => i.status === "done" || i.status === "error" || i.status === "declined" || i.status === "cancelled");
+      if (allFinished) {
+        wrap.retireRoom();
+      }
+    }
+  }, [wrap.items, oneTime, wrap.code, wrap.retireRoom]);
 
   // Header label for the single-device (1-to-1) case + a sensible fallback. In a
   // mesh room SessionView renders the per-device chips from `connections` itself.
@@ -262,6 +276,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               queue={queue}
               fileCount={fileCount}
               totalBytes={totalBytes}
+              oneTime={oneTime}
+              onOneTimeChange={setOneTime}
               onBrowse={browse}
               onDropFiles={addFiles}
               onRemove={removeFile}
@@ -505,6 +521,8 @@ function SelectStep({
   queue,
   fileCount,
   totalBytes,
+  oneTime,
+  onOneTimeChange,
   onBrowse,
   onDropFiles,
   onRemove,
@@ -515,6 +533,8 @@ function SelectStep({
   queue: QueuedFile[];
   fileCount: string;
   totalBytes: number;
+  oneTime: boolean;
+  onOneTimeChange: (val: boolean) => void;
   onBrowse: () => void;
   onDropFiles: (l: FileList) => void;
   onRemove: (id: string) => void;
@@ -607,28 +627,39 @@ function SelectStep({
         >
           Files stay on your device until a peer accepts.
         </span>
-        <button
-          type="button"
-          className={files.length ? "warp-cta" : undefined}
-          onClick={onOpenChannel}
-          disabled={!files.length}
-          style={{
-            display: isMobile ? "block" : "inline-block",
-            padding: "15px 26px",
-            background: files.length ? "var(--acc)" : "rgba(239,233,218,.12)",
-            border: 0,
-            color: "#fff",
-            fontFamily: MONO,
-            fontSize: "12.5px",
-            fontWeight: 600,
-            letterSpacing: ".07em",
-            textTransform: "uppercase",
-            textAlign: isMobile ? "center" : undefined,
-            cursor: files.length ? "pointer" : "not-allowed",
-          }}
-        >
-          Open secure channel &nbsp;→
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px", alignItems: isMobile ? "stretch" : "flex-end" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontFamily: MONO, fontSize: "11.5px", color: "#efe9da" }}>
+            <input
+              type="checkbox"
+              checked={oneTime}
+              onChange={(e) => onOneTimeChange(e.target.checked)}
+              style={{ cursor: "pointer" }}
+            />
+            Retire this code after the first transfer
+          </label>
+          <button
+            type="button"
+            className={files.length ? "warp-cta" : undefined}
+            onClick={onOpenChannel}
+            disabled={!files.length}
+            style={{
+              display: isMobile ? "block" : "inline-block",
+              padding: "15px 26px",
+              background: files.length ? "var(--acc)" : "rgba(239,233,218,.12)",
+              border: 0,
+              color: "#fff",
+              fontFamily: MONO,
+              fontSize: "12.5px",
+              fontWeight: 600,
+              letterSpacing: ".07em",
+              textTransform: "uppercase",
+              textAlign: isMobile ? "center" : undefined,
+              cursor: files.length ? "pointer" : "not-allowed",
+            }}
+          >
+            Open secure channel &nbsp;→
+          </button>
+        </div>
       </div>
     </div>
   );
