@@ -59,6 +59,8 @@ async function run() {
 
   // 2. B joins it -> B sees A in peers; A is told B joined.
   const b = await connect(WS + "?room=" + aJoined.room);
+  b.addEventListener('message', e => console.log('B got:', e.data));
+  a.addEventListener('message', e => console.log('A got:', e.data));
   sendj(b, { type: 'join', room: aJoined.room });
   const [bJoined, aPeerJoined] = await Promise.all([
     next(b, (m) => m.type === 'joined'),

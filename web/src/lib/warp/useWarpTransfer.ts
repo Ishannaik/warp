@@ -32,7 +32,6 @@ import {
   WarpPeer,
   type AcceptTarget,
   type FsDirHandle,
-  type FsFileHandle,
   type PeerErrorKind,
   type ReceiveHost,
 } from "./peer";
@@ -82,13 +81,7 @@ interface RxEntry {
  * use. Their return types are structurally compatible with peer.ts's FsFileHandle
  * / FsDirHandle, so the handles pass straight through as an AcceptTarget.
  */
-interface ShowSaveFilePickerOptions {
-  suggestedName?: string;
-}
-interface WindowWithFsPickers {
-  showSaveFilePicker?: (opts?: ShowSaveFilePickerOptions) => Promise<FsFileHandle>;
-  showDirectoryPicker?: () => Promise<FsDirHandle>;
-}
+
 
 export type WarpMode = "send" | "receive";
 
