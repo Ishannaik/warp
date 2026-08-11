@@ -32,7 +32,6 @@ import {
   WarpPeer,
   type AcceptTarget,
   type FsDirHandle,
-  type FsFileHandle,
   type PeerErrorKind,
   type ReceiveHost,
 } from "./peer";
@@ -82,13 +81,7 @@ interface RxEntry {
  * use. Their return types are structurally compatible with peer.ts's FsFileHandle
  * / FsDirHandle, so the handles pass straight through as an AcceptTarget.
  */
-interface ShowSaveFilePickerOptions {
-  suggestedName?: string;
-}
-interface WindowWithFsPickers {
-  showSaveFilePicker?: (opts?: ShowSaveFilePickerOptions) => Promise<FsFileHandle>;
-  showDirectoryPicker?: () => Promise<FsDirHandle>;
-}
+
 
 export type WarpMode = "send" | "receive";
 
@@ -845,14 +838,14 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const total = off.items.reduce((s, it) => s + it.size, 0);
     const biggest = off.items.reduce((m, it) => Math.max(m, it.size), 0);
     const large = isLargeBatch(total, biggest);
-    const fs = window as unknown as WindowWithFsPickers;
+    const fs = detectFsAccessSupport(window);
     // Single source of truth for the disk-vs-memory decision (#54): a multi-file
     // batch needs the directory picker, a single file the save-file picker; a
     // browser without the matching picker falls through to "memory".
     const strategy = chooseReceiveStrategy({
       itemCount: off.items.length,
       large,
-      fs: detectFsAccessSupport(window),
+      fs,
     });
 
     let target: AcceptTarget | undefined;

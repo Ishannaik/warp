@@ -13,8 +13,8 @@ const WS = REMOTE ?? `ws://localhost:${PORT}`;
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function connect() {
-  const ws = new WebSocket(WS);
+function connect(url = WS + "?create=1") {
+  const ws = new WebSocket(url);
   ws.queue = [];
   ws.waiters = [];
   ws.addEventListener('message', (ev) => {
@@ -58,7 +58,9 @@ async function run() {
   assert.deepEqual(aJoined.peers, [], 'first peer sees an empty room');
 
   // 2. B joins it -> B sees A in peers; A is told B joined.
-  const b = await connect();
+  const b = await connect(WS + "?room=" + aJoined.room);
+  b.addEventListener('message', e => console.log('B got:', e.data));
+  a.addEventListener('message', e => console.log('A got:', e.data));
   sendj(b, { type: 'join', room: aJoined.room });
   const [bJoined, aPeerJoined] = await Promise.all([
     next(b, (m) => m.type === 'joined'),
@@ -88,7 +90,7 @@ async function run() {
   assert.equal(aPeerLeft.peerId, bJoined.selfId, 'A notified of B leaving');
 
   // 6. Error cases.
-  const d = await connect();
+  const d = await connect(WS + "?room=abc");
   sendj(d, { type: 'join', room: 'abc' });
   assert.equal((await next(d, (m) => m.type === 'error')).error, 'bad-room', 'rejects bad format');
   sendj(d, { type: 'join', room: 'ZZZZZZ' });
@@ -100,13 +102,13 @@ async function run() {
   const r1 = await connect();
   sendj(r1, { type: 'join' });
   const reclaimCode = (await next(r1, (m) => m.type === 'joined')).room;
-  const r2 = await connect();
+  const r2 = await connect(WS + "?room=" + reclaimCode);
   sendj(r2, { type: 'join', room: reclaimCode });
   await next(r2, (m) => m.type === 'joined');
   r1.close(); // one leaves — room still has r2, so NOT reserved yet
   r2.close(); // last one out — now the code is reserved
   await delay(500); // let the close handlers persist the reclaim record
-  const r3 = await connect();
+  const r3 = await connect(WS + "?room=" + reclaimCode);
   sendj(r3, { type: 'join', room: reclaimCode });
   const r3j = await next(r3, (m) => m.type === 'joined');
   assert.equal(r3j.room, reclaimCode, 'a both-sides drop can rejoin the SAME code within the reclaim window');
@@ -119,7 +121,7 @@ async function run() {
   const e = await connect();
   sendj(e, { type: 'join' });
   const eJoined = await next(e, (m) => m.type === 'joined');
-  const f = await connect();
+  const f = await connect(WS + "?room=" + eJoined.room);
   sendj(f, { type: 'join', room: eJoined.room });
   const fJoined = await next(f, (m) => m.type === 'joined');
   await next(e, (m) => m.type === 'peer-joined');
@@ -142,7 +144,7 @@ async function run() {
   const s1 = await connect();
   sendj(s1, { type: 'join' });
   const s1j = await next(s1, (m) => m.type === 'joined');
-  const s2 = await connect();
+  const s2 = await connect(WS + "?room=" + s1j.room);
   sendj(s2, { type: 'join', room: s1j.room });
   const s2j = await next(s2, (m) => m.type === 'joined');
   await next(s1, (m) => m.type === 'peer-joined');

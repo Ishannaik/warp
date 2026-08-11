@@ -57,6 +57,16 @@ jobs:
       # guard the trickiest code (resume, backpressure, salvage-on-reconnect).
       # CONTRIBUTING promises them; this step makes the promise enforceable (#23).
       - run: pnpm --filter @warp/web check:engine
+      # Lighthouse CI: Generous initial thresholds (80) to avoid fail-on-noise in shared CI runners.
+      # These act as a budget, not a bar, and will be tightened as code-splitting/caching work lands.
+      # temporaryPublicStorage + uploadArtifacts ensures developers see actionable metric/route summaries, not just red Xs.
+      - name: Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v12
+        continue-on-error: true
+        with:
+          configPath: './web/lighthouserc.json'
+          uploadArtifacts: true
+          temporaryPublicStorage: true
 
   server:
     needs: changes

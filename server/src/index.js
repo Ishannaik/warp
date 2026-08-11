@@ -15,13 +15,49 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
+
+    const origin = request.headers.get('Origin');
+    const allowedOrigins = [
+      'https://warp.ishannaik.com',
+      'https://warp.pixalabs.net',
+      'https://wrap-3qq.pages.dev'
+    ];
+    const customOrigins = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+    if (origin) {
+      const isLocalhost = origin === 'http://localhost' || origin.startsWith('http://localhost:');
+      if (!allowedOrigins.includes(origin) && !customOrigins.includes(origin) && !isLocalhost) {
+        return new Response('Forbidden', { status: 403 });
+      }
+    }
+
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('warp signaling server\n', { headers: { 'content-type': 'text/plain' } });
     }
-    // One Durable Object holds all rooms. Plenty for a hobby signaling server;
-    // shard by room (idFromName(roomCode)) later if you ever outgrow it.
-    const id = env.SIGNALING.idFromName('global');
-    return env.SIGNALING.get(id).fetch(request);
+
+    let ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    if (ip.includes(':')) ip = ip.split(':').slice(0, 4).join(':');
+
+    let id;
+    if (url.searchParams.has('nearby')) {
+      id = env.SIGNALING.idFromName('nearby-' + ip);
+    } else {
+      let room = url.searchParams.get('room');
+      if (!room) {
+        // Generate a random room code.
+        const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        const bytes = crypto.getRandomValues(new Uint8Array(6));
+        room = '';
+        for (let i = 0; i < 6; i++) room += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+      }
+      id = env.SIGNALING.idFromName('room-' + room);
+      // Pass the room code to the DO so it knows its room
+      url.searchParams.set('room', room);
+    }
+    
+    // Forward the modified URL with searchParams to the DO
+    const doReq = new Request(url, request);
+    return env.SIGNALING.get(id).fetch(doReq);
   },
 };
 
@@ -31,6 +67,7 @@ export class SignalingRoom {
   }
 
   async fetch(request) {
+    const url = new URL(request.url);
     const { 0: client, 1: server } = new WebSocketPair();
     this.state.acceptWebSocket(server);                   // hibernation-enabled
     // Stamp the client's public IP so LAN auto-discovery can group same-network peers.
@@ -40,7 +77,11 @@ export class SignalingRoom {
     // OWN full IPv6, so grouping by the whole address would never match peers — the /64
     // is the shared-network unit (mirrors PairDrop's IPV6_LOCALIZE=4).
     if (ip.includes(':')) ip = ip.split(':').slice(0, 4).join(':');
-    server.serializeAttachment({ ip });
+    
+    let intent = url.searchParams.has('nearby') ? 'nearby' : 'room';
+    let urlRoom = url.searchParams.get('room');
+
+    server.serializeAttachment({ ip, intent, urlRoom });
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -60,15 +101,7 @@ export class SignalingRoom {
     });
   }
 
-  makeCode() {
-    let code;
-    do {
-      const bytes = crypto.getRandomValues(new Uint8Array(CODE_LEN));
-      code = '';
-      for (let i = 0; i < CODE_LEN; i++) code += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
-    } while (this.roomExists(code));
-    return code;
-  }
+  // makeCode removed as the Worker now handles code generation
 
   send(ws, obj) {
     try { ws.send(JSON.stringify(obj)); } catch { /* socket gone */ }
@@ -102,11 +135,11 @@ export class SignalingRoom {
 
   async handleJoin(ws, msg) {
     const prev = ws.deserializeAttachment();
-    if (prev && prev.room != null) this.notifyLeft(ws, prev); // one room per socket; ignore an ip-only attachment
+    if (prev && prev.room != null && prev.intent !== 'nearby') this.notifyLeft(ws, prev); // one room per socket; ignore an ip-only attachment
 
     let code = msg.room;
     if (code == null) {
-      code = this.makeCode();                             // no code given => create a room
+      code = prev.urlRoom;                             // code was assigned by the Worker
     } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
     } else if (!this.roomExists(code)) {

@@ -33,12 +33,23 @@
  */
 export const LARGE_THRESHOLD = 256 * 1024 * 1024;
 
+import { showSaveFilePicker as ponyfillShowSaveFilePicker } from "native-file-system-adapter";
+import type { FsDirHandle, FsFileHandle } from "./peer";
+
+export interface ShowSaveFilePickerOptions {
+  suggestedName?: string;
+}
+
 /** What the File System Access API can do on this browser (both false if absent). */
 export interface FsAccessSupport {
   /** `showSaveFilePicker` exists — can stream a single file to a chosen path. */
   canSaveFile: boolean;
   /** `showDirectoryPicker` exists — can stream a multi-file batch into a folder. */
   canPickDirectory: boolean;
+  /** The picker function to use for a single file (native or ponyfill). */
+  showSaveFilePicker?: (opts?: ShowSaveFilePickerOptions) => Promise<FsFileHandle>;
+  /** The picker function to use for a directory (native only). */
+  showDirectoryPicker?: () => Promise<FsDirHandle>;
 }
 
 /**
@@ -47,8 +58,8 @@ export interface FsAccessSupport {
  * opaque `win` — callers pass `window`, the check harness passes a fake.
  */
 interface FsPickerWindow {
-  showSaveFilePicker?: unknown;
-  showDirectoryPicker?: unknown;
+  showSaveFilePicker?: (opts?: ShowSaveFilePickerOptions) => Promise<FsFileHandle>;
+  showDirectoryPicker?: () => Promise<FsDirHandle>;
 }
 
 /**
@@ -63,9 +74,15 @@ export function detectFsAccessSupport(win?: unknown): FsAccessSupport {
       : typeof window !== "undefined"
         ? (window as unknown as FsPickerWindow)
         : undefined;
+
+  const nativeSave = typeof w?.showSaveFilePicker === "function";
+  const nativeDir = typeof w?.showDirectoryPicker === "function";
+
   return {
-    canSaveFile: typeof w?.showSaveFilePicker === "function",
-    canPickDirectory: typeof w?.showDirectoryPicker === "function",
+    canSaveFile: true, // Ponyfill covers save file everywhere
+    canPickDirectory: nativeDir, // Ponyfills do not support directory-write, so we only allow native
+    showSaveFilePicker: nativeSave && w && w.showSaveFilePicker ? w.showSaveFilePicker.bind(w) : ponyfillShowSaveFilePicker as (opts?: ShowSaveFilePickerOptions) => Promise<FsFileHandle>,
+    showDirectoryPicker: nativeDir && w && w.showDirectoryPicker ? w.showDirectoryPicker.bind(w) : undefined,
   };
 }
 
