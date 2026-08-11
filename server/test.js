@@ -174,7 +174,27 @@ async function run() {
   const nulled = await next(s1, (m) => m.type === 'signal');
   assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
 
-  // 10. Debug route returns aggregate counters
+  // 10. Max concurrent rooms limit (#100)
+  // Tested locally by injecting MAX_ROOMS=15 via wrangler
+  if (!REMOTE) {
+    const extra = [];
+    let hitLimit = false;
+    // We already have ~5 rooms live from previous test steps
+    for (let i = 0; i < 20; i++) {
+      const w = await connect();
+      extra.push(w);
+      sendj(w, { type: 'join' });
+      const m = await next(w, (msg) => msg.type === 'joined' || msg.type === 'error');
+      if (m.type === 'error' && m.error === 'server-full') {
+        hitLimit = true;
+        break;
+      }
+    }
+    assert.equal(hitLimit, true, 'server enforces max concurrent rooms limit');
+    for (const w of extra) w.close();
+  }
+
+  // 11. Debug route returns aggregate counters
   const debugRes = await fetch(`${HTTP}/debug`);
   const debugJson = await debugRes.json();
   assert.equal(typeof debugJson.liveSockets, 'number', 'has liveSockets');
@@ -186,7 +206,7 @@ async function run() {
 
 // Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.
 // `pnpm exec` resolves the workspace's wrangler; shell:true lets Windows find it.
-const srv = REMOTE ? null : spawn('pnpm', ['exec', 'wrangler', 'dev', '--port', String(PORT)], {
+const srv = REMOTE ? null : spawn('pnpm', ['exec', 'wrangler', 'dev', '--port', String(PORT), '--var', 'MAX_ROOMS:15'], {
   shell: true,
   stdio: 'inherit',
 });

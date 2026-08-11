@@ -70,4 +70,5 @@ jobs:
           node-version-file: '.nvmrc'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @warp/server typecheck
       - run: pnpm --filter @warp/server test

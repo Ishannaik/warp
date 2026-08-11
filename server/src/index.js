@@ -44,6 +44,7 @@ const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-g
 /**
  * @typedef {Object} Env
  * @property {DurableObjectNamespace} SIGNALING
+ * @property {string} [DEBUG_SECRET]
  */
 
 export default {
@@ -79,11 +80,9 @@ export default {
  * @implements {DurableObject}
  */
 export class SignalingRoom {
-  /**
-   * @param {DurableObjectState} state
-   */
-  constructor(state) {
+  constructor(state, env) {
     this.state = state;
+    this.env = env;
   }
 
   async fetch(request) {
@@ -143,6 +142,19 @@ export class SignalingRoom {
     });
   }
 
+  countRooms() {
+    const rooms = new Set();
+    for (const ws of this.state.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (a && a.room != null) rooms.add(a.room);
+    }
+    return rooms.size;
+  }
+
+  get maxRooms() {
+    return this.env && this.env.MAX_ROOMS ? parseInt(this.env.MAX_ROOMS, 10) : 10000;
+  }
+
   /**
    * @returns {string}
    */
@@ -183,7 +195,7 @@ export class SignalingRoom {
       return this.send(ws, { type: 'error', error: 'message-too-large', message: `Message exceeds ${MAX_SIGNAL_BYTES} bytes.` });
     }
     let msg;
-    try { msg = JSON.parse(raw); }
+    try { msg = JSON.parse(/** @type {string} */ (raw)); }
     catch { return this.send(ws, { type: 'error', error: 'bad-message', message: 'Expected JSON.' }); }
     if (!msg || typeof msg.type !== 'string') return this.send(ws, { type: 'error', error: 'bad-message' });
 
@@ -205,6 +217,9 @@ export class SignalingRoom {
 
     let code = msg.room;
     if (code == null) {
+      if (this.countRooms() >= this.maxRooms) {
+        return this.send(ws, { type: 'error', error: 'server-full', message: 'The server is currently at capacity for concurrent rooms.' });
+      }
       code = this.makeCode();                             // no code given => create a room
     } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
@@ -215,6 +230,7 @@ export class SignalingRoom {
       // (an alarm can be delayed/coalesced). No transfer state is restored — the
       // client registry + resumeToken carry the file resume; the server only owes
       // the same rendezvous code.
+      /** @type {any} */
       const rec = await this.state.storage.get('reclaim:' + code);
       if (!rec || rec.expiresAt < Date.now()) {
         return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
@@ -348,7 +364,7 @@ export class SignalingRoom {
     const now = Date.now();
     const recs = await this.state.storage.list({ prefix: 'reclaim:' });
     for (const [k, v] of recs) {
-      if (!v || v.expiresAt <= now) await this.state.storage.delete(k);
+      if (!v || /** @type {any} */ (v).expiresAt <= now) await this.state.storage.delete(k);
     }
   }
 
