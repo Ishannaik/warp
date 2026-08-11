@@ -174,7 +174,32 @@ async function run() {
   const nulled = await next(s1, (m) => m.type === 'signal');
   assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
 
-  for (const ws of [a, c, d, s1, s2]) ws.close();
+  // 10. One-time rooms (#136): if a room is created with oneTime: true and later retired,
+  //     new joins get code-expired, but existing peers can keep communicating.
+  const o1 = await connect();
+  sendj(o1, { type: 'join', oneTime: true });
+  const o1j = await next(o1, (m) => m.type === 'joined');
+
+  const o2 = await connect();
+  sendj(o2, { type: 'join', room: o1j.room });
+  const o2j = await next(o2, (m) => m.type === 'joined');
+
+  // Retire the room
+  sendj(o1, { type: 'retire' });
+  await delay(300);
+
+  // Third peer tries to join
+  const o3 = await connect();
+  sendj(o3, { type: 'join', room: o1j.room });
+  const errO3 = await next(o3, (m) => m.type === 'error');
+  assert.equal(errO3.error, 'code-expired', 'new joiner gets code-expired after room is retired');
+
+  // Existing peers can still signal
+  sendj(o2, { type: 'signal', to: o1j.selfId, data: { sdp: 'after-retire' } });
+  const sigAfter = await next(o1, (m) => m.type === 'signal');
+  assert.deepEqual(sigAfter.data, { sdp: 'after-retire' }, 'existing peers can still signal after retirement');
+
+  for (const ws of [a, c, d, s1, s2, o1, o2, o3]) ws.close();
 }
 
 // Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.

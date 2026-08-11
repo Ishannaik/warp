@@ -88,8 +88,8 @@ export class SignalingClient {
   private closed = false;
   private keepalive: ReturnType<typeof setInterval> | null = null;
 
-  /** The room `connect()` was asked for (undefined => create). Used to rejoin. */
   private joinRoom: string | undefined;
+  private joinOneTime: boolean | undefined;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -111,10 +111,11 @@ export class SignalingClient {
   }
 
   /** Open the socket and send the initial join frame (room omitted => create). */
-  connect(room?: string): void {
+  connect(room?: string, oneTime?: boolean): void {
     if (this.ws) return;
     this.closed = false;
     this.joinRoom = room;
+    this.joinOneTime = oneTime;
     this.installWakeListeners();
     this.openSocket();
   }
@@ -135,7 +136,7 @@ export class SignalingClient {
 
     ws.addEventListener("open", () => {
       const room = this.room ?? this.joinRoom;
-      const join = room ? { type: "join", room } : { type: "join" };
+      const join = room ? { type: "join", room } : { type: "join", oneTime: this.joinOneTime };
       this.rawSend(JSON.stringify(join));
       // Flush anything queued while connecting.
       for (const frame of this.pending) ws.send(frame);
@@ -261,6 +262,11 @@ export class SignalingClient {
   /** Relay an opaque handshake payload to a specific peer. */
   signal(to: string, data: SignalData): void {
     this.send(JSON.stringify({ type: "signal", to, data }));
+  }
+
+  /** Retire a one-time room after the first transfer completes. */
+  retireRoom(): void {
+    this.send(JSON.stringify({ type: "retire" }));
   }
 
   private send(frame: string): void {
