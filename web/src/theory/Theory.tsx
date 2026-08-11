@@ -435,6 +435,7 @@ function FlowDiagram() {
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduce) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setDirect(true);
       return;
     }

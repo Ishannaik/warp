@@ -23,6 +23,7 @@ function useCountUp(
   useEffect(() => {
     if (!start) return;
     if (reducedMotion) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setValue(target);
       return;
     }

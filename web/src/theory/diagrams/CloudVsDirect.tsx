@@ -56,6 +56,7 @@ export default function CloudVsDirect() {
 
   useEffect(() => {
     if (reduced) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setPhase(5); // resting state: both paths shown
       return;
     }

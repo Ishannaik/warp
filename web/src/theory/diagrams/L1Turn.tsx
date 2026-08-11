@@ -29,6 +29,67 @@ import {
 
 const TOTAL = 4; /* GB transferred */
 
+/* a vertical leg of the cloud path with a travelling token */
+function Leg({
+  active,
+  done,
+  dir,
+  isMobile,
+}: {
+  active: boolean;
+  done: boolean;
+  dir: "up" | "down";
+  isMobile: boolean;
+}) {
+  const lit = active || done;
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: 14,
+        height: isMobile ? 52 : 64,
+      }}
+    >
+      <div
+        className={active ? "thy-anim" : undefined}
+        style={{
+          position: "absolute",
+          inset: 0,
+          margin: "0 auto",
+          width: 12,
+          background: lit
+            ? "repeating-linear-gradient(180deg,rgba(239,106,61,.85) 0 6px,transparent 6px 16px)"
+            : "repeating-linear-gradient(180deg,rgba(239,233,218,.18) 0 4px,transparent 4px 12px)",
+          backgroundSize: "100% 22px",
+          animation: active
+            ? `thyFlow 0.7s linear infinite ${dir === "down" ? "reverse" : ""}`
+            : undefined,
+          opacity: lit ? 1 : 0.5,
+          WebkitMaskImage:
+            "linear-gradient(180deg,transparent,#000 16%,#000 84%,transparent)",
+          maskImage:
+            "linear-gradient(180deg,transparent,#000 16%,#000 84%,transparent)",
+        }}
+      />
+      {active ? (
+        <span
+          className="thy-anim"
+          style={{
+            position: "absolute",
+            left: "50%",
+            width: 13,
+            height: 17,
+            marginLeft: -6.5,
+            border: `1px solid ${AMB}`,
+            background: "rgba(239,106,61,.3)",
+            animation: `${dir === "up" ? "l1up" : "l1down"} 2.2s linear infinite`,
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export default function L1Turn() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref);
@@ -45,6 +106,7 @@ export default function L1Turn() {
 
   useEffect(() => {
     if (!animate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setIngress(TOTAL);
       setEgress(TOTAL);
       setPhase("rest");
@@ -97,64 +159,7 @@ export default function L1Turn() {
   const billed = ingress + egress;
   const fmt = (n: number) => `${n.toFixed(2)} GB`;
 
-  /* a vertical leg of the cloud path with a travelling token */
-  function Leg({
-    active,
-    done,
-    dir,
-  }: {
-    active: boolean;
-    done: boolean;
-    dir: "up" | "down";
-  }) {
-    const lit = active || done;
-    return (
-      <div
-        style={{
-          position: "relative",
-          width: 14,
-          height: isMobile ? 52 : 64,
-        }}
-      >
-        <div
-          className={active ? "thy-anim" : undefined}
-          style={{
-            position: "absolute",
-            inset: 0,
-            margin: "0 auto",
-            width: 12,
-            background: lit
-              ? "repeating-linear-gradient(180deg,rgba(239,106,61,.85) 0 6px,transparent 6px 16px)"
-              : "repeating-linear-gradient(180deg,rgba(239,233,218,.18) 0 4px,transparent 4px 12px)",
-            backgroundSize: "100% 22px",
-            animation: active
-              ? `thyFlow 0.7s linear infinite ${dir === "down" ? "reverse" : ""}`
-              : undefined,
-            opacity: lit ? 1 : 0.5,
-            WebkitMaskImage:
-              "linear-gradient(180deg,transparent,#000 16%,#000 84%,transparent)",
-            maskImage:
-              "linear-gradient(180deg,transparent,#000 16%,#000 84%,transparent)",
-          }}
-        />
-        {active ? (
-          <span
-            className="thy-anim"
-            style={{
-              position: "absolute",
-              left: "50%",
-              width: 13,
-              height: 17,
-              marginLeft: -6.5,
-              border: `1px solid ${AMB}`,
-              background: "rgba(239,106,61,.3)",
-              animation: `${dir === "up" ? "l1up" : "l1down"} 2.2s linear infinite`,
-            }}
-          />
-        ) : null}
-      </div>
-    );
-  }
+
 
   return (
     <DiagramFrame caption="L1 · TURN RELAY — EVERY BYTE, TWICE" tone="amb">
@@ -179,7 +184,7 @@ export default function L1Turn() {
           </div>
 
           {/* up-leg */}
-          <Leg active={phase === "in"} done={ingress >= TOTAL} dir="up" />
+          <Leg active={phase === "in"} done={ingress >= TOTAL} dir="up" isMobile={isMobile} />
 
           {/* TURN relay box with the doubling counter */}
           <div
@@ -246,7 +251,7 @@ export default function L1Turn() {
           </div>
 
           {/* down-leg */}
-          <Leg active={phase === "out"} done={egress >= TOTAL} dir="down" />
+          <Leg active={phase === "out"} done={egress >= TOTAL} dir="down" isMobile={isMobile} />
 
           {/* PEER B */}
           <Endpoint

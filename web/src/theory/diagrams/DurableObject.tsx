@@ -52,6 +52,7 @@ export default function DurableObject() {
 
   useEffect(() => {
     if (!animate) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
     setIdx(0);
     let i = 0;
     let timer: number;

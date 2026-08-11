@@ -703,6 +703,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     },
     [addInitiator, addResponder, refreshConnections, fail, mode, connectedPeers],
   );
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   connectRef.current = connect;
 
   const createRoom = useCallback(() => {
@@ -787,6 +788,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     },
     [refreshConnections, connectedPeers, addInitiator],
   );
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   salvageRef.current = salvagePeer;
 
   const sendFiles = useCallback(
@@ -1088,6 +1090,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
 
   // resume-requested from the other side: clear our guard, and re-offer if we
   // hold the File. Do NOT echo requestResume — that would loop.
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   resumeRef.current = (id: string) => {
     const key = rxIdKeyRef.current.get(id);
     if (key) pausedKeysRef.current.delete(key);
@@ -1233,6 +1236,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     );
     if (!active.length) {
       speedRef.current.reset();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setStats((s) =>
         s.active ? { active: false, speedBps: 0, etaSeconds: null, remainingBytes: 0 } : s,
       );
@@ -1338,6 +1342,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       if (!cancelled) connect(joinCode);
     });
     return () => {
+      const peers = peersRef.current;
       cancelled = true;
       for (const p of peersRef.current.values()) p.close();
       peersRef.current.clear();

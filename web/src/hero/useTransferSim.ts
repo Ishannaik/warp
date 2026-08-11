@@ -138,10 +138,12 @@ export function useTransferSim(): TransferSim {
   );
   const [throughput, setThroughput] = useState<string>("2.41 GB/s");
   const rowsRef = useRef(rows);
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   rowsRef.current = rows;
 
   useEffect(() => {
     if (reduced) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setRows(cloneRows(SETTLED_ROWS));
       setThroughput("2.41 GB/s");
       return;

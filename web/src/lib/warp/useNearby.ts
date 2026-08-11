@@ -203,6 +203,7 @@ export function useNearby(): UseNearby {
   const incomingListeners = useRef<Set<(conn: IncomingConnection) => void>>(new Set());
   /** Always-current name for re-announce / open handlers without re-binding. */
   const nameRef = useRef<string>(deviceName);
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   nameRef.current = deviceName;
 
   /** Raw-send an arbitrary frame on the live socket (announce isn't modeled). */

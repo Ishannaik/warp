@@ -51,7 +51,9 @@ export default function Chunking() {
   // Refs hold live values so the interval closure stays correct without resets.
   const fillRef = useRef(fill);
   const phaseRef = useRef<Phase>(phase);
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   fillRef.current = fill;
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   phaseRef.current = phase;
 
   useEffect(() => {
