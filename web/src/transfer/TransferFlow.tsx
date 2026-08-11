@@ -303,8 +303,8 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 onRemovePending={mode === "send" ? removeFile : undefined}
                 onSendPending={
                   mode === "send"
-                    ? () => {
-                        void wrap.sendFiles(queue.map((q) => q.file));
+                    ? (targetPeerIds?: string[]) => {
+                        void wrap.sendFiles(queue.map((q) => q.file), targetPeerIds);
                         setQueue([]);
                       }
                     : undefined

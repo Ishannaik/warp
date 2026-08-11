@@ -470,30 +470,40 @@ function Composer({
   onAddFiles,
   onRemovePending,
   onSendPending,
-  deviceCount = 1,
+  connections,
 }: {
-  onSendFiles: (files: File[]) => void;
-  onSendText: (text: string) => void;
+  onSendFiles: (files: File[], targetPeerIds?: string[]) => void;
+  onSendText: (text: string, targetPeerIds?: string[]) => void;
   isMobile: boolean;
   pending?: PendingFile[];
   onAddFiles?: (files: File[]) => void;
   onRemovePending?: (id: string) => void;
-  onSendPending?: () => void;
+  onSendPending?: (targetPeerIds?: string[]) => void;
   /** Connected devices a send fans out to (>1 in a mesh room). */
-  deviceCount?: number;
+  connections?: Connection[];
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
+
+  const multiDevice = !!connections && connections.length > 1;
+  const connectedCount = connections ? connections.filter((c) => c.connected).length : 1;
+  const targetPeerIds = multiDevice
+    ? connections!.map((c) => c.peerId).filter((id) => !deselected.has(id))
+    : undefined;
+  const activeCount = targetPeerIds ? targetPeerIds.length : connectedCount;
 
   // When staging callbacks are provided (TransferFlow), file pickers ADD to the
   // editable pending queue instead of offering immediately. The nearby flow
   // passes none, so picks fall through to the original direct-offer behavior.
   const staging = !!onAddFiles;
-  const acceptFiles = staging ? onAddFiles! : onSendFiles;
+  const acceptFiles = staging ? onAddFiles! : (files: File[]) => {
+    onSendFiles(files, targetPeerIds);
+  };
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
-  const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
+  const fanout = multiDevice ? ` to ${activeCount} of ${connectedCount} devices` : "";
   const trimmedText = text.trim();
   const frameBytes = textSnippetFrameBytes(trimmedText);
   const textTooLarge = frameBytes > TEXT_SNIPPET_MAX_BYTES;
@@ -504,7 +514,7 @@ function Composer({
 
   const submitText = () => {
     if (!canSendText) return;
-    onSendText(trimmedText);
+    onSendText(trimmedText, targetPeerIds);
     setText("");
   };
 
@@ -525,6 +535,54 @@ function Composer({
       </div>
 
       <div style={{ padding: isMobile ? "14px" : "16px 15px", display: "flex", flexDirection: "column", gap: "14px" }}>
+        {multiDevice && connections && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            {connections.map((c) => {
+              const selected = !deselected.has(c.peerId);
+              return (
+                <button
+                  key={c.peerId}
+                  type="button"
+                  onClick={() => {
+                    setDeselected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(c.peerId)) next.delete(c.peerId);
+                      else next.add(c.peerId);
+                      return next;
+                    });
+                  }}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: isMobile ? "6px 12px" : "4px 10px",
+                    minHeight: isMobile ? "44px" : "auto",
+                    border: `1px solid ${selected ? "rgba(var(--acc-rgb),.5)" : HAIRLINE}`,
+                    background: selected ? "rgba(var(--acc-rgb),.08)" : "transparent",
+                    fontFamily: MONO,
+                    fontSize: "11px",
+                    color: selected ? "#efe9da" : "#6f6a5d",
+                    cursor: "pointer",
+                    borderRadius: "2px",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      flexShrink: 0,
+                      borderRadius: "50%",
+                      background: selected ? "var(--acc)" : "transparent",
+                      border: selected ? "none" : `1px solid ${HAIRLINE}`,
+                    }}
+                  />
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* file pickers */}
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: "10px" }}>
           <button type="button" className="warp-ghost" onClick={pickFiles} style={composerBtn(isMobile)}>
@@ -540,7 +598,7 @@ function Composer({
           <PendingTray
             pending={pendingList}
             onRemovePending={onRemovePending}
-            onSendPending={onSendPending}
+            onSendPending={() => onSendPending(targetPeerIds)}
             isMobile={isMobile}
             fanout={fanout}
           />
@@ -1315,8 +1373,8 @@ export function SessionView({
 }: {
   peerLabel: string;
   items: TransferItem[];
-  onSendFiles: (files: File[]) => void;
-  onSendText: (text: string) => void;
+  onSendFiles: (files: File[], targetPeerIds?: string[]) => void;
+  onSendText: (text: string, targetPeerIds?: string[]) => void;
   onCancel: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
@@ -1333,7 +1391,7 @@ export function SessionView({
   /** Remove one staged file from the pending queue. */
   onRemovePending?: (id: string) => void;
   /** Offer every staged file now (receiver then sees the accept modal). */
-  onSendPending?: () => void;
+  onSendPending?: (targetPeerIds?: string[]) => void;
   /**
    * Devices in the room (mesh). When provided with >1 device, the header shows
    * a device list, sends say "to N devices", and tray rows are tagged with the
@@ -1433,7 +1491,7 @@ export function SessionView({
         onAddFiles={onAddFiles}
         onRemovePending={onRemovePending}
         onSendPending={onSendPending}
-        deviceCount={multiDevice ? connectedCount : 1}
+        connections={connections}
       />
 
       <Tray

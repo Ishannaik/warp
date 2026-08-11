@@ -164,9 +164,9 @@ export interface UseWarpTransfer {
   /** Offer files to EVERY connected device (each gated by that device's accept).
    *  Safe to call repeatedly. Before anyone is connected, files are staged and
    *  offered to each device as its channel comes up. */
-  sendFiles: (files: File[]) => Promise<void>;
+  sendFiles: (files: File[], targetPeerIds?: string[]) => Promise<void>;
   /** Send a text snippet to every connected device (appears in their tray). */
-  sendText: (text: string) => void;
+  sendText: (text: string, targetPeerIds?: string[]) => void;
   /**
    * Accept the pending incoming offer -> bytes flow from that device. For a LARGE
    * batch (total or any single file >= 256 MiB) on a browser with the File System
@@ -295,7 +295,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** One WarpPeer per remote device id (full mesh). */
   const peersRef = useRef<Map<string, WarpPeer>>(new Map());
   /** Files staged by the sender to offer each peer the moment its channel opens. */
-  const pendingFilesRef = useRef<File[] | null>(null);
+  const pendingFilesRef = useRef<{ files: File[]; targets?: string[] } | null>(null);
   /** Every File handed to sendFiles this session — the pool salvage draws on to
    *  rebuild a re-offer after a dropped connection (matched by name+size). */
   const allFilesRef = useRef<File[]>([]);
@@ -484,9 +484,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         // Sender auto-offers any staged files to THIS peer as it comes up.
         // A failed offer is NOT terminal: the files stay staged for the next
         // channel (salvage/reconnect re-offers them).
-        const files = pendingFilesRef.current;
-        if (files && files.length) {
-          peer.offerFiles(files).catch(() => {});
+        const pending = pendingFilesRef.current;
+        if (pending && pending.files.length) {
+          if (!pending.targets || pending.targets.includes(peerId)) {
+            peer.offerFiles(pending.files).catch(() => {});
+          }
         }
       });
 
@@ -759,13 +761,16 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         if (i !== -1) files.push(pool.splice(i, 1)[0]);
       }
       if (files.length) {
-        pendingFilesRef.current = files;
+        pendingFilesRef.current = { files, targets: [peerId] };
         // The device may ALREADY be back (a reload races: its new channel can
         // open before the old one's death is detected). The staged-files offer
         // in the `connected` handler has already fired in that case, so offer
         // to every currently open channel right now as well (idempotent-ish:
         // each offer is accept-gated on the receiving side).
-        for (const p of connectedPeers()) p.offerFiles(files).catch(() => {});
+        const openPeer = peersRef.current.get(peerId);
+        if (openPeer && openPeer.isConnected) {
+          openPeer.offerFiles(files).catch(() => {});
+        }
       }
 
       // Drop the dead rows — the automatic re-offer recreates them fresh.
@@ -790,7 +795,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   salvageRef.current = salvagePeer;
 
   const sendFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], targetPeerIds?: string[]) => {
       if (!files.length) {
         fail("no-files");
         return;
@@ -798,28 +803,32 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       // Remember every File this session so an interrupted transfer can be
       // salvaged into an automatic re-offer after a reconnect.
       allFilesRef.current.push(...files);
-      const open = connectedPeers();
+      const open = Array.from(peersRef.current.entries())
+        .filter(([id, p]) => p.isConnected && (!targetPeerIds || targetPeerIds.includes(id)))
+        .map(([_, p]) => p);
       if (open.length) {
-        // Fan out: offer the same batch to every connected device. Each offer is
+        // Fan out: offer the same batch to every targeted connected device. Each offer is
         // an independent per-peer accept/stream. If the channel dies under us,
         // stage the files instead of failing — the reconnect path re-offers.
         try {
           await Promise.all(open.map((p) => p.offerFiles(files)));
         } catch {
-          pendingFilesRef.current = files;
+          pendingFilesRef.current = { files, targets: targetPeerIds };
         }
       } else {
         // Nobody connected yet: stage for each peer's `connected` handler to offer.
-        pendingFilesRef.current = files;
+        pendingFilesRef.current = { files, targets: targetPeerIds };
       }
     },
-    [fail, connectedPeers],
+    [fail],
   );
 
   const sendText = useCallback(
-    (text: string) => {
+    (text: string, targetPeerIds?: string[]) => {
       if (!text) return;
-      const open = connectedPeers();
+      const open = Array.from(peersRef.current.entries())
+        .filter(([id, p]) => p.isConnected && (!targetPeerIds || targetPeerIds.includes(id)))
+        .map(([_, p]) => p);
       if (!open.length) return;
       try {
         for (const p of open) p.sendText(text);
@@ -827,7 +836,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         fail("channel-error");
       }
     },
-    [fail, connectedPeers],
+    [fail],
   );
 
   const accept = useCallback(async () => {
