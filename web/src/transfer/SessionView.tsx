@@ -56,7 +56,7 @@ function totalBytes(items: { size: number }[]): number {
 
 /* ----------------------------------------------------------------- thumbnail */
 
-function Thumb({ item, size = 40 }: { item: { thumb?: string; mime: string; kind?: TransferItem["kind"] }; size?: number }) {
+function Thumb({ item, size = 40 }: { item: { thumb?: string; mime: string; kind?: TransferItem["kind"]; blob?: Blob }; size?: number }) {
   if (item.thumb) {
     return (
       <img
@@ -73,6 +73,14 @@ function Thumb({ item, size = 40 }: { item: { thumb?: string; mime: string; kind
       />
     );
   }
+
+  const isAudio = item.mime.startsWith("audio/");
+  const isVideo = item.mime.startsWith("video/");
+
+  if (item.blob && (isAudio || isVideo)) {
+    return <InlineMediaPreview blob={item.blob} isVideo={isVideo} />;
+  }
+
   return (
     <span
       style={{
@@ -91,6 +99,52 @@ function Thumb({ item, size = 40 }: { item: { thumb?: string; mime: string; kind
     >
       {typeGlyph(item.mime, item.kind ?? "file")}
     </span>
+  );
+}
+
+function InlineMediaPreview({ blob, isVideo }: { blob: Blob; isVideo: boolean }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Only buffer if it's small enough? The issue says:
+    // "Scope this to files small enough to buffer, or to fully-received files with an in-memory blob still available."
+    // If it HAS a blob, it IS in memory! The `savedToDisk` files don't have a blob.
+    const objectUrl = URL.createObjectURL(blob);
+    setUrl(objectUrl);
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [blob]);
+
+  if (!url) return null;
+
+  if (isVideo) {
+    return (
+      <video
+        src={url}
+        controls
+        style={{
+          width: "120px",
+          height: "80px",
+          objectFit: "cover",
+          borderRadius: "4px",
+          border: "1px solid rgba(239,233,218,.18)",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+
+  return (
+    <audio
+      src={url}
+      controls
+      style={{
+        width: "180px",
+        height: "36px",
+        flexShrink: 0,
+      }}
+    />
   );
 }
 
@@ -654,7 +708,7 @@ function PendingTray({
               borderBottom: "1px solid rgba(239,233,218,.07)",
             }}
           >
-            <Thumb item={{ mime: p.file.type, kind: "file" }} size={isMobile ? 34 : 38} />
+            <Thumb item={{ mime: p.file.type, kind: "file", blob: p.file }} size={isMobile ? 34 : 38} />
             <span
               title={p.file.name}
               style={{
@@ -1228,6 +1282,42 @@ function StatsStrip({ stats, isMobile }: { stats: TransferStats; isMobile: boole
   );
 }
 
+/* ------------------------------------------------------------- quick save */
+
+function QuickSaveToggle({ peerId }: { peerId: string }) {
+  const [trusted, setTrusted] = useState(
+    () => typeof localStorage !== "undefined" && localStorage.getItem(`warp-trust-${peerId}`) === "true"
+  );
+
+  const toggle = () => {
+    const next = !trusted;
+    setTrusted(next);
+    if (next) {
+      localStorage.setItem(`warp-trust-${peerId}`, "true");
+    } else {
+      localStorage.removeItem(`warp-trust-${peerId}`);
+    }
+  };
+
+  return (
+    <label
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        cursor: "pointer",
+        fontSize: "11px",
+        color: "#a8a293",
+        fontFamily: MONO,
+        marginLeft: "auto",
+      }}
+    >
+      <input type="checkbox" checked={trusted} onChange={toggle} style={{ margin: 0 }} />
+      Quick Save
+    </label>
+  );
+}
+
 /* ------------------------------------------------------------- session view */
 
 /**
@@ -1337,18 +1427,24 @@ export function SessionView({
               style={{
                 display: "flex",
                 flexWrap: "wrap",
-                gap: "6px",
+                gap: "12px",
                 marginTop: "8px",
+                alignItems: "center",
               }}
             >
               {liveConnections.map((c) => (
-                <DeviceChip key={c.peerId} label={c.label} connected={c.connected} />
+                <span key={c.peerId} style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                  <DeviceChip label={c.label} connected={c.connected} />
+                  <QuickSaveToggle peerId={c.peerId} />
+                </span>
               ))}
             </span>
           ) : (
             <span
               style={{
-                display: "block",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
                 fontFamily: MONO,
                 fontSize: "13px",
                 color: "#efe9da",
@@ -1358,7 +1454,8 @@ export function SessionView({
                 marginTop: "2px",
               }}
             >
-              {peerLabel}
+              <span>{peerLabel}</span>
+              {liveConnections[0] && <QuickSaveToggle peerId={liveConnections[0].peerId} />}
             </span>
           )}
         </span>
