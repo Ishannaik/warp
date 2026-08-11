@@ -36,6 +36,7 @@ import {
   type PeerErrorKind,
   type ReceiveHost,
 } from "./peer";
+import { savePairedDevice } from "./pairing";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { estimateFits, gcOrphanStaging, idbDurableLength, idbSink, storageFits } from "./idbStage";
 import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSinkWithIdbFallback, opfsSupported } from "./opfsStage";
@@ -160,7 +161,7 @@ export interface UseWarpTransfer {
   /** Live throughput + ETA across the in-flight files (client-side only). */
   stats: TransferStats;
   /** Sender: open a fresh room and wait for peers. */
-  createRoom: () => void;
+  createRoom: (broadcast?: boolean) => void;
   /** Offer files to EVERY connected device (each gated by that device's accept).
    *  Safe to call repeatedly. Before anyone is connected, files are staged and
    *  offered to each device as its channel comes up. */
@@ -481,6 +482,15 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         setError(null);
         setStatus("connected");
         refreshConnections();
+
+        const localName = localStorage.getItem("warp.deviceName") || "Device";
+        // Initiator mints the pairing token and sends it.
+        // Responder will echo it back. Both save the pairing.
+        if (peer.initiator) {
+          const token = crypto.randomUUID();
+          peer.sendPairing(token, localName);
+        }
+
         // Sender auto-offers any staged files to THIS peer as it comes up.
         // A failed offer is NOT terminal: the files stay staged for the next
         // channel (salvage/reconnect re-offers them).
@@ -559,6 +569,15 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
+      
+      peer.on("paired", ({ token, name }) => {
+        savePairedDevice({ token, name });
+        // Responder echoes the token back so the initiator learns its name.
+        if (!peer.initiator) {
+          const localName = localStorage.getItem("warp.deviceName") || "Device";
+          peer.sendPairing(token, localName);
+        }
+      });
 
       peer.on("resume-requested", ({ id }) => {
         resumeRef.current(id);
@@ -705,12 +724,12 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   );
   connectRef.current = connect;
 
-  const createRoom = useCallback(() => {
+  const createRoom = useCallback((broadcast: boolean = false) => {
     // The server owns room codes. Connect with NO room so it creates one and
     // returns the real, joinable code in `joined`. (Locally-minted "WRAP-…"
     // codes were rejected by the server's validator — that broke every transfer.)
     setCode(null);
-    connect(undefined);
+    connect(undefined, broadcast);
   }, [connect]);
 
   /**
