@@ -174,6 +174,13 @@ async function run() {
   const nulled = await next(s1, (m) => m.type === 'signal');
   assert.equal(nulled.data, null, 'null data relays — the guard never inspects the payload');
 
+  // 10. Debug route returns aggregate counters
+  const debugRes = await fetch(`${HTTP}/debug`);
+  const debugJson = await debugRes.json();
+  assert.equal(typeof debugJson.liveSockets, 'number', 'has liveSockets');
+  assert.equal(typeof debugJson.liveRooms, 'number', 'has liveRooms');
+  assert.equal(typeof debugJson.discoverablePeers, 'number', 'has discoverablePeers');
+
   for (const ws of [a, c, d, s1, s2]) ws.close();
 }
 

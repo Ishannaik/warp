@@ -113,6 +113,10 @@ export interface UseNearby {
   crowded: boolean;
   /** This device's advertised name. */
   deviceName: string;
+  /** Whether this device is currently discoverable to others on the same IP. */
+  isDiscoverable: boolean;
+  /** Toggle discoverability. If turned on, announces immediately. If turned off, disconnects and reconnects silently. */
+  setDiscoverable: (discoverable: boolean) => void;
   /** Rename this device and re-announce so peers see the new label. */
   rename: (name: string) => void;
   /**
@@ -190,6 +194,13 @@ export function useNearby(): UseNearby {
   const [devices, setDevices] = useState<NearbyDevice[]>([]);
   const [crowded, setCrowded] = useState(false);
   const [deviceName, setDeviceName] = useState<string>(() => loadDeviceName());
+  const [isDiscoverable, setIsDiscoverable] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("warp.discoverable") === "true";
+    } catch {
+      return false;
+    }
+  });
 
   /** Computed once per session — the UA doesn't change while the tab is open. */
   const deviceTypeRef = useRef<DeviceType>(guessDeviceType());
@@ -204,6 +215,8 @@ export function useNearby(): UseNearby {
   /** Always-current name for re-announce / open handlers without re-binding. */
   const nameRef = useRef<string>(deviceName);
   nameRef.current = deviceName;
+  const discoverableRef = useRef<boolean>(isDiscoverable);
+  discoverableRef.current = isDiscoverable;
 
   /** Raw-send an arbitrary frame on the live socket (announce isn't modeled). */
   const rawSend = useCallback((frame: object): boolean => {
@@ -266,7 +279,34 @@ export function useNearby(): UseNearby {
         /* best-effort */
       }
       // Re-announce so same-IP peers receive a fresh snapshot with the new name.
-      announce(clean);
+      if (discoverableRef.current) announce(clean);
+    },
+    [announce],
+  );
+
+  const setDiscoverable = useCallback(
+    (discoverable: boolean) => {
+      setIsDiscoverable(discoverable);
+      discoverableRef.current = discoverable;
+      try {
+        localStorage.setItem("warp.discoverable", discoverable ? "true" : "false");
+      } catch {
+        /* best-effort */
+      }
+
+      const sig = sigRef.current;
+      if (!sig) return;
+
+      if (discoverable) {
+        announce(nameRef.current);
+      } else {
+        // Un-announce by bouncing the socket (server drops the discoverable flag on close)
+        sig.close();
+        setDevices([]);
+        setSelfId(null);
+        setCrowded(false);
+        sig.connect(); // Reconnects silently, won't announce because discoverableRef is false
+      }
     },
     [announce],
   );
@@ -355,7 +395,9 @@ export function useNearby(): UseNearby {
       detachNearby?.();
       detachNearby = null;
       attachNearbyListener();
-      announce(nameRef.current);
+      if (discoverableRef.current) {
+        announce(nameRef.current);
+      }
     });
 
     // Open the socket (no room -> server mints a throwaway room we ignore).
@@ -380,11 +422,13 @@ export function useNearby(): UseNearby {
       devices,
       crowded,
       deviceName,
+      isDiscoverable,
+      setDiscoverable,
       rename,
       connectTo,
       onIncoming,
       getSignaling,
     }),
-    [selfId, devices, crowded, deviceName, rename, connectTo, onIncoming, getSignaling],
+    [selfId, devices, crowded, deviceName, isDiscoverable, setDiscoverable, rename, connectTo, onIncoming, getSignaling],
   );
 }

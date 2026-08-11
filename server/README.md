@@ -19,6 +19,8 @@ pnpm --filter @warp/server run deploy   # wrangler deploy (needs `wrangler login
 ```
 
 Health check: `GET /health` -> `200 ok`.
+Metrics/Debug: `GET /debug` -> `{ "liveSockets": 4, "liveRooms": 2, "discoverablePeers": 3 }`.
+Can optionally be gated by setting a `DEBUG_SECRET` environment variable, which requires passing `?secret=YOUR_SECRET` or `Authorization: Bearer YOUR_SECRET`.
 
 ## Design (hibernation-safe state)
 

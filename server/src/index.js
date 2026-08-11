@@ -11,10 +11,60 @@ const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
 const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
 const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-guessed UA hint, relayed as-is
 
+/**
+ * @typedef {Object} JoinMessage
+ * @property {'join'} type
+ * @property {string} [room]
+ */
+
+/**
+ * @typedef {Object} AnnounceMessage
+ * @property {'announce'} type
+ * @property {string} [name]
+ * @property {string} [deviceType]
+ */
+
+/**
+ * @typedef {Object} SignalMessage
+ * @property {'signal'} type
+ * @property {string} to
+ * @property {any} data
+ */
+
+/**
+ * @typedef {Object} Attachment
+ * @property {string} ip
+ * @property {string} [peerId]
+ * @property {string} [room]
+ * @property {string} [name]
+ * @property {string} [deviceType]
+ * @property {boolean} [discoverable]
+ */
+
+/**
+ * @typedef {Object} Env
+ * @property {DurableObjectNamespace} SIGNALING
+ */
+
 export default {
+  /**
+   * @param {Request} request
+   * @param {Env} env
+   * @returns {Promise<Response>}
+   */
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
+    if (url.pathname === '/debug') {
+      if (env.DEBUG_SECRET) {
+        const secret = url.searchParams.get('secret') || request.headers.get('Authorization');
+        if (secret !== env.DEBUG_SECRET && secret !== `Bearer ${env.DEBUG_SECRET}`) {
+          return new Response('unauthorized', { status: 401 });
+        }
+      }
+      const id = env.SIGNALING.idFromName('global');
+      return env.SIGNALING.get(id).fetch(request);
+    }
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('warp signaling server\n', { headers: { 'content-type': 'text/plain' } });
     }
@@ -25,12 +75,36 @@ export default {
   },
 };
 
+/**
+ * @implements {DurableObject}
+ */
 export class SignalingRoom {
+  /**
+   * @param {DurableObjectState} state
+   */
   constructor(state) {
     this.state = state;
   }
 
   async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/debug') {
+      const sockets = this.state.getWebSockets();
+      const rooms = new Set();
+      let discoverablePeers = 0;
+      for (const ws of sockets) {
+        const a = ws.deserializeAttachment();
+        if (!a) continue;
+        if (a.room != null) rooms.add(a.room);
+        if (a.discoverable) discoverablePeers++;
+      }
+      return new Response(JSON.stringify({
+        liveSockets: sockets.length,
+        liveRooms: rooms.size,
+        discoverablePeers
+      }), { headers: { 'content-type': 'application/json' } });
+    }
+
     const { 0: client, 1: server } = new WebSocketPair();
     this.state.acceptWebSocket(server);                   // hibernation-enabled
     // Stamp the client's public IP so LAN auto-discovery can group same-network peers.
@@ -46,6 +120,11 @@ export class SignalingRoom {
 
   // --- live-socket helpers ---------------------------------------------------
   // The sockets ARE the room state (hibernation-safe: nothing to desync).
+  /**
+   * @param {string | undefined | null} room
+   * @param {WebSocket | null} except
+   * @returns {WebSocket[]}
+   */
   sockets(room, except) {
     return this.state.getWebSockets().filter((ws) => {
       const a = ws.deserializeAttachment();
@@ -53,6 +132,10 @@ export class SignalingRoom {
     });
   }
 
+  /**
+   * @param {string} room
+   * @returns {boolean}
+   */
   roomExists(room) {
     return this.state.getWebSockets().some((ws) => {
       const a = ws.deserializeAttachment();
@@ -60,6 +143,9 @@ export class SignalingRoom {
     });
   }
 
+  /**
+   * @returns {string}
+   */
   makeCode() {
     let code;
     do {
@@ -70,11 +156,19 @@ export class SignalingRoom {
     return code;
   }
 
+  /**
+   * @param {WebSocket} ws
+   * @param {any} obj
+   */
   send(ws, obj) {
     try { ws.send(JSON.stringify(obj)); } catch { /* socket gone */ }
   }
 
   // --- message handling ------------------------------------------------------
+  /**
+   * @param {WebSocket} ws
+   * @param {string | ArrayBuffer} raw
+   */
   async webSocketMessage(ws, raw) {
     // Size guard (#98): reject oversized frames BEFORE parsing/relay. Workers raised
     // the WebSocket message limit to 32 MiB, so without this one bad client could
@@ -100,7 +194,12 @@ export class SignalingRoom {
     return this.send(ws, { type: 'error', error: 'unknown-type', message: msg.type });
   }
 
+  /**
+   * @param {WebSocket} ws
+   * @param {JoinMessage} msg
+   */
   async handleJoin(ws, msg) {
+    /** @type {Attachment | undefined} */
     const prev = ws.deserializeAttachment();
     if (prev && prev.room != null) this.notifyLeft(ws, prev); // one room per socket; ignore an ip-only attachment
 
@@ -134,7 +233,12 @@ export class SignalingRoom {
     for (const p of existing) this.send(p, { type: 'peer-joined', peerId });
   }
 
+  /**
+   * @param {WebSocket} ws
+   * @param {AnnounceMessage} msg
+   */
   handleAnnounce(ws, msg) {
+    /** @type {Attachment | undefined} */
     const prev = ws.deserializeAttachment() || {};
     const peerId = crypto.randomUUID();
     ws.serializeAttachment({
@@ -151,6 +255,9 @@ export class SignalingRoom {
 
   // Everyone discoverable on the same public IP. Privacy guardrail: if the group is
   // bigger than MAX_DISCOVER, the network is shared (CGNAT/cellular) — hide the list.
+  /**
+   * @param {string} ip
+   */
   broadcastNearby(ip) {
     const group = this.state.getWebSockets().filter((ws) => {
       const a = ws.deserializeAttachment();
@@ -175,6 +282,10 @@ export class SignalingRoom {
     }
   }
 
+  /**
+   * @param {WebSocket} ws
+   * @param {SignalMessage} msg
+   */
   handleSignal(ws, msg) {
     // Refuse obviously malformed frames. A non-string `to` just failed the lookup below
     // and vanished silently; a missing `data` still reached the peer as `data: undefined`,
@@ -199,11 +310,19 @@ export class SignalingRoom {
     if (target) this.send(target, { type: 'signal', from: a.peerId, data: msg.data });
   }
 
+  /**
+   * @param {WebSocket} ws
+   * @param {Attachment} a
+   */
   notifyLeft(ws, a) {
     for (const p of this.sockets(a.room, ws)) this.send(p, { type: 'peer-left', peerId: a.peerId });
   }
 
+  /**
+   * @param {WebSocket} ws
+   */
   async handleGone(ws) {
+    /** @type {Attachment | undefined} */
     const a = ws.deserializeAttachment();
     if (!a) return;
     if (a.room != null) {
@@ -233,10 +352,16 @@ export class SignalingRoom {
     }
   }
 
+  /**
+   * @param {WebSocket} ws
+   */
   async webSocketClose(ws) {
     await this.handleGone(ws);
   }
 
+  /**
+   * @param {WebSocket} ws
+   */
   async webSocketError(ws) {
     await this.handleGone(ws);
   }
