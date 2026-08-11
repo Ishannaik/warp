@@ -306,6 +306,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   const cancelledKeysRef = useRef<Set<string>>(new Set());
   /** Keys the user paused — skipped by auto-resume until an explicit resume() clears them. */
   const pausedKeysRef = useRef<Set<string>>(new Set());
+  /** Track items already added to history this session. */
+  const recordedHistoryRef = useRef<Set<string>>(new Set());
   /** Receive item id -> file key, so cancel(id) can find & poison the right entry. */
   const rxIdKeyRef = useRef<Map<string, string>>(new Map());
   /** Ref mirrors so long-lived peer event listeners never read stale state. */
@@ -504,10 +506,32 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         refreshConnections();
       });
 
-      // Both directions: an item was created or its progress changed. Stamp the
-      // device it belongs to so the UI can tag tray rows / route cancels.
+      // Stamp the device it belongs to so the UI can tag tray rows / route cancels.
       peer.on("transfer", (item) => {
         upsertItem({ ...item, peerId });
+        if (item.status === "done") {
+          const recorded = recordedHistoryRef.current;
+          if (!recorded.has(item.id)) {
+            recorded.add(item.id);
+            try {
+              const entry = {
+                id: item.id,
+                name: item.name,
+                size: item.size,
+                direction: item.direction,
+                mime: item.mime,
+                kind: item.kind || "file",
+                timestamp: Date.now(),
+              };
+              const prev = JSON.parse(localStorage.getItem("warp_history") || "[]");
+              const next = [entry, ...prev].slice(0, 100);
+              localStorage.setItem("warp_history", JSON.stringify(next));
+              window.dispatchEvent(new Event("warp_history_updated"));
+            } catch (e) {
+              // ignore localStorage errors
+            }
+          }
+        }
         // A pause (local or remote) must park the durable entry inactive and
         // remember the key so an unrelated reconnect does not auto-resume.
         // Unlike cancel, the sink stays healthy.
