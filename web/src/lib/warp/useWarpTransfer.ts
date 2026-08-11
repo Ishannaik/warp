@@ -159,7 +159,9 @@ export interface UseWarpTransfer {
   /** Live throughput + ETA across the in-flight files (client-side only). */
   stats: TransferStats;
   /** Sender: open a fresh room and wait for peers. */
-  createRoom: () => void;
+  createRoom: (oneTime?: boolean) => void;
+  /** Retire a one-time room after the first batch finishes. */
+  retireRoom: () => void;
   /** Offer files to EVERY connected device (each gated by that device's accept).
    *  Safe to call repeatedly. Before anyone is connected, files are staged and
    *  offered to each device as its channel comes up. */
@@ -372,7 +374,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** Late-bound resume so bindPeer's resume-requested listener stays stable. */
   const resumeRef = useRef<(id: string) => void>(() => {});
   /** Late-bound self-reference so connect's own handlers can re-connect. */
-  const connectRef = useRef<(room?: string) => void>(() => {});
+  const connectRef = useRef<(room?: string, oneTime?: boolean) => void>(() => {});
 
   /**
    * A ReceiveHost bound to one peer, backed by the hook-owned registry. `begin`
@@ -605,7 +607,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
 
   /** Establish the signaling socket and the join/role dance for a full mesh. */
   const connect = useCallback(
-    (roomCode: string | undefined) => {
+    (roomCode: string | undefined, oneTime?: boolean) => {
       // Tear down any prior session (all peers).
       for (const p of peersRef.current.values()) p.close();
       peersRef.current.clear();
@@ -693,24 +695,29 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           "room-not-found": "That room is no longer open — ask the sender for a fresh link.",
           "room-full": "That room is full (up to 8 devices).",
           "bad-room": "That room code looks invalid.",
+          "code-expired": "This code has expired.",
           "signaling-lost": "Lost contact with the signaling server — check your connection and retry.",
         };
         fail("signaling", map[err]);
       });
 
-      sig.connect(roomCode);
+      sig.connect(roomCode, oneTime);
     },
     [addInitiator, addResponder, refreshConnections, fail, mode, connectedPeers],
   );
   connectRef.current = connect;
 
-  const createRoom = useCallback(() => {
+  const createRoom = useCallback((oneTime?: boolean) => {
     // The server owns room codes. Connect with NO room so it creates one and
     // returns the real, joinable code in `joined`. (Locally-minted "WRAP-…"
     // codes were rejected by the server's validator — that broke every transfer.)
     setCode(null);
-    connect(undefined);
+    connect(undefined, oneTime);
   }, [connect]);
+
+  const retireRoom = useCallback(() => {
+    signalingRef.current?.retireRoom();
+  }, []);
 
   /**
    * A peer's transport died for good (channel closed / restarts exhausted).
@@ -1367,6 +1374,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     downloadOne,
     downloadAll,
     retry,
+    retireRoom,
   };
 }
 
