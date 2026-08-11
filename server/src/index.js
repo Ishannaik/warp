@@ -26,8 +26,9 @@ export default {
 };
 
 export class SignalingRoom {
-  constructor(state) {
+  constructor(state, env) {
     this.state = state;
+    this.env = env;
   }
 
   async fetch(request) {
@@ -58,6 +59,19 @@ export class SignalingRoom {
       const a = ws.deserializeAttachment();
       return a && a.room === room;
     });
+  }
+
+  countRooms() {
+    const rooms = new Set();
+    for (const ws of this.state.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (a && a.room != null) rooms.add(a.room);
+    }
+    return rooms.size;
+  }
+
+  get maxRooms() {
+    return this.env && this.env.MAX_ROOMS ? parseInt(this.env.MAX_ROOMS, 10) : 10000;
   }
 
   makeCode() {
@@ -93,11 +107,16 @@ export class SignalingRoom {
     catch { return this.send(ws, { type: 'error', error: 'bad-message', message: 'Expected JSON.' }); }
     if (!msg || typeof msg.type !== 'string') return this.send(ws, { type: 'error', error: 'bad-message' });
 
-    if (msg.type === 'ping') return; // keepalive — receiving it keeps the DO awake so it won't hibernate (10s) and drop a waiting room
-    if (msg.type === 'join') return this.handleJoin(ws, msg);
-    if (msg.type === 'announce') return this.handleAnnounce(ws, msg);
-    if (msg.type === 'signal') return this.handleSignal(ws, msg);
-    return this.send(ws, { type: 'error', error: 'unknown-type', message: msg.type });
+    try {
+      if (msg.type === 'ping') return; // keepalive — receiving it keeps the DO awake so it won't hibernate (10s) and drop a waiting room
+      if (msg.type === 'join') return await this.handleJoin(ws, msg);
+      if (msg.type === 'announce') return this.handleAnnounce(ws, msg);
+      if (msg.type === 'signal') return this.handleSignal(ws, msg);
+      return this.send(ws, { type: 'error', error: 'unknown-type', message: msg.type });
+    } catch (e) {
+      console.error('webSocketMessage error:', e.stack || e);
+      return this.send(ws, { type: 'error', error: 'server-crash', message: String(e) });
+    }
   }
 
   async handleJoin(ws, msg) {
@@ -106,6 +125,9 @@ export class SignalingRoom {
 
     let code = msg.room;
     if (code == null) {
+      if (this.countRooms() >= this.maxRooms) {
+        return this.send(ws, { type: 'error', error: 'server-full', message: 'The server is currently at capacity for concurrent rooms.' });
+      }
       code = this.makeCode();                             // no code given => create a room
     } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
