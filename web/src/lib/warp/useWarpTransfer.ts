@@ -845,14 +845,14 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const total = off.items.reduce((s, it) => s + it.size, 0);
     const biggest = off.items.reduce((m, it) => Math.max(m, it.size), 0);
     const large = isLargeBatch(total, biggest);
-    const fs = window as unknown as WindowWithFsPickers;
+    const fs = detectFsAccessSupport(window);
     // Single source of truth for the disk-vs-memory decision (#54): a multi-file
     // batch needs the directory picker, a single file the save-file picker; a
     // browser without the matching picker falls through to "memory".
     const strategy = chooseReceiveStrategy({
       itemCount: off.items.length,
       large,
-      fs: detectFsAccessSupport(window),
+      fs,
     });
 
     let target: AcceptTarget | undefined;
