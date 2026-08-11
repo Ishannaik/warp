@@ -431,6 +431,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       const reg = receiveRegRef.current;
       const keys = info.items.map((i) => i.key);
       const dupKeys = new Set(keys).size !== keys.length;
+      const isTrusted = typeof localStorage !== "undefined" && localStorage.getItem(`warp-trust-${peerId}`) === "true";
       const allResumable =
         !dupKeys &&
         info.items.length > 0 &&
@@ -447,23 +448,27 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           );
         });
 
-      if (!allResumable) {
+      if (!allResumable && !isTrusted) {
         setIncoming({ ...info, peerId });
         return;
       }
 
-      // Auto-resume: report each file's DURABLE byte count as its offset (H1).
+      // Auto-resume or Quick Save (auto-accept):
       const peer = peersRef.current.get(peerId);
       if (!peer) return;
       void (async () => {
         const resume: Record<string, number> = {};
         let target: AcceptTarget | undefined;
         for (const it of info.items) {
-          const e = reg.get(it.key!)!;
-          await e.sink.quiesce();
-          resume[it.id] = e.sink.bytesWritten;
-          rxIdKeyRef.current.set(it.id, it.key!);
-          if (!target) target = e.target;
+          if (it.key) {
+            const e = reg.get(it.key);
+            if (e) {
+              await e.sink.quiesce();
+              resume[it.id] = e.sink.bytesWritten;
+              if (!target) target = e.target;
+            }
+            rxIdKeyRef.current.set(it.id, it.key);
+          }
         }
         peer.acceptOffer(info.batchId, target, resume, supportedCodecs());
       })();

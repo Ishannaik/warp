@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
+    "lib": ["ESNext"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src/**/*"]
+}
