@@ -1,15 +1,17 @@
+import { lazy, Suspense } from "react";
 import "./index.css";
 
 import Landing from "./Landing";
-import TransferFlow from "./transfer/TransferFlow";
-import Theory from "./theory/Theory";
 import ReceiveEntry from "./receive/ReceiveEntry";
-import BrandKit from "./brand/BrandKit";
-import Legal from "./legal/Legal";
 import NotFound from "./NotFound";
 import { useRoute } from "./router";
 import { useDocumentSeo } from "./lib/useDocumentSeo";
 import { VALID_RE, sanitize } from "./lib/warp/roomCode";
+
+const TransferFlow = lazy(() => import("./transfer/TransferFlow"));
+const Theory = lazy(() => import("./theory/Theory"));
+const BrandKit = lazy(() => import("./brand/BrandKit"));
+const Legal = lazy(() => import("./legal/Legal"));
 
 const CHANNEL_DESC =
   "Open a secure peer-to-peer channel and send files straight to another device.";
@@ -67,15 +69,7 @@ function seoForRoute(path: string): { title: string; description: string } {
   };
 }
 
-export default function App() {
-  const { path, code } = useRoute();
-
-  const { title, description } = seoForRoute(path);
-  // Session URLs (/r/<code>) are ephemeral — canonicalize them to the stable
-  // receive page so shared links don't fragment indexing across room codes.
-  const canonicalPath = path.startsWith("/r/") ? "/receive" : path;
-  useDocumentSeo(title, description, canonicalPath);
-
+function PageContent({ path, code }: { path: string; code: string }) {
   if (path === "/") return <Landing />;
   if (path === "/send") return <TransferFlow />;
   if (path === "/receive") return <ReceiveEntry />;
@@ -93,4 +87,20 @@ export default function App() {
   if (path === "/privacy") return <Legal kind="privacy" />;
 
   return <NotFound />;
+}
+
+export default function App() {
+  const { path, code } = useRoute();
+
+  const { title, description } = seoForRoute(path);
+  // Session URLs (/r/<code>) are ephemeral — canonicalize them to the stable
+  // receive page so shared links don't fragment indexing across room codes.
+  const canonicalPath = path.startsWith("/r/") ? "/receive" : path;
+  useDocumentSeo(title, description, canonicalPath);
+
+  return (
+    <Suspense fallback={<div style={{ background: "#121110", minHeight: "100vh" }} />}>
+      <PageContent path={path} code={code} />
+    </Suspense>
+  );
 }
