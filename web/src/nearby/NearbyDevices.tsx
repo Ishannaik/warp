@@ -28,7 +28,7 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 export default function NearbyDevices() {
   const isMobile = useIsMobile();
   const nearby = useNearbyTransfer();
-  const { devices, crowded, deviceName, session, incoming, rename } = nearby;
+  const { devices, crowded, deviceName, session, incoming, rename, isDiscoverable, setDiscoverable } = nearby;
 
   // #15: live progress in the tab title while a nearby transfer is in flight.
   useTransferTitle(session?.items ?? []);
@@ -177,41 +177,54 @@ export default function NearbyDevices() {
                 color: "#6f6a5d",
               }}
             >
-              <span>You appear as</span>
-              <span style={{ color: "#a8a293" }}>{deviceName}</span>
-              <button
-                type="button"
-                className="nearby-edit-btn"
-                onClick={handleStartEdit}
-                title="Rename device"
-                aria-label="Rename device"
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: "0 2px",
-                  cursor: "pointer",
-                  color: "#6f6a5d",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "color .15s ease",
-                  font: "inherit",
-                }}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 20h9" />
-                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                </svg>
-              </button>
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", marginRight: "4px" }}>
+                <input
+                  type="checkbox"
+                  checked={isDiscoverable}
+                  onChange={(e) => setDiscoverable(e.target.checked)}
+                  style={{ cursor: "pointer", margin: 0 }}
+                />
+                <span style={{ color: isDiscoverable ? "#efe9da" : "#a8a293" }}>Discoverable</span>
+              </label>
+              {isDiscoverable && (
+                <>
+                  <span>as</span>
+                  <span style={{ color: "#a8a293" }}>{deviceName}</span>
+                  <button
+                    type="button"
+                    className="nearby-edit-btn"
+                    onClick={handleStartEdit}
+                    title="Rename device"
+                    aria-label="Rename device"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: "0 2px",
+                      cursor: "pointer",
+                      color: "#6f6a5d",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "color .15s ease",
+                      font: "inherit",
+                    }}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                    </svg>
+                  </button>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -243,6 +256,8 @@ export default function NearbyDevices() {
 
         {crowded ? (
           <CrowdedNote isMobile={isMobile} />
+        ) : !isDiscoverable ? (
+          <OptInState isMobile={isMobile} onEnable={() => setDiscoverable(true)} />
         ) : devices.length === 0 ? (
           <EmptyState isMobile={isMobile} />
         ) : (
@@ -490,6 +505,46 @@ function EmptyState({ isMobile }: { isMobile: boolean }) {
       <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", lineHeight: 1.6 }}>
         Open Warp on another device on the same Wi-Fi.
       </div>
+    </div>
+  );
+}
+
+function OptInState({ isMobile, onEnable }: { isMobile: boolean; onEnable: () => void }) {
+  return (
+    <div
+      style={{
+        border: `1px dashed rgba(239,233,218,.18)`,
+        background: "rgba(239,233,218,.02)",
+        padding: isMobile ? "26px 18px" : "34px 26px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "17px", marginBottom: "12px" }}>
+        Discovery is off
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", lineHeight: 1.6, marginBottom: "16px", maxWidth: "400px", margin: "0 auto 16px" }}>
+        Turn on discovery to see and be seen by other Warp devices on your network. Your IP is used for grouping but never shared.
+      </div>
+      <button
+        type="button"
+        className="nearby-ghost"
+        onClick={onEnable}
+        style={{
+          display: "inline-block",
+          padding: "9px 16px",
+          border: "1px solid rgba(239,233,218,.25)",
+          background: "transparent",
+          fontFamily: MONO,
+          fontSize: "11.5px",
+          letterSpacing: ".07em",
+          textTransform: "uppercase",
+          color: "#efe9da",
+          cursor: "pointer",
+          transition: "border-color .15s ease, color .15s ease",
+        }}
+      >
+        Turn on discovery
+      </button>
     </div>
   );
 }
