@@ -90,6 +90,7 @@ export class SignalingClient {
 
   /** The room `connect()` was asked for (undefined => create). Used to rejoin. */
   private joinRoom: string | undefined;
+  private joinBroadcast: boolean = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -111,10 +112,11 @@ export class SignalingClient {
   }
 
   /** Open the socket and send the initial join frame (room omitted => create). */
-  connect(room?: string): void {
+  connect(room?: string, broadcast: boolean = false): void {
     if (this.ws) return;
     this.closed = false;
     this.joinRoom = room;
+    this.joinBroadcast = broadcast;
     this.installWakeListeners();
     this.openSocket();
   }
@@ -135,7 +137,7 @@ export class SignalingClient {
 
     ws.addEventListener("open", () => {
       const room = this.room ?? this.joinRoom;
-      const join = room ? { type: "join", room } : { type: "join" };
+      const join = room ? { type: "join", room } : { type: "join", broadcast: this.joinBroadcast };
       this.rawSend(JSON.stringify(join));
       // Flush anything queued while connecting.
       for (const frame of this.pending) ws.send(frame);

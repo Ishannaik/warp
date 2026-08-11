@@ -3,6 +3,7 @@
 // the original Node `ws` server: connect, then send {type:'join', room?} / {type:'signal', to, data}.
 
 const MAX_PEERS = 8;                                       // mesh blows up past this; honest cap
+const MAX_BROADCAST_PEERS = 64;                            // broadcast cap (one-to-many)
 const MAX_DISCOVER = 8;                                    // >this many sockets per public IP => CGNAT/cellular; hide devices (privacy)
 const MAX_SIGNAL_BYTES = 64 * 1024;                        // #98: real SDP/ICE frames are a few KB; this is generous headroom, not a guess-tight cap
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no ambiguous 0/O/1/I/L
@@ -121,13 +122,17 @@ export class SignalingRoom {
         return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
       }
       await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
-    } else if (this.sockets(code, null).length >= MAX_PEERS) {
-      return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+    }
+    const existing = this.sockets(code, null);
+    const isBroadcast = existing.some((s) => s.deserializeAttachment()?.broadcast) || (!existing.length && !!msg.broadcast);
+    const cap = isBroadcast ? MAX_BROADCAST_PEERS : MAX_PEERS;
+
+    if (existing.length >= cap) {
+      return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${cap}).` });
     }
 
-    const existing = this.sockets(code, ws);              // current members, before we join
     const peerId = crypto.randomUUID();
-    ws.serializeAttachment({ ip: prev && prev.ip, peerId, room: code }); // keep ip; room flow ignores it
+    ws.serializeAttachment({ ip: prev && prev.ip, peerId, room: code, broadcast: isBroadcast }); // keep ip; room flow ignores it
 
     // Glare-free mesh: the new peer offers to every existing peer; they wait.
     this.send(ws, { type: 'joined', selfId: peerId, room: code, peers: existing.map((p) => p.deserializeAttachment().peerId) });
@@ -175,6 +180,47 @@ export class SignalingRoom {
     }
   }
 
+  // Find other sockets sharing at least one pairedToken and cross-announce them.
+  broadcastPaired(ws) {
+    const a = ws.deserializeAttachment();
+    if (!a || !a.pairedTokens || a.pairedTokens.length === 0) return;
+
+    const allSockets = this.state.getWebSockets();
+    const matched = allSockets.filter((other) => {
+      if (other === ws) return false;
+      const oa = other.deserializeAttachment();
+      if (!oa || !oa.pairedTokens) return false;
+      return oa.pairedTokens.some((t) => a.pairedTokens.includes(t));
+    });
+
+    for (const other of matched) {
+      const oa = other.deserializeAttachment();
+      const token = oa.pairedTokens.find(t => a.pairedTokens.includes(t));
+      // Inform the other socket about us
+      this.send(other, { type: 'paired-online', peerId: a.peerId, name: a.name, deviceType: a.deviceType, token });
+      // Inform us about the other socket
+      this.send(ws, { type: 'paired-online', peerId: oa.peerId, name: oa.name, deviceType: oa.deviceType, token });
+    }
+  }
+
+  broadcastPairedOffline(ws) {
+    const a = ws.deserializeAttachment();
+    if (!a || !a.pairedTokens || a.pairedTokens.length === 0) return;
+
+    const allSockets = this.state.getWebSockets();
+    const matched = allSockets.filter((other) => {
+      if (other === ws) return false;
+      const oa = other.deserializeAttachment();
+      if (!oa || !oa.pairedTokens) return false;
+      return oa.pairedTokens.some((t) => a.pairedTokens.includes(t));
+    });
+
+    for (const other of matched) {
+      const oa = other.deserializeAttachment();
+      const token = oa.pairedTokens.find(t => a.pairedTokens.includes(t));
+      this.send(other, { type: 'paired-offline', peerId: a.peerId, token });
+    }
+  }
   handleSignal(ws, msg) {
     // Refuse obviously malformed frames. A non-string `to` just failed the lookup below
     // and vanished silently; a missing `data` still reached the peer as `data: undefined`,
@@ -221,6 +267,7 @@ export class SignalingRoom {
     // The socket is closing, so it's already excluded from getWebSockets() by the time
     // the recompute runs; broadcasting on its IP refreshes the rest of the nearby group.
     if (a.discoverable) this.broadcastNearby(a.ip);
+    this.broadcastPairedOffline(ws);
   }
 
   // GC expired reclaim records. The alarm is best-effort (can be delayed/coalesced),
