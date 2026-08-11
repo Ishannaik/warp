@@ -15,7 +15,7 @@
  * the global keyframes media query.
  */
 
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   TEXT_SNIPPET_MAX_BYTES,
@@ -115,6 +115,46 @@ function statusColor(status: TransferItem["status"]): string {
   return "#908a7b";
 }
 
+function MediaPreview({ blob, isVideo }: { blob: Blob | File; isVideo: boolean }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const objUrl = URL.createObjectURL(blob);
+    setUrl(objUrl);
+    return () => URL.revokeObjectURL(objUrl);
+  }, [blob]);
+
+  if (!url) return null;
+
+  if (isVideo) {
+    return (
+      <video
+        src={url}
+        controls
+        playsInline
+        style={{
+          width: "100%",
+          maxHeight: "260px",
+          background: "rgba(0,0,0,.3)",
+          border: `1px solid ${HAIRLINE}`,
+          borderRadius: "4px",
+          display: "block",
+        }}
+      />
+    );
+  }
+  return (
+    <audio
+      src={url}
+      controls
+      style={{
+        width: "100%",
+        height: "44px",
+      }}
+    />
+  );
+}
+
 // Memoized: upsertItem preserves object identity for untouched items, so a
 // progress tick on one item re-renders only that item's row, not the whole
 // tray. onCancel/onDownload are useCallback-wrapped upstream, isMobile is a
@@ -157,6 +197,10 @@ const ItemRow = memo(function ItemRow({
     item.status === "done" &&
     !item.savedToDisk &&
     !!item.blob;
+
+  const isVideo = item.mime.startsWith("video/");
+  const isAudio = item.mime.startsWith("audio/");
+  const mediaBlob = item.direction === "receive" && item.status === "done" && !item.savedToDisk ? item.blob : undefined;
 
   const copyText = async () => {
     if (!item.text) return;
@@ -347,6 +391,11 @@ const ItemRow = memo(function ItemRow({
             {copyFailed ? "✕ copy failed" : copied ? "✓ copied" : "⧉ copy"}
           </button>
         </div>
+      )}
+
+      {/* media preview */}
+      {mediaBlob && (isVideo || isAudio) && (
+        <MediaPreview blob={mediaBlob} isVideo={isVideo} />
       )}
 
       {/* progress bar while transferring or paused (held % — not an error) */}
@@ -639,23 +688,32 @@ function PendingTray({
         style={{
           border: `1px solid ${HAIRLINE}`,
           background: "rgba(239,233,218,.02)",
-          maxHeight: "208px",
+          maxHeight: "320px",
           overflow: "auto",
         }}
       >
-        {pending.map((p) => (
-          <div
-            key={p.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: isMobile ? "10px" : "12px",
-              padding: isMobile ? "10px 11px" : "11px 13px",
-              borderBottom: "1px solid rgba(239,233,218,.07)",
-            }}
-          >
-            <Thumb item={{ mime: p.file.type, kind: "file" }} size={isMobile ? 34 : 38} />
-            <span
+        {pending.map((p) => {
+          const isVideo = p.file.type.startsWith("video/");
+          const isAudio = p.file.type.startsWith("audio/");
+          return (
+            <div
+              key={p.id}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                borderBottom: "1px solid rgba(239,233,218,.07)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isMobile ? "10px" : "12px",
+                  padding: isMobile ? "10px 11px" : "11px 13px",
+                }}
+              >
+                <Thumb item={{ mime: p.file.type, kind: "file" }} size={isMobile ? 34 : 38} />
+                <span
               title={p.file.name}
               style={{
                 flex: 1,
@@ -682,8 +740,15 @@ function PendingTray({
             >
               ✕
             </button>
-          </div>
-        ))}
+              </div>
+              {(isVideo || isAudio) && (
+                <div style={{ padding: isMobile ? "0 11px 10px" : "0 13px 11px" }}>
+                  <MediaPreview blob={p.file} isVideo={isVideo} />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <button
