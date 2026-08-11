@@ -14,18 +14,54 @@ import { VALID_RE, sanitize } from "./lib/warp/roomCode";
 const CHANNEL_DESC =
   "Open a secure peer-to-peer channel and send files straight to another device.";
 
-function seoForRoute(path: string): { title: string; description: string } {
+function getBreadcrumb(name: string, path: string) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Warp",
+        item: "https://warp.ishannaik.com/",
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name,
+        item: `https://warp.ishannaik.com${path}`,
+      },
+    ],
+  };
+}
+
+interface RouteSeo {
+  title: string;
+  description: string;
+  jsonLd?: Record<string, unknown>;
+}
+
+function seoForRoute(path: string): RouteSeo {
   if (path === "/send") {
-    return { title: "Send a file · Warp", description: CHANNEL_DESC };
+    return {
+      title: "Send a file · Warp",
+      description: CHANNEL_DESC,
+      jsonLd: getBreadcrumb("Send a file", "/send"),
+    };
   }
   if (path.startsWith("/r/")) {
-    return { title: "Receiving a file · Warp", description: CHANNEL_DESC };
+    return {
+      title: "Receiving a file · Warp",
+      description: CHANNEL_DESC,
+      jsonLd: getBreadcrumb("Receive a file", "/receive"),
+    };
   }
   if (path === "/receive") {
     return {
       title: "Receive a file · Warp",
       description:
         "Enter a code to receive files peer-to-peer, straight to your device.",
+      jsonLd: getBreadcrumb("Receive a file", "/receive"),
     };
   }
   if (path === "/how") {
@@ -33,18 +69,21 @@ function seoForRoute(path: string): { title: string; description: string } {
       title: "How Warp works · Warp",
       description:
         "How Warp moves files directly between devices over an encrypted peer-to-peer channel — no server ever sees them.",
+      jsonLd: getBreadcrumb("How Warp works", "/how"),
     };
   }
   if (path === "/brand") {
     return {
       title: "Brand kit · Warp",
       description: "Warp logo marks, colours, and type — download the brand assets.",
+      jsonLd: getBreadcrumb("Brand kit", "/brand"),
     };
   }
   if (path === "/terms") {
     return {
       title: "Terms · Warp",
       description: "The plain-language terms for using Warp.",
+      jsonLd: getBreadcrumb("Terms", "/terms"),
     };
   }
   if (path === "/privacy") {
@@ -52,6 +91,7 @@ function seoForRoute(path: string): { title: string; description: string } {
       title: "Privacy · Warp",
       description:
         "How Warp handles your data — short version: your files never touch a server.",
+      jsonLd: getBreadcrumb("Privacy", "/privacy"),
     };
   }
   if (path !== "/") {
@@ -70,11 +110,11 @@ function seoForRoute(path: string): { title: string; description: string } {
 export default function App() {
   const { path, code } = useRoute();
 
-  const { title, description } = seoForRoute(path);
+  const { title, description, jsonLd } = seoForRoute(path);
   // Session URLs (/r/<code>) are ephemeral — canonicalize them to the stable
   // receive page so shared links don't fragment indexing across room codes.
   const canonicalPath = path.startsWith("/r/") ? "/receive" : path;
-  useDocumentSeo(title, description, canonicalPath);
+  useDocumentSeo(title, description, canonicalPath, jsonLd);
 
   if (path === "/") return <Landing />;
   if (path === "/send") return <TransferFlow />;
