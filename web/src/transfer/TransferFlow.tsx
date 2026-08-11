@@ -66,14 +66,15 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
           const tx = db.transaction("stage", "readwrite");
           const store = tx.objectStore("stage");
           const getReq = store.get("shared");
-          const item = await new Promise<any>((resolve, reject) => {
+          const item = await new Promise<unknown>((resolve, reject) => {
             getReq.onsuccess = () => resolve(getReq.result);
             getReq.onerror = () => reject(getReq.error);
           });
-          if (item) {
+          if (item && typeof item === "object") {
             store.delete("shared");
-            if (item.files && item.files.length > 0) {
-              const validFiles = item.files.filter((f: any) => f instanceof File && f.name);
+            const shareItem = item as { files?: unknown[]; text?: string; title?: string };
+            if (shareItem.files && shareItem.files.length > 0) {
+              const validFiles = shareItem.files.filter((f: unknown) => f instanceof File && f.name);
               if (validFiles.length > 0) {
                 setQueue((prev) => [
                   ...prev,
@@ -81,12 +82,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 ]);
               }
             }
-            if (item.text || item.title) {
-              setDraftText(item.text || item.title || "");
+            if (shareItem.text || shareItem.title) {
+              setDraftText(shareItem.text || shareItem.title || "");
             }
           }
-        } catch (err) {
-          console.error(err);
+        } catch {
+          // Ignore IDB errors
         }
       };
       loadShared();
@@ -114,7 +115,9 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
           cursor.continue();
         };
       };
-    } catch (err) {}
+    } catch {
+      // Ignore IDB errors
+    }
   }, []);
 
   // "reconnecting" keeps the session view up (with a banner) instead of
@@ -169,11 +172,11 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
   };
 
-  const openChannel = (broadcast?: boolean) => {
+  const openChannel = () => {
     if (!files.length && !draftText) return;
     // Open the channel ONLY. The queue stays editable while pairing; nothing is
     // offered until the user hits "Send" in the session (ShareX stay-in-control).
-    wrap.createRoom(broadcast);
+    wrap.createRoom();
   };
 
   // Header label for the single-device (1-to-1) case + a sensible fallback. In a
@@ -333,7 +336,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               onBrowse={browse}
               onDropFiles={addFiles}
               onRemove={removeFile}
-              onOpenChannel={(broadcast) => openChannel(broadcast)}
+              onOpenChannel={openChannel}
               isMobile={isMobile}
             />
           )}
@@ -588,7 +591,7 @@ function SelectStep({
   onBrowse: () => void;
   onDropFiles: (l: FileList) => void;
   onRemove: (id: string) => void;
-  onOpenChannel: (broadcast?: boolean) => void;
+  onOpenChannel: () => void;
   isMobile: boolean;
 }) {
   return (
@@ -683,52 +686,28 @@ function SelectStep({
         >
           Files stay on your device until a peer accepts.
         </span>
-        <div style={{ display: "flex", gap: "10px", flexDirection: isMobile ? "column" : "row" }}>
-          <button
-            type="button"
-            className={(files.length || draftText) ? "warp-cta" : undefined}
-            onClick={() => onOpenChannel(true)}
-            disabled={!files.length && !draftText}
-            style={{
-              display: isMobile ? "block" : "inline-block",
-              padding: "15px 26px",
-              background: "transparent",
-              border: (files.length || draftText) ? "1px solid var(--acc)" : "1px solid rgba(239,233,218,.12)",
-              color: (files.length || draftText) ? "var(--acc)" : "rgba(239,233,218,.12)",
-              fontFamily: MONO,
-              fontSize: "12.5px",
-              fontWeight: 600,
-              letterSpacing: ".07em",
-              textTransform: "uppercase",
-              textAlign: isMobile ? "center" : undefined,
-              cursor: (files.length || draftText) ? "pointer" : "not-allowed",
-            }}
-          >
-            Broadcast to many
-          </button>
-          <button
-            type="button"
-            className={(files.length || draftText) ? "warp-cta" : undefined}
-            onClick={() => onOpenChannel(false)}
-            disabled={!files.length && !draftText}
-            style={{
-              display: isMobile ? "block" : "inline-block",
-              padding: "15px 26px",
-              background: (files.length || draftText) ? "var(--acc)" : "rgba(239,233,218,.12)",
-              border: 0,
-              color: "#fff",
-              fontFamily: MONO,
-              fontSize: "12.5px",
-              fontWeight: 600,
-              letterSpacing: ".07em",
-              textTransform: "uppercase",
-              textAlign: isMobile ? "center" : undefined,
-              cursor: (files.length || draftText) ? "pointer" : "not-allowed",
-            }}
-          >
-            Open secure channel &nbsp;→
-          </button>
-        </div>
+        <button
+          type="button"
+          className={(files.length || draftText) ? "warp-cta" : undefined}
+          onClick={onOpenChannel}
+          disabled={!files.length && !draftText}
+          style={{
+            display: isMobile ? "block" : "inline-block",
+            padding: "15px 26px",
+            background: (files.length || draftText) ? "var(--acc)" : "rgba(239,233,218,.12)",
+            border: 0,
+            color: "#fff",
+            fontFamily: MONO,
+            fontSize: "12.5px",
+            fontWeight: 600,
+            letterSpacing: ".07em",
+            textTransform: "uppercase",
+            textAlign: isMobile ? "center" : undefined,
+            cursor: (files.length || draftText) ? "pointer" : "not-allowed",
+          }}
+        >
+          Open secure channel &nbsp;→
+        </button>
       </div>
     </div>
   );
