@@ -203,13 +203,14 @@ export function summarizeBatches(items: TransferItem[]): BatchSummary[] {
   const summaries: BatchSummary[] = [];
   for (const batchId of order) {
     const group = groups.get(batchId)!;
-    if (group.length < 2) continue;
+    const first = group[0];
+    if (group.length < 2 || !first) continue;
     const bytesTotal = group.reduce((s, i) => s + i.size, 0);
     const bytesDone = group.reduce((s, i) => s + i.transferred, 0);
     summaries.push({
       batchId,
-      direction: group[0].direction,
-      peerId: group[0].peerId,
+      direction: first.direction,
+      peerId: first.peerId,
       total: group.length,
       done: group.filter((i) => i.status === "done").length,
       bytesTotal,

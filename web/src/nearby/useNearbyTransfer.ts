@@ -166,7 +166,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
           itemsRef.current = items;
           return { ...prev, items };
         });
-        void peer.offerFiles([file]).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
+        void peer.offerFiles([file]).catch(() => failSession(PEER_ERROR_COPY["channel-error"] ?? "Channel error"));
       });
       peer.on("error", (kind) => failSession(PEER_ERROR_COPY[kind] ?? "The transfer failed."));
     },
@@ -249,7 +249,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
       // Offer the files once the channel is open (offerFiles requires an open channel).
       const offer = () =>
-        activePeer.offerFiles(files).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
+        activePeer.offerFiles(files).catch(() => failSession(PEER_ERROR_COPY["channel-error"] ?? "Channel error"));
       if (activePeer.isConnected) {
         void offer();
       } else {
@@ -295,7 +295,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
         return { ...prev, items };
       });
       peer.requestResume(id);
-      void peer.offerFiles([file]).catch(() => failSession(PEER_ERROR_COPY["channel-error"]));
+      void peer.offerFiles([file]).catch(() => failSession(PEER_ERROR_COPY["channel-error"] ?? "Channel error"));
       return;
     }
     peer.requestResume(id);

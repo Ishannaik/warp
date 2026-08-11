@@ -54,7 +54,7 @@ export class SpeedTracker {
     if (n < 2) return 0;
     const oldest = this.samples[0];
     const newest = this.samples[n - 1];
-    if (now - newest.t > STALE_AFTER_MS) return 0; // stalled: honest zero
+    if (!oldest || !newest || now - newest.t > STALE_AFTER_MS) return 0; // stalled: honest zero
     const dt = (newest.t - oldest.t) / 1000;
     const db = newest.b - oldest.b;
     if (dt <= 0 || db <= 0 || !Number.isFinite(dt) || !Number.isFinite(db)) return 0;
@@ -80,7 +80,11 @@ export class SpeedTracker {
   private prune(now: number): void {
     const cutoff = now - SPEED_WINDOW_MS;
     let i = 0;
-    while (i < this.samples.length - 1 && this.samples[i + 1].t <= cutoff) i++;
+    while (i < this.samples.length - 1) {
+      const next = this.samples[i + 1];
+      if (next && next.t <= cutoff) i++;
+      else break;
+    }
     if (i > 0) this.samples.splice(0, i);
   }
 }

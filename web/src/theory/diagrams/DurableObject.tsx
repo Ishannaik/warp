@@ -60,14 +60,14 @@ export default function DurableObject() {
         i = (i + 1) % SEQUENCE.length;
         setIdx(i);
         advance();
-      }, SEQUENCE[i].ms);
+      }, (SEQUENCE[i]?.ms ?? 1000));
     };
     advance();
     return () => window.clearTimeout(timer);
   }, [animate]);
 
   // Under reduced-motion we present the brokering (awake) frame as the static state.
-  const stage: Stage = animate ? SEQUENCE[idx].stage : "brokering";
+  const stage: Stage = animate ? (SEQUENCE[idx]?.stage ?? "brokering") : "brokering";
 
   const awake = stage === "waking" || stage === "brokering";
   const dormant = stage === "dormant";

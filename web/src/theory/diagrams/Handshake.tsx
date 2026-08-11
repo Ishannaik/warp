@@ -66,9 +66,12 @@ export default function Handshake() {
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       const current = ORDER[i];
+      if (!current) return;
       timer = setTimeout(() => {
         i = (i + 1) % ORDER.length;
-        setPhase(ORDER[i]);
+        const next = ORDER[i];
+        if (!next) return;
+        setPhase(next);
         tick();
       }, DURATIONS[current]);
     };

@@ -113,7 +113,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   // mesh room SessionView renders the per-device chips from `connections` itself.
   const peerLabel = useMemo(() => {
     const others = wrap.peers;
-    if (others.length) return others[0].slice(0, 8);
+    if (others.length) return (others[0] ?? "").slice(0, 8);
     return mode === "receive" ? "the sender" : "your peer";
   }, [wrap.peers, mode]);
 
