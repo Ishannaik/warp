@@ -359,7 +359,7 @@ export function useNearby(): UseNearby {
     });
 
     // Open the socket (no room -> server mints a throwaway room we ignore).
-    sig.connect();
+    sig.connect(undefined, "nearby");
 
     return () => {
       offSignal();

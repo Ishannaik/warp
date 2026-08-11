@@ -90,6 +90,7 @@ export class SignalingClient {
 
   /** The room `connect()` was asked for (undefined => create). Used to rejoin. */
   private joinRoom: string | undefined;
+  private joinIntent: string | undefined;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -111,10 +112,11 @@ export class SignalingClient {
   }
 
   /** Open the socket and send the initial join frame (room omitted => create). */
-  connect(room?: string): void {
+  connect(room?: string, intent?: "room" | "nearby"): void {
     if (this.ws) return;
     this.closed = false;
     this.joinRoom = room;
+    this.joinIntent = intent;
     this.installWakeListeners();
     this.openSocket();
   }
@@ -130,12 +132,19 @@ export class SignalingClient {
    * up with a terminal "signaling-lost".
    */
   private openSocket(): void {
-    const ws = new WebSocket(SIGNALING_URL);
+    let url = SIGNALING_URL;
+        if (this.joinIntent === "nearby") {
+      url += "?nearby=1";
+    } else if (room) {
+      url += `?room=${room}`;
+    } else {
+      url += "?create=1";
+    }
+    const ws = new WebSocket(url);
     this.ws = ws;
 
     ws.addEventListener("open", () => {
-      const room = this.room ?? this.joinRoom;
-      const join = room ? { type: "join", room } : { type: "join" };
+            const join = room ? { type: "join", room } : { type: "join" };
       this.rawSend(JSON.stringify(join));
       // Flush anything queued while connecting.
       for (const frame of this.pending) ws.send(frame);
