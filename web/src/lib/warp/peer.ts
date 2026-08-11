@@ -663,6 +663,7 @@ export class WarpPeer {
     let resume: Record<string, number> | undefined;
     // Codecs the receiver can decode (#130); intersected with our own support per
     // file below. Undefined/empty => we send raw bytes (backward compatible).
+    // eslint-disable-next-line no-useless-assignment -- Kept for symmetry
     let rxCodecs: Codec[] = [];
     try {
       const settlement = await accepted;

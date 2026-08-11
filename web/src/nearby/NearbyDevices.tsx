@@ -39,6 +39,7 @@ export default function NearbyDevices() {
 
   useEffect(() => {
     if (!isEditing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setDraftName(deviceName);
     }
   }, [deviceName, isEditing]);

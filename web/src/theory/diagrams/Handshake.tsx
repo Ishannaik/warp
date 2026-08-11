@@ -59,6 +59,7 @@ export default function Handshake() {
 
   useEffect(() => {
     if (reduced) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setPhase("connected");
       return;
     }

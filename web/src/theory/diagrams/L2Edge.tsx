@@ -30,6 +30,76 @@ import {
 
 const STEPS = 8; /* deliveries simulated */
 
+/* small dots fanning out from an edge node (cache HITs vs unique MISS) */
+function FanRow({
+  tone,
+  kind,
+  count,
+}: {
+  tone: "acc" | "amb";
+  kind: "HIT" | "MISS";
+  count: number;
+}) {
+  const c = tone === "acc" ? ACC : AMB;
+  const rgb = tone === "acc" ? "83,96,255" : "239,106,61";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span
+        style={{
+          fontFamily: MONO,
+          fontSize: 9.5,
+          letterSpacing: ".12em",
+          color: c,
+          minWidth: 36,
+        }}
+      >
+        {kind}
+      </span>
+      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", flex: 1 }}>
+        {Array.from({ length: STEPS }).map((_, i) => {
+          const on = i < count;
+          return (
+            <span
+              key={i}
+              style={{
+                width: 13,
+                height: 16,
+                border: `1px solid ${on ? c : "rgba(239,233,218,.16)"}`,
+                background: on
+                  ? kind === "HIT"
+                    ? `rgba(${rgb},.32)`
+                    : `rgba(${rgb},.16)`
+                  : "transparent",
+                position: "relative",
+                overflow: "hidden",
+                transition: "all .3s ease",
+              }}
+            >
+              {on && kind === "MISS" ? (
+                <span
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    fontFamily: MONO,
+                    fontSize: 7,
+                    color: "rgba(239,233,218,.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    letterSpacing: "-.5px",
+                  }}
+                >
+                  {"⠿"}
+                </span>
+              ) : null}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function L2Edge() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref);
@@ -41,6 +111,7 @@ export default function L2Edge() {
 
   useEffect(() => {
     if (!animate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setN(STEPS);
       return;
     }
@@ -87,75 +158,7 @@ export default function L2Edge() {
     return d.trim();
   };
 
-  /* small dots fanning out from an edge node (cache HITs vs unique MISS) */
-  function FanRow({
-    tone,
-    kind,
-    count,
-  }: {
-    tone: "acc" | "amb";
-    kind: "HIT" | "MISS";
-    count: number;
-  }) {
-    const c = tone === "acc" ? ACC : AMB;
-    const rgb = tone === "acc" ? "83,96,255" : "239,106,61";
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span
-          style={{
-            fontFamily: MONO,
-            fontSize: 9.5,
-            letterSpacing: ".12em",
-            color: c,
-            minWidth: 36,
-          }}
-        >
-          {kind}
-        </span>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", flex: 1 }}>
-          {Array.from({ length: STEPS }).map((_, i) => {
-            const on = i < count;
-            return (
-              <span
-                key={i}
-                style={{
-                  width: 13,
-                  height: 16,
-                  border: `1px solid ${on ? c : "rgba(239,233,218,.16)"}`,
-                  background: on
-                    ? kind === "HIT"
-                      ? `rgba(${rgb},.32)`
-                      : `rgba(${rgb},.16)`
-                    : "transparent",
-                  position: "relative",
-                  overflow: "hidden",
-                  transition: "all .3s ease",
-                }}
-              >
-                {on && kind === "MISS" ? (
-                  <span
-                    style={{
-                      position: "absolute",
-                      inset: 0,
-                      fontFamily: MONO,
-                      fontSize: 7,
-                      color: "rgba(239,233,218,.7)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      letterSpacing: "-.5px",
-                    }}
-                  >
-                    {"⠿"}
-                  </span>
-                ) : null}
-              </span>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
+
 
   return (
     <DiagramFrame caption="L2 · EDGE — CACHE HIT vs UNIQUE EGRESS" tone="amb">

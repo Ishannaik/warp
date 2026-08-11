@@ -64,6 +64,7 @@ export default function L3Transit() {
 
   useEffect(() => {
     if (!animate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setHopIdx(totalCrossings);
       return;
     }

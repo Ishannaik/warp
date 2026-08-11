@@ -18,6 +18,7 @@ import type { TransferItem } from "./warp/transfer";
  */
 export function useTransferTitle(items: TransferItem[]): void {
   const itemsRef = useRef(items);
+  // eslint-disable-next-line react-hooks/refs -- Latest-ref pattern
   itemsRef.current = items;
   const lastWritten = useRef(0);
 

@@ -42,11 +42,13 @@ export const DARKER = "#0e0d0a";
 export type Tone = "acc" | "amb" | "neutral";
 
 /** Resolve a Tone to its line/accent color. */
+// eslint-disable-next-line react-refresh/only-export-components -- Used for local rendering in diagram
 export function toneColor(tone: Tone = "acc"): string {
   if (tone === "amb") return AMB;
   if (tone === "neutral") return "rgba(239,233,218,.5)";
   return ACC;
 }
+// eslint-disable-next-line react-refresh/only-export-components -- Used for local rendering in diagram
 export function toneRgb(tone: Tone = "acc"): string {
   if (tone === "amb") return "var(--amb-rgb)";
   return "var(--acc-rgb)";
@@ -65,6 +67,7 @@ export function toneRgb(tone: Tone = "acc"): string {
  *   const inView = useInView(ref);
  *   <div ref={ref} className={inView ? "thy-reveal thy-in" : "thy-reveal"} />
  */
+// eslint-disable-next-line react-refresh/only-export-components -- Used for local rendering in diagram
 export function useInView(
   ref: RefObject<Element | null>,
   options?: { threshold?: number; rootMargin?: string; once?: boolean },
@@ -83,6 +86,7 @@ export function useInView(
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     if (prefersReduced || typeof IntersectionObserver === "undefined") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setInView(true);
       return;
     }
@@ -112,6 +116,7 @@ export function useInView(
  * this to render a static final state instead of starting timers/animations.
  * Implementation lives in `web/src/lib/useReducedMotion.ts` (shared with the hero).
  */
+// eslint-disable-next-line react-refresh/only-export-components -- Used for local rendering in diagram
 export { useReducedMotion } from "../../lib/useReducedMotion";
 
 /* ----------------------------------------------------------- ScaleToFit -- */
@@ -325,6 +330,7 @@ export function DiagramFrame({
  * but local to the diagram primitives so they have no app-layer import. Used
  * only to trim padding/gaps; layout correctness comes from ScaleToFit.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- Used for local rendering in diagram
 export function useNarrowViewport(breakpoint = 767): boolean {
   const query = `(max-width: ${breakpoint}px)`;
   const [narrow, setNarrow] = useState<boolean>(() => {
@@ -337,6 +343,7 @@ export function useNarrowViewport(breakpoint = 767): boolean {
       return;
     const mql = window.matchMedia(query);
     const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
     setNarrow(mql.matches);
     mql.addEventListener("change", onChange);
     return () => mql.removeEventListener("change", onChange);

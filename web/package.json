@@ -18,20 +18,21 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "esbuild": "^0.28.1",
-    "eslint": "^9.39.5",
-    "eslint-plugin-react-hooks": "^5.1.0",
-    "eslint-plugin-react-refresh": "^0.5.3",
-    "globals": "^15.14.0",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.4",
+    "globals": "^17.9.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.7.3",
-    "typescript-eslint": "^8.66.0",
-    "vite": "^6.0.7"
+    "// typescript": "Pinned below TS 7.0 (at 5.x/6.x) because typescript-eslint doesn't support the TS 7 API yet. See issue #49 and https://github.com/typescript-eslint/typescript-eslint/issues/10940",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.1"
   }
 }

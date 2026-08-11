@@ -28,6 +28,7 @@ export function useIsMobile(breakpoint = 767): boolean {
     };
 
     // Sync in case the viewport changed between initial render and effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
     setIsMobile(mql.matches);
     mql.addEventListener("change", handleChange);
 

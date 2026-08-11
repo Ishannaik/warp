@@ -25,6 +25,45 @@ import {
  *
  * Reduced-motion: static lit beam, no token motion.
  */
+/* A faint, pre-existing access link. Drawn as a dim dashed stub with a
+   "sunk cost / flat rate" tag — it exists whether or not Warp uses it. */
+function AccessStub({ tag, align, animate, reduced }: { tag: string; align: "left" | "right"; animate: boolean; reduced: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
+        opacity: animate ? 1 : reduced ? 1 : 0,
+        transition: "opacity .6s ease .2s",
+      }}
+    >
+      <span
+        style={{
+          width: 1,
+          height: 22,
+          background:
+            "repeating-linear-gradient(180deg,rgba(239,233,218,.22) 0 3px,transparent 3px 7px)",
+        }}
+      />
+      <span
+        style={{
+          fontFamily: MONO,
+          fontSize: 8.5,
+          letterSpacing: ".14em",
+          textTransform: "uppercase",
+          color: MUTED,
+          textAlign: align,
+          lineHeight: 1.5,
+        }}
+      >
+        {tag}
+      </span>
+    </div>
+  );
+}
+
 export default function L0Direct() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref);
@@ -34,44 +73,7 @@ export default function L0Direct() {
 
   const accLine = "rgba(83,96,255,.55)";
 
-  /* A faint, pre-existing access link. Drawn as a dim dashed stub with a
-     "sunk cost / flat rate" tag — it exists whether or not Warp uses it. */
-  function AccessStub({ tag, align }: { tag: string; align: "left" | "right" }) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 6,
-          opacity: animate ? 1 : reduced ? 1 : 0,
-          transition: "opacity .6s ease .2s",
-        }}
-      >
-        <span
-          style={{
-            width: 1,
-            height: 22,
-            background:
-              "repeating-linear-gradient(180deg,rgba(239,233,218,.22) 0 3px,transparent 3px 7px)",
-          }}
-        />
-        <span
-          style={{
-            fontFamily: MONO,
-            fontSize: 8.5,
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: MUTED,
-            textAlign: align,
-            lineHeight: 1.5,
-          }}
-        >
-          {tag}
-        </span>
-      </div>
-    );
-  }
+
 
   return (
     <DiagramFrame caption="L0 · DIRECT P2P — $0 MARGINAL" tone="acc">
@@ -178,8 +180,8 @@ export default function L0Direct() {
               padding: isMobile ? "0 4px" : "0 18px",
             }}
           >
-            <AccessStub tag={"already-paid\nbroadband"} align="left" />
-            <AccessStub tag={"already-paid\nconnection"} align="right" />
+            <AccessStub tag={"already-paid\nbroadband"} align="left" animate={animate} reduced={reduced} />
+            <AccessStub tag={"already-paid\nconnection"} align="right" animate={animate} reduced={reduced} />
           </div>
         </div>
 

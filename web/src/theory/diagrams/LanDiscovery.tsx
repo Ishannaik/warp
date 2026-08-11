@@ -42,6 +42,7 @@ export default function LanDiscovery() {
 
   useEffect(() => {
     if (!animate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronizing state
       setStep(STEPS);
       return;
     }
