@@ -45,6 +45,7 @@ import { supportedCodecs } from "./compress";
 import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 import { SpeedTracker } from "./transferStats";
+import { guardTargetFor } from "./receiveGuards";
 
 /**
  * One in-flight (or paused) incoming file's durable state, owned by the HOOK
@@ -509,7 +510,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         // A pause (local or remote) must park the durable entry inactive and
         // remember the key so an unrelated reconnect does not auto-resume.
         // Unlike cancel, the sink stays healthy.
-        if (item.status === "paused" && item.direction === "receive") {
+        if (guardTargetFor(item.status, item.direction) === "paused") {
           const key = rxIdKeyRef.current.get(item.id);
           if (key) {
             pausedKeysRef.current.add(key);
