@@ -69,10 +69,30 @@ export default {
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('warp signaling server\n', { headers: { 'content-type': 'text/plain' } });
     }
-    // One Durable Object holds all rooms. Plenty for a hobby signaling server;
-    // shard by room (idFromName(roomCode)) later if you ever outgrow it.
-    const id = env.SIGNALING.idFromName('global');
-    return env.SIGNALING.get(id).fetch(request);
+
+    let ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    if (ip.includes(':')) ip = ip.split(':').slice(0, 4).join(':');
+
+    let id;
+    if (url.searchParams.has('nearby')) {
+      id = env.SIGNALING.idFromName('nearby-' + ip);
+    } else {
+      let room = url.searchParams.get('room');
+      if (!room) {
+        // Generate a random room code. The DO will check for collisions.
+        const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        const bytes = crypto.getRandomValues(new Uint8Array(6));
+        room = '';
+        for (let i = 0; i < 6; i++) room += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+      }
+      id = env.SIGNALING.idFromName('room-' + room);
+      // Pass the room code to the DO so it knows its room
+      url.searchParams.set('room', room);
+    }
+    
+    // Forward the modified URL with searchParams to the DO
+    const doReq = new Request(url, request);
+    return env.SIGNALING.get(id).fetch(doReq);
   },
 };
 
