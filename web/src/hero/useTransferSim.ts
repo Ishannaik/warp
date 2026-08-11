@@ -102,12 +102,12 @@ function advance(prev: SimRow[]): SimRow[] {
 
   // Loop: once everything's done, kick off a fresh batch.
   if (rows.every((r) => r.status === "done")) {
-    rows[0].pct = 6;
-    rows[0].status = "up";
-    rows[1].pct = 0;
-    rows[1].status = "up";
-    rows[4].pct = 0;
-    rows[4].status = "queued";
+    if (rows[0]) rows[0].pct = 6;
+    if (rows[0]) rows[0].status = "up";
+    if (rows[1]) rows[1].pct = 0;
+    if (rows[1]) rows[1].status = "up";
+    if (rows[4]) rows[4].pct = 0;
+    if (rows[4]) rows[4].status = "queued";
   }
 
   return rows;

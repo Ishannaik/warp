@@ -756,7 +756,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       for (const t of unfinished) {
         if (t.direction !== "send") continue;
         const i = pool.findIndex((f) => f.name === t.name && f.size === t.size);
-        if (i !== -1) files.push(pool.splice(i, 1)[0]);
+        if (i !== -1) {
+          const f = pool.splice(i, 1)[0];
+          if (f) files.push(f);
+        }
       }
       if (files.length) {
         pendingFilesRef.current = files;
@@ -1057,6 +1060,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const i = pool.findIndex((f) => f.name === item.name && f.size === item.size);
     if (i === -1 || !peer) return;
     const file = pool[i];
+    if (!file) return;
     setItems((prev) => prev.filter((t) => t.id !== id));
     if (notifyPeer) peer.requestResume(id);
     void peer.offerFiles([file]).catch(() => {

@@ -18,7 +18,7 @@ export function navigate(path: string): void {
 
 function parseCode(path: string): string | null {
   const m = path.match(/^\/r\/([^/]+)/);
-  return m ? decodeURIComponent(m[1]) : null;
+  return m && m[1] ? decodeURIComponent(m[1]) : null;
 }
 
 export function useRoute(): { path: string; code: string | null } {
