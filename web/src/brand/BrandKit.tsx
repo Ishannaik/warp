@@ -494,7 +494,8 @@ export default function BrandKit() {
             }}
           >
             <WarpLogo size={isMobile ? 52 : 66} />
-            <span
+            {/* The page's single h1 — section blocks below start at h2. */}
+            <h1
               style={{
                 fontFamily: DISPLAY,
                 fontWeight: 800,
@@ -502,10 +503,11 @@ export default function BrandKit() {
                 letterSpacing: "-.04em",
                 lineHeight: 0.9,
                 textTransform: "uppercase",
+                margin: 0,
               }}
             >
               Warp
-            </span>
+            </h1>
           </div>
           <p
             style={{

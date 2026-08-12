@@ -15,11 +15,22 @@
  * the global keyframes media query.
  */
 
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { formatBytes, type OfferItem, type TransferItem } from "../lib/warp/transfer";
+import {
+  TEXT_SNIPPET_MAX_BYTES,
+  formatBytes,
+  summarizeBatches,
+  textSnippetFrameBytes,
+  type BatchSummary,
+  type OfferItem,
+  type TransferItem,
+} from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
-import type { Connection } from "../lib/warp/useWarpTransfer";
+import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
+import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
+import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
+import { convertToJpeg, isHeicMime, jpegFilename } from "../lib/warp/imageConvert";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -42,6 +53,20 @@ function typeGlyph(mime: string, kind: TransferItem["kind"]): string {
 /** Aggregate size label for a manifest. */
 function totalBytes(items: { size: number }[]): number {
   return items.reduce((s, i) => s + i.size, 0);
+}
+
+/** Trigger a browser download of a blob via a transient object-URL anchor
+ *  (same small helper duplicated per-file elsewhere — useWarpTransfer.ts,
+ *  useNearbyTransfer.ts, zipDownload.ts — rather than shared). */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ----------------------------------------------------------------- thumbnail */
@@ -90,6 +115,7 @@ const STATUS_COPY: Record<TransferItem["status"], string> = {
   offered: "WAITING",
   transferring: "MOVING",
   reconnecting: "RESUMING",
+  paused: "PAUSED",
   done: "DONE",
   declined: "DECLINED",
   cancelled: "CANCELLED",
@@ -99,6 +125,7 @@ const STATUS_COPY: Record<TransferItem["status"], string> = {
 function statusColor(status: TransferItem["status"]): string {
   if (status === "done") return "var(--acc)";
   if (status === "transferring" || status === "reconnecting") return "var(--amb)";
+  if (status === "paused") return "#efe9da";
   if (status === "declined" || status === "cancelled" || status === "error") return "#6f6a5d";
   return "#908a7b";
 }
@@ -110,12 +137,16 @@ function statusColor(status: TransferItem["status"]): string {
 const ItemRow = memo(function ItemRow({
   item,
   onCancel,
+  onPause,
+  onResume,
   onDownload,
   isMobile,
   peerLabel,
 }: {
   item: TransferItem;
   onCancel: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDownload: (id: string) => void;
   isMobile: boolean;
   /** Which device this item is to/from — shown only in a multi-device room. */
@@ -126,7 +157,9 @@ const ItemRow = memo(function ItemRow({
   const col = statusColor(item.status);
   // "reconnecting" holds the bar at its last % and shows RESUMING; it's still an
   // active, cancellable transfer, so it renders like transferring but labeled.
+  // "paused" is user-held: same bar, not an error, with a resume affordance.
   const active = item.status === "transferring" || item.status === "reconnecting";
+  const paused = item.status === "paused";
   const reconnecting = item.status === "reconnecting";
   const isText = item.kind === "text";
   // Items streamed straight to disk have no in-memory blob — they're already
@@ -139,6 +172,27 @@ const ItemRow = memo(function ItemRow({
     item.status === "done" &&
     !item.savedToDisk &&
     !!item.blob;
+
+  // "Save as JPEG" (#258): converted eagerly (not on click) so the option can
+  // be offered-or-skipped correctly — createImageBitmap rejecting on this
+  // browser/file IS the "can't decode HEIC" signal, and there's no way to know
+  // that without attempting it. undefined = not attempted or not decodable
+  // (button stays hidden either way); a Blob means the button appears.
+  const [jpeg, setJpeg] = useState<Blob | undefined>(undefined);
+  const wantsJpeg = canDownload && isHeicMime(item.mime);
+  useEffect(() => {
+    if (!wantsJpeg || !item.blob) return;
+    let cancelled = false;
+    convertToJpeg(item.blob).then((blob) => {
+      if (!cancelled) setJpeg(blob);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // item.blob is stable for the lifetime of a "done" item; re-running this
+    // per progress tick would re-decode the same file repeatedly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsJpeg, item.id]);
 
   const copyText = async () => {
     if (!item.text) return;
@@ -169,6 +223,7 @@ const ItemRow = memo(function ItemRow({
 
         <span style={{ minWidth: 0, flex: 1 }}>
           <span
+            title={isText ? undefined : item.name}
             style={{
               display: "block",
               fontSize: "14px",
@@ -207,18 +262,41 @@ const ItemRow = memo(function ItemRow({
           </span>
         </span>
 
-        {/* row actions */}
-        <span style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-          {active && (
-            <button
-              type="button"
-              className="warp-rowbtn"
-              onClick={() => onCancel(item.id)}
-              aria-label="Cancel transfer"
-              style={iconBtn}
+        {/* row actions — at 360px a two-button group replaces the single cancel
+            affordance; never a third control on the same line */}
+        <span style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+          {(active || paused) && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0,
+                border: `1px solid ${HAIRLINE}`,
+              }}
             >
-              ✕
-            </button>
+              <button
+                type="button"
+                className="warp-rowbtn"
+                onClick={() => (paused ? onResume(item.id) : onPause(item.id))}
+                aria-label={paused ? "Resume transfer" : "Pause transfer"}
+                style={{ ...iconBtn, border: "none", width: isMobile ? "28px" : "30px" }}
+              >
+                {paused ? "▶" : "Ⅱ"}
+              </button>
+              <span
+                aria-hidden
+                style={{ width: "1px", alignSelf: "stretch", background: HAIRLINE }}
+              />
+              <button
+                type="button"
+                className="warp-rowbtn"
+                onClick={() => onCancel(item.id)}
+                aria-label="Cancel transfer"
+                style={{ ...iconBtn, border: "none", width: isMobile ? "28px" : "30px" }}
+              >
+                ✕
+              </button>
+            </span>
           )}
           {canDownload && (
             <button
@@ -239,6 +317,28 @@ const ItemRow = memo(function ItemRow({
               }}
             >
               Download
+            </button>
+          )}
+          {canDownload && jpeg && (
+            <button
+              type="button"
+              className="warp-cta"
+              onClick={() => saveBlob(jpeg, jpegFilename(item.name))}
+              title="The original stays available via Download"
+              style={{
+                padding: "8px 14px",
+                background: "transparent",
+                color: "var(--acc)",
+                border: "1px solid var(--acc)",
+                fontFamily: MONO,
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: ".06em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+            >
+              Save as JPEG
             </button>
           )}
           {savedToDisk && (
@@ -307,38 +407,37 @@ const ItemRow = memo(function ItemRow({
         </div>
       )}
 
-      {/* progress bar while transferring */}
-      {active && (
+      {/* progress bar while transferring or paused (held % — not an error) */}
+      {(active || paused) && (
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span
+          <div
             style={{
               flex: 1,
-              height: "6px",
-              background: "rgba(239,233,218,.09)",
+              height: "3px",
+              background: "rgba(239,233,218,.08)",
               overflow: "hidden",
             }}
           >
-            <span
+            <div
               style={{
-                display: "block",
                 height: "100%",
                 width: `${item.progress}%`,
-                background: col,
-                transition: "width .12s linear",
+                background: paused ? "#efe9da" : reconnecting ? "var(--amb)" : "var(--acc)",
+                transition: "width .2s linear",
               }}
             />
-          </span>
+          </div>
           <span
             style={{
               fontFamily: MONO,
               fontSize: "10.5px",
-              color: reconnecting ? "var(--amb)" : "#a8a293",
-              width: reconnecting ? "auto" : "34px",
-              whiteSpace: "nowrap",
+              letterSpacing: ".04em",
+              color: paused ? "#efe9da" : reconnecting ? "var(--amb)" : "#6f6a5d",
+              minWidth: "44px",
               textAlign: "right",
             }}
           >
-            {reconnecting ? `⟳ ${item.progress}%` : `${item.progress}%`}
+            {paused ? `Ⅱ ${item.progress}%` : reconnecting ? `⟳ ${item.progress}%` : `${item.progress}%`}
           </span>
         </div>
       )}
@@ -395,14 +494,17 @@ function Composer({
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
   const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";
+  const trimmedText = text.trim();
+  const frameBytes = textSnippetFrameBytes(trimmedText);
+  const textTooLarge = frameBytes > TEXT_SNIPPET_MAX_BYTES;
+  const canSendText = !!trimmedText && !textTooLarge;
 
   const pickFiles = () => fileInput.current?.click();
   const pickFolder = () => folderInput.current?.click();
 
   const submitText = () => {
-    const t = text.trim();
-    if (!t) return;
-    onSendText(t);
+    if (!canSendText) return;
+    onSendText(trimmedText);
     setText("");
   };
 
@@ -447,6 +549,8 @@ function Composer({
         {/* text snippet */}
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           <textarea
+            aria-invalid={textTooLarge}
+            aria-describedby={textTooLarge ? "text-size-hint" : undefined}
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="…or paste a link / note to send as text"
@@ -471,23 +575,38 @@ function Composer({
               lineHeight: 1.5,
             }}
           />
+          {textTooLarge && (
+            <div
+              id="text-size-hint"
+              role="status"
+              style={{
+                color: "#ef6a3d",
+                fontFamily: MONO,
+                fontSize: "11px",
+                lineHeight: 1.45,
+                overflowWrap: "anywhere",
+              }}
+            >
+              Too long to send as text ({formatBytes(frameBytes)}). Save it as a .txt file and send that instead.
+            </div>
+          )}
           <button
             type="button"
-            className={text.trim() ? "warp-cta" : undefined}
+            className={canSendText ? "warp-cta" : undefined}
             onClick={submitText}
-            disabled={!text.trim()}
+            disabled={!canSendText}
             style={{
               alignSelf: isMobile ? "stretch" : "flex-end",
               padding: "11px 22px",
-              background: text.trim() ? "var(--acc)" : "rgba(239,233,218,.12)",
-              color: text.trim() ? "#fff" : "#6f6a5d",
+              background: canSendText ? "var(--acc)" : "rgba(239,233,218,.12)",
+              color: canSendText ? "#fff" : "#6f6a5d",
               border: "none",
               fontFamily: MONO,
               fontSize: "11.5px",
               fontWeight: 600,
               letterSpacing: ".07em",
               textTransform: "uppercase",
-              cursor: text.trim() ? "pointer" : "not-allowed",
+              cursor: canSendText ? "pointer" : "not-allowed",
             }}
           >
             Send text{fanout} →
@@ -595,6 +714,7 @@ function PendingTray({
           >
             <Thumb item={{ mime: p.file.type, kind: "file" }} size={isMobile ? 34 : 38} />
             <span
+              title={p.file.name}
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -666,11 +786,91 @@ function composerBtn(isMobile: boolean): CSSProperties {
   };
 }
 
+/* ------------------------------------------------------------- batch progress */
+
+/**
+ * One aggregate bar for a multi-file batch: "3 of 8 files · 340 MB of 900 MB".
+ * Byte-weighted so a handful of large files don't get drowned out by a pile of
+ * tiny ones finishing first. Purely derived from the batch's own items — see
+ * `summarizeBatches` for the grouping/rollup. Single-file transfers never
+ * produce a summary (see there), so this never renders redundantly.
+ */
+function BatchBar({ batch, isMobile }: { batch: BatchSummary; isMobile: boolean }) {
+  const complete = batch.done >= batch.total;
+  const col = complete ? "var(--acc)" : "var(--amb)";
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: isMobile ? "12px" : "13px 15px",
+        borderBottom: `1px solid ${HAIRLINE}`,
+        background: "rgba(var(--acc-rgb),.04)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "10px",
+          fontFamily: MONO,
+          fontSize: "10.5px",
+          letterSpacing: ".05em",
+          color: "#a8a293",
+        }}
+      >
+        <span>
+          {batch.direction === "receive" ? "↓" : "↑"} Batch · {batch.done} of {batch.total} files
+        </span>
+        <span style={{ color: "#6f6a5d", whiteSpace: "nowrap" }}>
+          {formatBytes(batch.bytesDone)} of {formatBytes(batch.bytesTotal)}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <span
+          style={{
+            flex: 1,
+            height: "7px",
+            background: "rgba(239,233,218,.09)",
+            overflow: "hidden",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              height: "100%",
+              width: `${batch.progress}%`,
+              background: col,
+              transition: "width .12s linear",
+            }}
+          />
+        </span>
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: "10.5px",
+            color: "#a8a293",
+            width: "34px",
+            whiteSpace: "nowrap",
+            textAlign: "right",
+          }}
+        >
+          {batch.progress}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ the tray */
 
 function Tray({
   items,
   onCancel,
+  onPause,
+  onResume,
   onDownload,
   onDownloadAll,
   isMobile,
@@ -678,6 +878,8 @@ function Tray({
 }: {
   items: TransferItem[];
   onCancel: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDownload: (id: string) => void;
   onDownloadAll: () => void;
   isMobile: boolean;
@@ -689,6 +891,9 @@ function Tray({
   const receivedFiles = items.filter(
     (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && !t.savedToDisk && t.blob,
   ).length;
+
+  // Aggregate bar(s) for any batch of 2+ files, shown above the per-file rows.
+  const batches = useMemo(() => summarizeBatches(items), [items]);
 
   return (
     <div style={{ border: `1px solid ${HAIRLINE}`, background: "#15140f" }}>
@@ -735,6 +940,10 @@ function Tray({
         )}
       </div>
 
+      {batches.map((batch) => (
+        <BatchBar key={batch.batchId} batch={batch} isMobile={isMobile} />
+      ))}
+
       {items.length === 0 ? (
         <div
           style={{
@@ -753,6 +962,8 @@ function Tray({
             key={item.id}
             item={item}
             onCancel={onCancel}
+            onPause={onPause}
+            onResume={onResume}
             onDownload={onDownload}
             isMobile={isMobile}
             peerLabel={labelForPeer?.(item.peerId)}
@@ -764,10 +975,6 @@ function Tray({
 }
 
 /* --------------------------------------------------------------- accept modal */
-
-// Mirrors LARGE_THRESHOLD in useWarpTransfer: large batches stream straight to
-// disk via a folder/file picker instead of accumulating in memory.
-const LARGE_THRESHOLD = 256 * 1024 * 1024;
 
 export function AcceptModal({
   items,
@@ -785,10 +992,11 @@ export function AcceptModal({
   const total = totalBytes(items);
   // A large batch will surface a native folder/file picker on Accept (the hook
   // streams it to disk), so we tell the user to expect that and to choose a spot.
-  const large =
-    typeof window !== "undefined" &&
-    ("showSaveFilePicker" in window || "showDirectoryPicker" in window) &&
-    (total >= LARGE_THRESHOLD || items.some((it) => it.size >= LARGE_THRESHOLD));
+  // Shares LARGE_THRESHOLD + the capability check with useWarpTransfer (#54), so
+  // this copy can't drift from what accept() actually does.
+  const fs = detectFsAccessSupport();
+  const biggest = items.reduce((m, it) => Math.max(m, it.size), 0);
+  const large = (fs.canSaveFile || fs.canPickDirectory) && isLargeBatch(total, biggest);
   const pickTarget = items.length > 1 ? "folder" : "file";
 
   return (
@@ -888,6 +1096,7 @@ export function AcceptModal({
             >
               <Thumb item={it} size={isMobile ? 34 : 38} />
               <span
+                title={it.name}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -1000,6 +1209,83 @@ function DeviceChip({ label, connected }: { label: string; connected: boolean })
   );
 }
 
+/* ------------------------------------------------------------ stats strip */
+
+/**
+ * Live throughput readout shown while bytes are in flight: smoothed speed on
+ * the left, ETA on the right, with the bytes still to move between them. The
+ * hook aggregates every active file (both directions), so a mesh room moving
+ * several files at once sees one combined figure. Speed shows "—" until the
+ * rolling window has enough samples; ETA shows "calculating…" until the speed
+ * is stable enough to divide the remainder by — no garbage or Infinity.
+ */
+function StatsStrip({ stats, isMobile }: { stats: TransferStats; isMobile: boolean }) {
+  if (!stats.active) return null;
+  const speed = stats.speedBps > 0 ? formatSpeed(stats.speedBps) : "—";
+  const eta =
+    stats.etaSeconds !== null && stats.etaSeconds > 0 ? `~${formatDuration(stats.etaSeconds)} left` : "calculating…";
+  const cell: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "4px",
+    minWidth: 0,
+  };
+  const label: CSSProperties = {
+    fontFamily: MONO,
+    fontSize: "9.5px",
+    letterSpacing: ".18em",
+    textTransform: "uppercase",
+    color: "#6f6a5d",
+  };
+  const value: CSSProperties = {
+    fontFamily: MONO,
+    fontSize: isMobile ? "14px" : "15px",
+    fontWeight: 600,
+    letterSpacing: ".02em",
+    color: "#efe9da",
+    whiteSpace: "nowrap",
+  };
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: isMobile ? "14px" : "22px",
+        padding: isMobile ? "11px 14px" : "12px 16px",
+        border: `1px solid ${HAIRLINE}`,
+        background: "rgba(var(--acc-rgb),.05)",
+      }}
+    >
+      <span
+        style={{
+          width: "7px",
+          height: "7px",
+          flexShrink: 0,
+          background: "var(--amb)",
+          animation: "warpBlink 1.1s steps(1) infinite",
+        }}
+      />
+      <span style={cell}>
+        <span style={label}>Speed</span>
+        <span style={{ ...value, color: "var(--amb)" }}>{speed}</span>
+      </span>
+      <span style={{ ...cell, marginLeft: "auto", alignItems: "flex-end" }}>
+        <span style={label}>Left to move</span>
+        <span style={{ ...value, fontSize: isMobile ? "12.5px" : "13px", color: "#a8a293" }}>
+          {formatBytes(stats.remainingBytes)}
+        </span>
+      </span>
+      <span style={{ ...cell, alignItems: "flex-end" }}>
+        <span style={label}>ETA</span>
+        <span style={value}>{eta}</span>
+      </span>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- session view */
 
 /**
@@ -1013,10 +1299,13 @@ export function SessionView({
   onSendFiles,
   onSendText,
   onCancel,
+  onPause,
+  onResume,
   onDownloadOne,
   onDownloadAll,
   isMobile,
   heading = "Session open",
+  stats,
   pending,
   onAddFiles,
   onRemovePending,
@@ -1028,10 +1317,14 @@ export function SessionView({
   onSendFiles: (files: File[]) => void;
   onSendText: (text: string) => void;
   onCancel: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDownloadOne: (id: string) => void;
   onDownloadAll: () => void;
   isMobile: boolean;
   heading?: string;
+  /** Live speed + ETA readout (from useWarpTransfer); omitted = no strip. */
+  stats?: TransferStats;
   /** Files staged but not yet offered. Editable until onSendPending fires. */
   pending?: PendingFile[];
   /** Add picked/dropped files to the pending queue. */
@@ -1129,6 +1422,8 @@ export function SessionView({
         </span>
       </div>
 
+      {stats && <StatsStrip stats={stats} isMobile={isMobile} />}
+
       <Composer
         onSendFiles={onSendFiles}
         onSendText={onSendText}
@@ -1143,6 +1438,8 @@ export function SessionView({
       <Tray
         items={items}
         onCancel={onCancel}
+        onPause={onPause}
+        onResume={onResume}
         onDownload={onDownloadOne}
         onDownloadAll={onDownloadAll}
         isMobile={isMobile}

@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 
 /**
- * Accent palettes ported verbatim from the Wrap design source.
+ * Accent palettes ported verbatim from the Warp design source.
  * The shipped default variant is `Ultramarine`.
  */
 export interface Palette {
@@ -21,7 +21,7 @@ export const PALETTES = {
 export type PaletteName = keyof typeof PALETTES;
 
 /**
- * Channel-activity modes ported verbatim from the Wrap design source.
+ * Channel-activity modes ported verbatim from the Warp design source.
  * The shipped default variant is `Live`.
  *
  * - `i`    : simulation tick interval in ms

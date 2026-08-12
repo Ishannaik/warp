@@ -3,8 +3,8 @@ import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * Section 04 — "How it compares".
- * Comparison table of Wrap vs AirDrop / WeTransfer / Wormhole.
- * Ported verbatim from the Wrap design source (#compare).
+ * Comparison table of Warp vs AirDrop / WeTransfer / Wormhole.
+ * Ported verbatim from the Warp design source (#compare).
  */
 
 const CHECK = "✓"; // ✓

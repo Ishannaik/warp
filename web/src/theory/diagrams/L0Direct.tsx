@@ -35,7 +35,7 @@ export default function L0Direct() {
   const accLine = "rgba(83,96,255,.55)";
 
   /* A faint, pre-existing access link. Drawn as a dim dashed stub with a
-     "sunk cost / flat rate" tag — it exists whether or not Wrap uses it. */
+     "sunk cost / flat rate" tag — it exists whether or not Warp uses it. */
   function AccessStub({ tag, align }: { tag: string; align: "left" | "right" }) {
     return (
       <div

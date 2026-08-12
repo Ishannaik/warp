@@ -1,32 +1,58 @@
 import { useEffect } from "react";
 
 /**
- * Sets the document title and `<meta name="description">` content for the
- * current route, so JS-rendering crawlers (e.g. Googlebot) and the browser tab
- * reflect the active page.
+ * Sets the per-route document metadata: title, `<meta name="description">`,
+ * the canonical link, and the Open Graph / Twitter title/description/URL —
+ * so JS-rendering crawlers (e.g. Googlebot) and link unfurlers see the active
+ * page, not the static index.html defaults for every route.
  *
- * - On mount/update, sets `document.title` and the meta description content,
- *   creating the `<meta name="description">` tag if it does not exist.
- * - Restores nothing on unmount: every route is expected to call this hook with
- *   its own title/description, so the next route overwrites the previous values.
+ * - On mount/update, sets `document.title` and updates the existing tags from
+ *   index.html in place (creating any that are missing).
+ * - `path` is the route's CANONICAL path (session URLs like /r/<code> map to
+ *   their stable page before being passed in). The canonical origin is fixed:
+ *   mirrors (the Pages preview host, warp.pixalabs.net) deliberately point at
+ *   the one canonical domain instead of self-canonicalizing.
+ * - Restores nothing on unmount: every route calls this hook with its own
+ *   values, so the next route overwrites the previous ones.
  * - SSR-safe: guards `document` and does nothing when it is unavailable.
  */
-export function useDocumentSeo(title: string, description?: string): void {
+
+const CANONICAL_ORIGIN = "https://warp.ishannaik.com";
+
+function setMeta(attr: "name" | "property", key: string, content: string): void {
+  let el = document.querySelector<HTMLMetaElement>(`meta[${attr}="${key}"]`);
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute(attr, key);
+    document.head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
+export function useDocumentSeo(title: string, description?: string, path?: string): void {
   useEffect(() => {
     if (typeof document === "undefined") return;
 
     document.title = title;
+    setMeta("property", "og:title", title);
+    setMeta("name", "twitter:title", title);
 
     if (description !== undefined) {
-      let meta = document.querySelector<HTMLMetaElement>(
-        'meta[name="description"]',
-      );
-      if (!meta) {
-        meta = document.createElement("meta");
-        meta.setAttribute("name", "description");
-        document.head.appendChild(meta);
-      }
-      meta.setAttribute("content", description);
+      setMeta("name", "description", description);
+      setMeta("property", "og:description", description);
+      setMeta("name", "twitter:description", description);
     }
-  }, [title, description]);
+
+    if (path !== undefined) {
+      const canonical = CANONICAL_ORIGIN + (path === "/" ? "/" : path);
+      let link = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+      if (!link) {
+        link = document.createElement("link");
+        link.setAttribute("rel", "canonical");
+        document.head.appendChild(link);
+      }
+      link.setAttribute("href", canonical);
+      setMeta("property", "og:url", canonical);
+    }
+  }, [title, description, path]);
 }

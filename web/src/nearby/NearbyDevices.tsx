@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { navigate } from "../router";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useTransferTitle } from "../lib/useTransferTitle";
 import { AcceptModal, SessionView } from "../transfer/SessionView";
 import { useNearbyTransfer, type NearbyDevice } from "./useNearbyTransfer";
+import type { DeviceType } from "../lib/warp/useNearby";
 
 /**
  * "On your network" — LAN auto-discovery surface for the landing page.
  *
- * Lists other Wrap devices on the same Wi-Fi (no code needed). Tap a device to
+ * Lists other Warp devices on the same Wi-Fi (no code needed). Tap a device to
  * pick files and offer them across. Review-before-receive redesign: an inbound
  * FILE offer raises the SAME accept modal as the code-room flow (with the file
  * manifest, thumbnails, sizes), and on accept the files land in an in-app TRAY
@@ -27,6 +29,11 @@ export default function NearbyDevices() {
   const isMobile = useIsMobile();
   const nearby = useNearbyTransfer();
   const { devices, crowded, deviceName, sessions, incoming, rename } = nearby;
+
+  // #15: live progress in the tab title while a nearby transfer is in flight.
+  useTransferTitle(
+    sessions.flatMap((session) => session.items),
+  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(deviceName);
@@ -182,7 +189,6 @@ export default function NearbyDevices() {
                   background: "rgba(239,233,218,.06)",
                   border: "1px solid var(--acc)",
                   padding: "2px 6px",
-                  outline: "none",
                   width: "140px",
                 }}
               />
@@ -425,6 +431,7 @@ export default function NearbyDevices() {
             />
           ) : (
             <SessionView
+              
               peerLabel={currentSession.peerName}
               items={currentSession.items}
               onSendFiles={(files) =>
@@ -436,6 +443,8 @@ export default function NearbyDevices() {
               onCancel={(id) =>
                 nearby.cancel(currentSession.peerId, id)
               }
+              onPause={() => {}}
+              onResume={() => {}}
               onDownloadOne={(id) =>
                 nearby.downloadOne(currentSession.peerId, id)
               }
@@ -460,6 +469,52 @@ export default function NearbyDevices() {
         />
       ))}
     </section>
+  );
+}
+
+/* ----------------------------------------------------------------- device icon */
+
+/**
+ * Phone / tablet / desktop glyph, guessed client-side from the announcing
+ * device's UA (see `useNearby.ts`). Unrecognized types already normalize to
+ * "desktop" upstream, so this always has a shape to draw.
+ */
+function DeviceTypeIcon({ type }: { type: DeviceType }) {
+  const common = {
+    width: 15,
+    height: 15,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "var(--acc)",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+
+  if (type === "mobile") {
+    return (
+      <svg {...common}>
+        <rect x="7" y="2" width="10" height="20" rx="2" />
+        <line x1="11" y1="18" x2="13" y2="18" />
+      </svg>
+    );
+  }
+
+  if (type === "tablet") {
+    return (
+      <svg {...common}>
+        <rect x="4" y="3" width="16" height="18" rx="2" />
+        <line x1="11" y1="17.5" x2="13" y2="17.5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common}>
+      <rect x="2" y="4" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="18" x2="12" y2="21" />
+    </svg>
   );
 }
 
@@ -551,7 +606,7 @@ function DeviceCard({
           justifyContent: "center",
         }}
       >
-        <span style={{ width: "10px", height: "10px", background: "var(--acc)" }} />
+        <DeviceTypeIcon type={device.deviceType} />
         <span
           style={{
             position: "absolute",

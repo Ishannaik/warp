@@ -14,8 +14,10 @@
     />
     <link rel="canonical" href="https://warp.ishannaik.com/" />
 
-    <!-- Open Graph -->
+    <!-- Open Graph (title / description / url are updated per route at runtime
+         by useDocumentSeo; these are the defaults for the landing page) -->
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:site_name" content="Warp" />
     <meta property="og:title" content="Warp — Send files directly between devices" />
     <meta
@@ -56,6 +58,8 @@
       }
     </script>
 
+    <!-- Self-hosters: update this origin when VITE_SIGNALING_URL points elsewhere. -->
+    <link rel="preconnect" href="https://warp-signaling.ishannaik7.workers.dev" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

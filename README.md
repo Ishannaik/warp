@@ -15,10 +15,13 @@ Peer-to-peer file transfer that **never touches a server**. Pick a file, share a
 <a href="https://warp.ishannaik.com/how">How it works</a>
 &nbsp;·&nbsp;
 <a href="https://github.com/Ishannaik/warp/issues">Issues</a>
+&nbsp;·&nbsp;
+<a href="https://discord.gg/KKvtRhQvRv">Discord</a>
 </p>
 
 [![CI](https://github.com/Ishannaik/warp/actions/workflows/ci.yml/badge.svg)](https://github.com/Ishannaik/warp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-5360ff.svg)](./LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/KKvtRhQvRv)
 ![Built with WebRTC](https://img.shields.io/badge/WebRTC-P2P-5360ff)
 ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers-ef6a3d)
 ![Cost](https://img.shields.io/badge/cost-%240%20%C2%B7%20no%20card-1f9d55)
@@ -55,6 +58,10 @@ Warp is open source and **we welcome PRs**, from a one-line typo fix to engine w
 - 🌱 **[Grab a good first issue](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22)**. Each one is scoped, self-contained, and picked for newcomers.
 
 ---
+
+## Governance & privacy
+
+Warp is MIT-licensed, and its privacy guarantee comes from its architecture rather than a policy promise. The project's $0, no-TURN, and no-storage constraints keep file bytes out of Warp's infrastructure; introducing a hosted file relay or storage tier would require a visible architecture change, not a quiet policy edit. See [SECURITY.md](./SECURITY.md) and [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the trust boundary and technical design.
 
 ## Why it's different
 
@@ -119,6 +126,8 @@ pnpm --filter @warp/server test   # signaling e2e
 Point `VITE_SIGNALING_URL` in the frontend at your signaling server's `wss://` URL (see [`web/.env.example`](./web/.env.example)). Vite inlines it at build time, so rebuild after changing it.
 
 ## Architecture & protocol
+
+Receive behavior varies by browser capability and file size; see the [browser support and receive-strategy matrix](./docs/BROWSER-SUPPORT.md) for the current disk, OPFS, IndexedDB, and memory paths.
 
 See [`server/README.md`](./server/README.md) for the signaling protocol: message contract, room lifecycle, and mesh rules.
 

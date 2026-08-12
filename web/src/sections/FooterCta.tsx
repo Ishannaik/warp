@@ -4,7 +4,7 @@ import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * FooterCta — closing call-to-action + footer bar.
- * Ported verbatim from the Wrap design export (FOOTER CTA section):
+ * Ported verbatim from the Warp design export (FOOTER CTA section):
  *  - giant masked <h2> "Send it / straight through." with accent glow
  *  - "Start a transfer →" button
  *  - footer chrome: wordmark, links, "MIT LICENSED · MADE FOR THE OPEN WEB"

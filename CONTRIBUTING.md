@@ -4,6 +4,8 @@ First off — thanks! Warp is a small, deliberately-lean project, and that's exa
 
 Never contributed to open source before? Warp is a friendly place to start. Read the ["Your first PR"](#your-first-pr-a-walkthrough) walkthrough below, pick a [`good first issue`](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22), and don't be shy about opening a draft PR early — we'd rather help you mid-flight than review a finished thing that went sideways.
 
+**Want to talk before you build?** [Join the Discord](https://discord.gg/KKvtRhQvRv). Ask which issue suits you, sanity-check an approach, or say hi. Many of the larger issues carry a Mermaid diagram of the flow they touch, so start there if you want to see how a piece fits before writing code.
+
 ## What Warp is
 
 Peer-to-peer file transfer in the browser. Pick a file, share a 6-character code, and bytes stream device-to-device over an encrypted WebRTC data channel. **No uploads, no accounts, no size limits, no cloud** — and no server ever touches a file byte.
@@ -57,16 +59,21 @@ CI (`.github/workflows/ci.yml`) runs exactly these, path-filtered — only the p
 
 ### The engine check harnesses
 
-The engine has runnable, dependency-free checks next to each module — no test runner, just `node` and small stubs for the browser globals (a fake `RTCDataChannel`, etc.):
+The engine has runnable, dependency-free checks next to each module — no test runner, just `node` and small stubs for the browser globals (a fake `RTCDataChannel`, etc.). Run them all with one command:
+
+```bash
+pnpm --filter @warp/web check:engine   # every src/lib/warp/*.check.mjs, fail-fast
+```
+
+The runner (`web/scripts/run-checks.mjs`) globs `src/lib/warp/*.check.mjs`, so a new harness dropped next to a module is picked up automatically. CI runs it in the `web` job — a PR that breaks reconnect/resume logic goes red. To run a single harness while you're working:
 
 ```bash
 cd web
-node src/lib/warp/signaling.check.mjs          # reconnect/backoff behaviour
 node src/lib/warp/peer.check.mjs               # offer -> accept -> stream -> received round-trip, decline, cancel
-node src/lib/warp/transfer.check.mjs           # resume identity helpers
-node src/lib/warp/receiveController.check.mjs  # durable-write sink invariants
 node src/lib/warp/useWarpTransfer.check.mjs    # hook orchestration / salvage-on-reconnect
+node src/lib/warp/opfsStage.check.mjs          # OPFS receive sink (primary large-receive fallback)
 node src/lib/warp/idbStage.check.mjs           # IDB staging sink
+node src/lib/warp/roomCode.check.mjs           # room-code sanitize + alphabet validation
 ```
 
 **If you touch a file in `web/src/lib/warp/`, run its `.check.mjs` — and extend it to cover your change.** These harnesses are the engine's regression net.
@@ -80,7 +87,7 @@ These are non-negotiable. A PR that violates one will be asked to change, no mat
 3. **The signaling server stays a dumb relay.** It introduces peers and forwards opaque SDP/ICE blobs. It must never read, store, log, or understand file contents, filenames, or manifests. Data-plane logic belongs in the browser.
 4. **Mobile-first, always.** Every UI must work at **~360–430px wide with zero horizontal overflow**. Branch layout with `useIsMobile()` (`web/src/lib/useIsMobile.ts`) — the design was ported from a desktop export, so any new component **must** include the mobile branch. Verify at phone width (DevTools device toolbar) before opening the PR.
 5. **Match the design tokens exactly.** bg `#121110`, ink `#efe9da`, body `#a8a293`, muted `#6f6a5d`, accent `var(--acc)` `#5360ff`, amber `var(--amb)` `#ef6a3d`. Fonts: Bricolage Grotesque (display), Archivo (body), JetBrains Mono (mono/UI chrome). Hairlines `rgba(239,233,218,.12–.16)`. Components are deliberately inline-`style`-heavy (a faithful design port) — **keep that style**; don't refactor to utility classes or CSS modules in passing.
-6. **`SEND_HIGH_WATER` (in `peer.ts`) must stay well below 16 MiB.** Chrome's SCTP send buffer hard-caps at 16 MiB and `bufferedAmount` can never exceed it — a ≥16 MiB high-water mark disables backpressure entirely and large transfers die mid-send. It's 8 MiB today, and the backpressure check counts the chunk about to be sent. Don't "tune" this upward.
+6. **`SEND_HIGH_WATER` (in `peer.ts`) must stay well below the 16 MiB `bufferedAmount` cap.** That's libwebrtc's send-queue limit, not "the SCTP send buffer" (which is a separate 256 KiB at the usrsctp layer) — `bufferedAmount` can never exceed 16 MiB, since `send()` throws first, so a ≥16 MiB high-water mark disables backpressure entirely and large transfers die mid-send. It's 8 MiB today, and the backpressure check counts the chunk about to be sent. Don't "tune" this upward.
 7. **Transfers must survive drops.** Signaling auto-reconnects and rejoins; the initiator ICE-restarts; unfinished sends are re-offered after a peer rebuild. Don't turn transient network blips back into terminal errors. Related: **never remove the 8s keepalive ping** (the Durable Object hibernates after 10s idle and drops waiting rooms) and **never mint room codes on the client** (the server owns codes; the creator joins with no code and uses `joined.room`).
 
 ## Finding something to work on
@@ -118,7 +125,7 @@ Docs, typo fixes, and accessibility improvements are real contributions too, and
 5. **Make the change.** Keep it small. Match the surrounding style — including the inline styles in components.
 6. **Verify:**
    - `pnpm lint && pnpm typecheck && pnpm --filter @warp/web build`
-   - the relevant `node src/lib/warp/*.check.mjs` harness(es) if you touched the engine
+   - `pnpm --filter @warp/web check:engine` if you touched the engine (or the single relevant `node src/lib/warp/*.check.mjs`)
    - `pnpm --filter @warp/server test` if you touched the server
    - **at ~390px width** in DevTools if you touched any UI — no horizontal scroll allowed
 7. **Commit** with a conventional message and push:

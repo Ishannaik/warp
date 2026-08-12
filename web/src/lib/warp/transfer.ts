@@ -15,17 +15,34 @@
  * batch manifest (`offer`) and waits for the receiver's `accept`/`decline`. No
  * bytes flow until the receiver explicitly accepts. The channel stays OPEN after
  * a batch so either peer can offer again without re-pairing.
+ *
+ * Optional compression (#130): the receiver advertises the codecs it can decode in
+ * its `accept` frame; the sender then compresses each binary chunk and names the
+ * codec in `file-begin`. A receiver that advertises nothing gets raw bytes, so the
+ * protocol stays backward compatible. See compress.ts.
  */
 
-/** 16 KiB chunk size — the SCTP-friendly sweet spot used across the design copy. */
-export const CHUNK_SIZE = 16 * 1024;
+import type { Codec } from "./compress";
+import type { PieceManifest } from "./pieceManifest";
+
+/** Text snippets stay as one JSON control frame; keep them below old SCTP caps. */
+export const TEXT_SNIPPET_MAX_BYTES = 64 * 1024;
+const TEXT_SNIPPET_SIZE_PROBE_ID = "xxxxxxxx";
+const TEXT_FRAME_ENCODER = new TextEncoder();
+
+/** Serialized UTF-8 size of the actual text control frame sent on the wire. */
+export function textSnippetFrameBytes(text: string, id = TEXT_SNIPPET_SIZE_PROBE_ID): number {
+  return TEXT_FRAME_ENCODER.encode(JSON.stringify({ t: "text", id, text })).byteLength;
+}
 
 /**
- * bufferedAmount high-water mark. When the channel's send buffer exceeds this
- * we stop pumping and wait for `bufferedamountlow` before resuming, so we never
- * balloon memory on a fast disk / slow link.
+ * bufferedAmount backpressure resumes at this low-water mark (`bufferedAmountLowThreshold`
+ * in peer.ts): the send pump pauses above its high-water mark and waits for
+ * `bufferedamountlow` before refilling. The high-water mark itself lives next to
+ * the pump it gates — `SEND_HIGH_WATER` in peer.ts — so the two limits that are
+ * easy to conflate with the SCTP size caps (see the peer.ts header) stay in one
+ * place each.
  */
-export const HIGH_WATER_MARK = 8 * 1024 * 1024; // 8 MiB
 export const LOW_WATER_MARK = 1 * 1024 * 1024; // 1 MiB
 
 /** A single file's descriptor inside a batch manifest. */
@@ -52,19 +69,39 @@ export type ControlMessage =
   | { t: "offer"; batchId: string; items: OfferItem[] }
   /** Receiver accepts a batch -> sender starts streaming. `resume` maps a file id
    *  to the receiver's durably-written byte count for a resumed file (absent/0 =
-   *  fresh from byte 0). */
-  | { t: "accept"; batchId: string; resume?: Record<string, number> }
+   *  fresh from byte 0). `codecs` advertises the compression codecs the receiver
+   *  can decode (#130); the sender compresses a file only when it's compressible
+   *  AND a codec overlaps. Absent/empty => send raw bytes (backward compatible). */
+  | { t: "accept"; batchId: string; resume?: Record<string, number>; codecs?: Codec[] }
   /** Receiver declines a batch -> sender sends nothing, marks the batch declined. */
   | { t: "decline"; batchId: string }
   /** Sent immediately before a file's binary chunks. `offset` echoes the byte the
    *  sender will actually stream from (tus-style) so the receiver can verify its
    *  partial lines up before appending — and detect a stale sender that ignored
-   *  the resume request and restarted at 0. */
-  | { t: "file-begin"; id: string; offset: number }
+   *  the resume request and restarted at 0. `codec` (optional, #130) names the
+   *  compression codec each following binary chunk is packed with; absent => the
+   *  chunks are raw plaintext bytes. `offset` is always in PLAINTEXT bytes.
+   *  `pieces` (optional, #137) is the per-piece SHA-256 manifest for a FRESH
+   *  (offset 0) file in the manifest size window: the receiver verifies each piece
+   *  as it lands and re-requests any bad index instead of trusting the stream.
+   *  Absent => no per-piece verification (the backward-compatible path). */
+  | { t: "file-begin"; id: string; offset: number; codec?: Codec; pieces?: PieceManifest }
   /** Sent immediately after a file's binary chunks. */
   | { t: "file-end"; id: string }
+  /** Receiver -> sender (#137): the piece at `index` failed its manifest hash;
+   *  re-send just that one piece. The sender answers with a `piece` frame + the
+   *  piece's bytes; the forward stream is unaffected. Only sent when a manifest
+   *  was present, so an old sender (no manifest) never sees one. */
+  | { t: "piece-request"; id: string; index: number }
+  /** Sender -> receiver (#137): the single re-requested piece `index` follows as
+   *  the NEXT binary frame (and only that frame — the two sends are back-to-back
+   *  so nothing interleaves). The receiver routes that binary to its verifier's
+   *  `injectPiece`, not the sequential append path. */
+  | { t: "piece"; id: string; index: number }
   /** Either side cancels a file in flight (sender stops; receiver discards partial). */
   | { t: "cancel"; id: string }
+  /** Either side pauses a file in flight (sender stops the pump; receiver keeps the sink). */
+  | { t: "pause"; id: string }
   /** A text snippet — shown directly in the other side's tray (no accept needed). */
   | { t: "text"; id: string; text: string };
 
@@ -79,6 +116,7 @@ export type TransferStatus =
   | "offered" // announced, awaiting accept (send) / awaiting bytes (receive)
   | "transferring" // bytes in flight
   | "reconnecting" // transport dropped mid-file; holding progress, will resume
+  | "paused" // held by the user; sink intact, will continue from the durable offset
   | "done" // fully transferred
   | "declined" // the receiver declined the batch
   | "cancelled" // cancelled mid-flight by either side
@@ -123,6 +161,63 @@ export interface TransferItem {
    * single-peer case (or carried but ignored by UIs that don't show it).
    */
   peerId?: string;
+}
+
+/** Aggregate progress across every item that shares a `batchId`. */
+export interface BatchSummary {
+  batchId: string;
+  direction: Direction;
+  peerId?: string;
+  /** Items in this batch, in the order they appear in the tray. */
+  total: number;
+  /** Items whose status is `done` (declined/cancelled/error items don't count). */
+  done: number;
+  bytesTotal: number;
+  bytesDone: number;
+  /** 0..100, byte-weighted (large files count for more than small ones). */
+  progress: number;
+}
+
+/**
+ * Groups tray items by `batchId` and rolls each group up into byte-weighted
+ * totals, for a "3 of 8 files, 340 MB of 900 MB" style aggregate bar. Only
+ * groups with 2+ items are returned — a lone file's own row is the aggregate,
+ * so there's nothing useful to summarize (and #134 wants no redundant bar).
+ *
+ * `transferred` already reflects a `done` item's full size, so summing it
+ * across the group is enough — no separate branch needed for finished items.
+ */
+export function summarizeBatches(items: TransferItem[]): BatchSummary[] {
+  const order: string[] = [];
+  const groups = new Map<string, TransferItem[]>();
+  for (const item of items) {
+    let group = groups.get(item.batchId);
+    if (!group) {
+      group = [];
+      groups.set(item.batchId, group);
+      order.push(item.batchId);
+    }
+    group.push(item);
+  }
+
+  const summaries: BatchSummary[] = [];
+  for (const batchId of order) {
+    const group = groups.get(batchId)!;
+    if (group.length < 2) continue;
+    const bytesTotal = group.reduce((s, i) => s + i.size, 0);
+    const bytesDone = group.reduce((s, i) => s + i.transferred, 0);
+    summaries.push({
+      batchId,
+      direction: group[0].direction,
+      peerId: group[0].peerId,
+      total: group.length,
+      done: group.filter((i) => i.status === "done").length,
+      bytesTotal,
+      bytesDone,
+      progress: bytesTotal > 0 ? Math.round((bytesDone / bytesTotal) * 100) : 0,
+    });
+  }
+  return summaries;
 }
 
 /** Human-readable byte formatter matching the design's `fmt()`. */

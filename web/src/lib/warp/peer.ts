@@ -15,27 +15,30 @@
  * Because exactly one side ever creates the offer for a given pair, there is no
  * offer collision to resolve.
  *
- * Symmetric file transfer (review-before-receive redesign):
+ * Symmetric file transfer (review-before-receive):
  *   - EITHER peer can offer files at any time over the same open channel.
  *   - A send batch is GATED: the sender announces a manifest (`offer`), the
  *     receiver shows an accept modal, and only on `accept` do bytes flow. On
  *     `decline` nothing is sent.
- *   - Received files are accumulated into an in-memory Blob and handed to the
- *     UI via "file-received" — NOTHING auto-saves to disk. Downloading (one
- *     file, or a zip of all) is the UI's job now.
+ *   - Accepted receives flow through a `ReceiveHost`: the default path can keep
+ *     bytes in an in-memory Blob, while a supplied disk target streams them
+ *     straight to disk and emits `savedToDisk` on completion.
  *   - The channel STAYS OPEN after a batch: both peers can keep sending.
  *
- * v1 transport scope: 1-to-1 happy path. We connect to the first available peer
- * and route all transfers over that single channel. Multi-peer mesh is out of
- * scope.
+ * Mesh scope:
+ *   - One `WarpPeer` represents one remote-device connection.
+ *   - `useWarpTransfer` owns the full mesh: one `WarpPeer` per remote device,
+ *     with the glare-free initiator/responder role above applied to each pair.
  */
 
 import type { SignalData, SignalingClient } from "./signaling";
 import {
   LOW_WATER_MARK,
+  TEXT_SNIPPET_MAX_BYTES,
   fileId,
   fileKey,
   newResumeToken,
+  textSnippetFrameBytes,
   type ControlMessage,
   type Direction,
   type OfferItem,
@@ -43,6 +46,14 @@ import {
 } from "./transfer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
 import { createHashSession, type HashSession } from "./hash";
+import { chooseCodec, compressChunk, decompressChunk, supportedCodecs, type Codec } from "./compress";
+import {
+  PieceVerifier,
+  choosePieceSize,
+  manifestFromFile,
+  shouldManifest,
+  type PieceManifest,
+} from "./pieceManifest";
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -58,20 +69,36 @@ const ICE_SERVERS: RTCIceServer[] = [
  *
  *  - TARGET_SEND_CHUNK: preferred per-message size. usrsctp (Chrome & Firefox)
  *    accepts up to 256 KiB; we cap to the negotiated pc.sctp.maxMessageSize at
- *    runtime and never exceed it (a too-big message closes the channel).
+ *    runtime and never exceed it (a too-big message closes the channel). NOTE:
+ *    256 KiB deliberately exceeds RFC 8831 §6.6's SHOULD-limit of 16 KB, which
+ *    exists to stop one stream monopolizing an association that interleaves many.
+ *    A single bulk file transfer WANTS to monopolize the stream, and we still
+ *    respect the peer's negotiated limit, so the deviation is intentional here.
  *  - MIN_SEND_CHUNK: safe floor if maxMessageSize reports something tiny/0
  *    (e.g. the legacy 16 KiB / 64 KiB default on an old/odd stack).
  *  - READ_BLOCK: how much of the file we pull into memory per blob.arrayBuffer()
  *    read, then slice into TARGET_SEND_CHUNK sends — one await per ~4 MiB instead
  *    of one per 16 KiB.
- *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. MUST sit well below
- *    Chrome's hard 16 MiB SCTP send-buffer cap: bufferedAmount can never
- *    exceed that cap (send() throws first), so a 16 MiB high-water mark meant
- *    the backpressure branch NEVER ran and every large transfer deterministically
- *    died ~⅓ in with a mid-send exception once the file outpaced the link.
- *    8 MiB keeps the pipe full while leaving real headroom. Resume happens on
- *    `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
+ *  - SEND_HIGH_WATER: bufferedAmount backpressure ceiling. Three DISTINCT size
+ *    limits are easy to conflate (research-2026-07 §1): (a) the 64 KiB DEFAULT
+ *    per-message `maxMessageSize` when the SDP omits a=max-message-size (RFC 8841
+ *    §6.1); (b) the 256 KiB SCTP ASSOCIATION send buffer (usrsctp default /
+ *    Chromium kSendBufferSize); and (c) the 16 MiB bufferedAmount SEND-QUEUE cap
+ *    (libwebrtc MaxSendQueueSize; Blink's ValidateSendLength throws OperationError
+ *    "RTCDataChannel send queue is full" above it). Backpressure depends on (c):
+ *    bufferedAmount can never REACH 16 MiB because send() throws first, so a
+ *    16 MiB high-water mark meant the backpressure branch NEVER ran and every large
+ *    transfer deterministically died ~⅓ in with a mid-send exception once the file
+ *    outpaced the link. 8 MiB keeps the pipe full while leaving real headroom below
+ *    (c). Resume happens on `bufferedamountlow` at LOW_WATER_MARK (1 MiB).
  */
+// TARGET_SEND_CHUNK intentionally exceeds RFC 8831 §6.6's SHOULD-limit of 16 KB
+// per message (which exists to avoid monopolizing the association when message
+// interleaving, RFC 8260, is unsupported). For a single-stream bulk transfer
+// monopolization IS the goal, so 256 KiB is the right trade; it stays safe because
+// sendChunkSize() caps to the peer's negotiated maxMessageSize and floors at
+// MIN_SEND_CHUNK. Literature consensus is 16 KiB for compatibility, 256 KiB only
+// with End-of-Record on both peers (research-2026-07 §1).
 const TARGET_SEND_CHUNK = 256 * 1024;
 const MIN_SEND_CHUNK = 16 * 1024;
 const READ_BLOCK = 4 * 1024 * 1024;
@@ -145,6 +172,8 @@ export interface PeerEvents {
   declined: (info: { batchId: string }) => void;
   /** A file in flight was cancelled by either side. */
   cancelled: (info: { id: string }) => void;
+  /** The other side asked us to resume a paused file (re-offer if we are the sender). */
+  "resume-requested": (info: { id: string }) => void;
   /** SHA-256 hex digest of a completed file's session bytes. Emitted once per
    *  successfully-transferred file (both send and receive) that hashed a whole
    *  session — resumed transfers (startOffset > 0 on send, resume offset > 0 on
@@ -161,8 +190,10 @@ type Listener<K extends keyof PeerEvents> = PeerEvents[K];
 interface OutgoingBatch {
   batchId: string;
   files: File[];
-  /** Resolves on accept; rejects when the receiver declines or the channel closes. */
-  resolve: (resume?: Record<string, number>) => void;
+  /** Resolves on accept with the receiver's settlement: per-file resume offsets
+   *  and the compression codecs the receiver can decode (#130). Rejects when the
+   *  receiver declines or the channel closes. */
+  resolve: (settlement?: { resume?: Record<string, number>; codecs?: Codec[] }) => void;
   reject: (reason: "declined" | Error) => void;
   /** Set true the moment the receiver responds, so a late dup is ignored. */
   settled: boolean;
@@ -181,6 +212,31 @@ interface IncomingState {
    *  receive started at offset 0 (a resumed receive's hash would only cover
    *  the tail, so we skip rather than emit a misleading digest). */
   hash: HashSession | null;
+  /** Compression codec the sender packed each chunk with (#130); undefined => the
+   *  binary frames are raw plaintext. When set, chunks are decompressed through
+   *  `chain` before hitting the sink, so appends stay in wire order. */
+  codec?: Codec;
+  /** Ordered decompress->append chain for a compressed receive. The sink's own
+   *  write chain orders appends, but decompression is async and could finish out
+   *  of order; serializing through this chain keeps plaintext bytes in sequence.
+   *  `completeIncoming` awaits it before trusting the durable byte count. */
+  chain: Promise<void>;
+  /** Set when the file is cancelled mid-flight. The decompress chain checks it to
+   *  drop late chunks; a normal completion leaves it false so the chain drains. */
+  cancelled: boolean;
+  /** Per-piece verifier (#137), present only for a FRESH receive whose `file-begin`
+   *  carried a manifest. When set, plaintext chunks are fed to it and only VERIFIED
+   *  pieces reach the sink; null => the legacy trust-the-stream path. */
+  verifier: PieceVerifier | null;
+  /** The piece index we've re-requested and are waiting on (#137), so we don't
+   *  re-request the same index twice while the answer is in flight. null = healthy. */
+  awaitingPiece: number | null;
+  /** Set by a `piece` control frame: the NEXT binary frame is this re-requested
+   *  piece index, routed to `injectPiece` instead of the sequential append path. */
+  pendingPieceIndex: number | null;
+  /** `file-end` has arrived. When a verifier is still resolving a re-request we
+   *  defer completion until it's done, then finish from the inject path. */
+  ended: boolean;
 }
 
 /**
@@ -277,6 +333,7 @@ export class WarpPeer {
     "text-received": new Set(),
     declined: new Set(),
     cancelled: new Set(),
+    "resume-requested": new Set(),
     "hash-computed": new Set(),
     error: new Set(),
   };
@@ -310,6 +367,22 @@ export class WarpPeer {
 
   /** File ids the local side asked to cancel, so we drop their remaining chunks. */
   private cancelledIds = new Set<string>();
+
+  /** File ids paused mid-send: the pump exits without file-end so the sink stays open. */
+  private pausedIds = new Set<string>();
+
+  /** Files we sent WITH a piece manifest (#137), keyed by file id, so a receiver's
+   *  `piece-request` can re-read and re-send just that piece. Holds lazy File
+   *  handles (metadata, not bytes); cleared on cancel/close. */
+  private manifestSends = new Map<string, { file: File; pieceSize: number }>();
+
+  /** Computed piece manifests keyed by the stable file identity (`fileKey`), so a
+   *  RESUMED re-offer of the same file can re-include the hashes in `file-begin`
+   *  WITHOUT re-reading the whole file (#171, research P5). A fresh send computes
+   *  the manifest once and caches it here; a later resumed send of the same `key`
+   *  reuses it so the receiver verifies the tail piece-by-piece. Per-id state lives
+   *  in `manifestSends`; this cross-offer cache is cleared only on close(). */
+  private manifestCache = new Map<string, PieceManifest>();
 
   /** True once the transport has EVER been up — separates a real NAT failure
    *  (never connected) from a mid-session drop (recoverable). */
@@ -451,6 +524,20 @@ export class WarpPeer {
       return;
     }
 
+    if (data.kind === "pause") {
+      // Out-of-band pause: stop the pump / mark paused without poisoning the sink.
+      // Beats the in-band {t:"pause"} stuck behind the byte backlog.
+      this.applyPause(data.id);
+      return;
+    }
+
+    if (data.kind === "resume") {
+      // Out-of-band resume request: the hook clears pausedKeys and re-offers if
+      // this side holds the File. No in-band twin — the pump is already stopped.
+      this.emit("resume-requested", { id: data.id });
+      return;
+    }
+
     if (data.kind === "offer") {
       await this.pc.setRemoteDescription({ type: "offer", sdp: data.sdp });
       const answer = await this.pc.createAnswer();
@@ -522,20 +609,28 @@ export class WarpPeer {
 
     const batchId = fileId();
 
+    // Generate the whole batch's thumbnails CONCURRENTLY (issue #90): the old
+    // loop awaited makeThumb per file, serializing a decode per photo in front of
+    // the offer — the receiver's accept modal didn't appear until the sender had
+    // decoded every image. Promise.all decodes them in parallel; index alignment
+    // back into `files` keeps the manifest in the caller's order.
+    const thumbs = await Promise.all(files.map((f) => makeThumb(f)));
+
     // Build the manifest + create local send-items in lockstep so ids match.
     // Each file gets a stable `key` (identity) and a random `resumeToken` so a
     // re-offer after a drop is recognized and can only be resumed by this sender.
     const manifest: OfferItem[] = [];
     const ids: string[] = [];
     const tokens: Record<string, string> = {};
-    for (const file of files) {
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
       const id = fileId();
       ids.push(id);
       const mime = file.type || "application/octet-stream";
       const key = fileKey(file);
       const resumeToken = this.tokenForKey(key);
       tokens[id] = resumeToken;
-      const thumb = await makeThumb(file); // best-effort; undefined on non-image/failure
+      const thumb = thumbs[i]; // best-effort; undefined on non-image/failure
       manifest.push({ id, name: file.name, size: file.size, mime, key, resumeToken, ...(thumb ? { thumb } : {}) });
 
       const item: TransferItem = {
@@ -560,15 +655,22 @@ export class WarpPeer {
     if (ch.readyState !== "open") throw new Error("channel-closed");
 
     // Register the pending batch BEFORE sending, so an instant accept/decline finds it.
-    const accepted = new Promise<Record<string, number> | undefined>((resolve, reject) => {
-      this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false, tokens });
-    });
+    const accepted = new Promise<{ resume?: Record<string, number>; codecs?: Codec[] } | undefined>(
+      (resolve, reject) => {
+        this.outgoing.set(batchId, { batchId, files, resolve, reject, settled: false, tokens });
+      },
+    );
 
     this.send(ch, { t: "offer", batchId, items: manifest });
 
     let resume: Record<string, number> | undefined;
+    // Codecs the receiver can decode (#130); intersected with our own support per
+    // file below. Undefined/empty => we send raw bytes (backward compatible).
+    let rxCodecs: Codec[] = [];
     try {
-      resume = await accepted;
+      const settlement = await accepted;
+      resume = settlement?.resume;
+      rxCodecs = settlement?.codecs ?? [];
     } catch (reason) {
       // A real decline is terminal for this offer. Channel closure stays
       // salvageable: leave the items unfinished and reject to the hook.
@@ -580,6 +682,11 @@ export class WarpPeer {
     // Accepted: stream each file in order. A transport death mid-batch is NOT
     // terminal for the app: mark the in-flight + unsent items "error" so the
     // hook can salvage them into an automatic re-offer once the peer rebuilds.
+    // Compression (#130): the codecs BOTH sides support — the receiver's advertised
+    // list intersected with our own. A file is packed only if it's compressible and
+    // this intersection is non-empty (chooseCodec per file, in the loop below).
+    const localCodecs = supportedCodecs();
+    const sharedCodecs = rxCodecs.filter((c) => localCodecs.includes(c));
     try {
       for (let i = 0; i < files.length; i += 1) {
         const id = ids[i];
@@ -591,6 +698,10 @@ export class WarpPeer {
           this.cancelledIds.delete(id);
           continue; // cancelled before it started; status already set by cancel()
         }
+        if (this.pausedIds.has(id)) {
+          this.pausedIds.delete(id);
+          continue; // paused before it started; status already set by pause()
+        }
 
         // Resume offset the receiver asked for, validated (Fable L1). A garbage
         // or >size offset falls back to 0 (full restart); the echoed file-begin
@@ -601,10 +712,50 @@ export class WarpPeer {
         item.progress = Math.min(100, Math.round((offset / Math.max(1, file.size)) * 100));
         this.emit("transfer", { ...item });
 
-        this.send(ch, { t: "file-begin", id, offset });
-        const finishedClean = await this.streamFile(ch, file, item, offset);
+        // Per-file codec: undefined for incompressible media or no shared codec,
+        // which sends raw bytes exactly as before. `offset` stays in plaintext.
+        const codec = chooseCodec(file.type || "application/octet-stream", sharedCodecs);
+
+        // Piece manifest (#137, extended by #171): for a file in the size window,
+        // ride per-piece SHA-256s in file-begin so the receiver verifies each piece
+        // and re-requests a bad index instead of trusting the stream.
+        //   - FRESH (offset 0): hash the file now and cache the manifest by its
+        //     stable identity so a later resumed re-offer can reuse it.
+        //   - RESUMED (offset > 0, #171): re-include the CACHED manifest (if this
+        //     peer sent the file fresh earlier) so the receiver verifies the tail
+        //     piece-by-piece — the exact path a fresh receive gets — without the
+        //     sender re-reading the whole file (which would wreck time-to-first-byte
+        //     and is why MANIFEST_MAX_BYTES exists). No cache (this peer never sent
+        //     it fresh, e.g. a rebuilt peer) => the legacy trust-the-stream resume,
+        //     exactly as before — no regression.
+        // Tiny / huge files (shouldManifest) always keep the legacy path.
+        let pieces: PieceManifest | undefined;
+        if (shouldManifest(file.size)) {
+          if (offset === 0) {
+            const pieceSize = choosePieceSize(file.size);
+            pieces = await manifestFromFile(file, pieceSize);
+            if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+            this.manifestCache.set(fileKey(file), pieces); // reuse on a resumed re-offer
+          } else {
+            pieces = this.manifestCache.get(fileKey(file));
+          }
+          if (pieces) {
+            // Remember the file so a piece-request can re-read just that piece —
+            // needed on resume too, since the receiver now verifies the tail (#171).
+            this.manifestSends.set(id, { file, pieceSize: pieces.pieceSize });
+          }
+        }
+
+        this.send(ch, { t: "file-begin", id, offset, ...(codec ? { codec } : {}), ...(pieces ? { pieces } : {}) });
+        const finishedClean = await this.streamFile(ch, file, item, offset, codec);
         if (!finishedClean) {
-          // Cancelled mid-flight: tell the receiver and stop this file.
+          this.manifestSends.delete(id);
+          // Pause leaves the receiver's sink open — no file-end, no cancel.
+          // Cancel (or a remote cancel that raced the pump) still needs the
+          // in-band cancel so a receiver that missed the OOB frame tears down.
+          // Re-read from the map: streamFile / applyPause mutate status on the
+          // shared object, but TS still sees the pre-stream narrowed union.
+          if (this.items.get(id)?.status === "paused") continue;
           this.send(ch, { t: "cancel", id });
           continue;
         }
@@ -630,8 +781,9 @@ export class WarpPeer {
     const ch = this.channel;
     if (!ch || ch.readyState !== "open") throw new Error("channel-not-open");
     const id = fileId();
-    const batchId = fileId();
+    if (textSnippetFrameBytes(text, id) > TEXT_SNIPPET_MAX_BYTES) throw new Error("text-too-large");
     const bytes = new Blob([text]).size;
+    const batchId = fileId();
     const item: TransferItem = {
       id,
       batchId,
@@ -660,8 +812,12 @@ export class WarpPeer {
    *   - { dirHandle }  : a multi-file batch, each file written into that folder
    *                      (names de-duped within the folder).
    *   - { fileHandle } : a single file written to that handle.
+   *
+   * `codecs` (#130) advertises the compression codecs this receiver can decode;
+   * the sender compresses a file only when it's compressible and a codec overlaps.
+   * Omit it (the default) to receive raw bytes — the backward-compatible path.
    */
-  acceptOffer(batchId: string, target?: AcceptTarget, resume?: Record<string, number>): void {
+  acceptOffer(batchId: string, target?: AcceptTarget, resume?: Record<string, number>, codecs?: Codec[]): void {
     const items = this.pendingOffers.get(batchId);
     if (!items) return;
     this.pendingOffers.delete(batchId);
@@ -693,7 +849,14 @@ export class WarpPeer {
     }
 
     const ch = this.channel;
-    if (ch && ch.readyState === "open") this.send(ch, { t: "accept", batchId, ...(resume ? { resume } : {}) });
+    if (ch && ch.readyState === "open") {
+      this.send(ch, {
+        t: "accept",
+        batchId,
+        ...(resume ? { resume } : {}),
+        ...(codecs && codecs.length ? { codecs } : {}),
+      });
+    }
   }
 
   /** Receiver: decline a pending offered batch -> the sender sends nothing. */
@@ -726,6 +889,35 @@ export class WarpPeer {
   }
 
   /**
+   * Pause a file in flight from either side. The sender's pump exits WITHOUT
+   * sending file-end, so the receiver's durable sink stays open at the last
+   * acknowledged offset. Resume is a re-offer with the same resumeToken.
+   *
+   * Announced two ways, mirroring cancel:
+   *   1. OUT-OF-BAND over signaling — beats the data-channel byte backlog.
+   *   2. IN-BAND over the data channel — survives a dropped signaling socket.
+   * Both are idempotent (see applyPause).
+   *
+   * Unlike cancel, this does NOT abort or end the receive sink.
+   */
+  pause(id: string): void {
+    if (!this.applyPause(id)) return;
+
+    if (this.remoteId) this.signaling.signal(this.remoteId, { kind: "pause", id });
+    const ch = this.channel;
+    if (ch && ch.readyState === "open") this.send(ch, { t: "pause", id });
+  }
+
+  /**
+   * Ask the other side to resume a paused file (clear their pausedKeys / re-offer
+   * if they hold the File). Out-of-band only — the pump is already stopped, so
+   * there is no byte backlog to jump.
+   */
+  requestResume(id: string): void {
+    if (this.remoteId) this.signaling.signal(this.remoteId, { kind: "resume", id });
+  }
+
+  /**
    * Idempotently mark a file cancelled and abort any in-flight send/receive for
    * it. Returns false (a no-op) if the item is unknown or already done/cancelled,
    * so a redundant in-band + out-of-band cancel is safe. Emits "cancelled" exactly
@@ -736,12 +928,15 @@ export class WarpPeer {
     if (!item || item.status === "done" || item.status === "cancelled") return false;
 
     this.cancelledIds.add(id); // streamFile checks this per chunk to abort sends
+    this.pausedIds.delete(id); // cancel wins over a prior pause
+    this.manifestSends.delete(id); // no piece re-requests for a cancelled file (#137)
     this.markStatus(id, "cancelled");
 
     // If we're the receiver and this is the active incoming file, drop it and
     // abort the sink so a partial file isn't left dangling on disk.
     if (this.incoming && this.incoming.item.id === id) {
       const inc = this.incoming;
+      inc.cancelled = true; // stops a compressed receive's decompress chain
       this.incoming = null;
       inc.hash?.dispose();
       void inc.sink.abort();
@@ -749,6 +944,41 @@ export class WarpPeer {
     }
 
     this.emit("cancelled", { id });
+    return true;
+  }
+
+  /**
+   * Idempotently mark a file paused. Stops the send pump (via pausedIds) and
+   * detaches the receive path WITHOUT aborting or ending the sink — that is the
+   * whole difference from cancel, and what lets resume continue from the durable
+   * offset. Returns false if unknown or already terminal/paused.
+   */
+  private applyPause(id: string): boolean {
+    const item = this.items.get(id);
+    if (
+      !item ||
+      item.status === "done" ||
+      item.status === "cancelled" ||
+      item.status === "paused" ||
+      item.status === "declined" ||
+      item.status === "error"
+    ) {
+      return false;
+    }
+
+    this.pausedIds.add(id); // streamFile checks this per chunk to exit without file-end
+    this.markStatus(id, "paused");
+
+    // Detach the receive path so late chunks are dropped (sender will resend
+    // from the durable offset on resume). Do NOT abort the sink or host.end —
+    // the partial must stay healthy for the auto-resume path.
+    if (this.incoming && this.incoming.item.id === id) {
+      const inc = this.incoming;
+      inc.cancelled = true;
+      this.incoming = null;
+      inc.hash?.dispose();
+    }
+
     return true;
   }
 
@@ -766,8 +996,9 @@ export class WarpPeer {
   }
 
   /**
-   * Pump one file's bytes through the channel. Returns false if cancelled
-   * mid-flight.
+   * Pump one file's bytes through the channel. Returns false if cancelled or
+   * paused mid-flight (caller distinguishes via item.status — pause must not
+   * send cancel/file-end).
    *
    * Speed: read the file in large READ_BLOCK (~4 MiB) gulps via
    * blob.arrayBuffer(), then ship each block as a run of sendChunk-sized
@@ -775,12 +1006,18 @@ export class WarpPeer {
    * Chrome<->Chrome). This does ~one await per 4 MiB instead of one per 16 KiB,
    * and ~16x fewer SCTP messages, so the channel runs near the link rate.
    * bufferedAmount backpressure (SEND_HIGH_WATER) keeps memory bounded.
+   *
+   * Compression (#130): when `codec` is set, each send chunk is compressed
+   * independently before `send()`, so the wire carries fewer, smaller messages.
+   * Offsets and the integrity hash stay in PLAINTEXT bytes — only the wire form is
+   * packed — so resume and manifest-verify are unaffected.
    */
   private async streamFile(
     ch: RTCDataChannel,
     file: File,
     item: TransferItem,
     startOffset = 0,
+    codec?: Codec,
   ): Promise<boolean> {
     const sendChunk = this.sendChunkSize();
     // Integrity hash runs in a Web Worker (issue #88). Tapped at the 4 MiB
@@ -799,6 +1036,10 @@ export class WarpPeer {
           this.cancelledIds.delete(item.id);
           return false;
         }
+        if (this.pausedIds.has(item.id)) {
+          this.pausedIds.delete(item.id);
+          return false;
+        }
 
         // Read one large block, then slice it into sendChunk-sized SCTP messages.
         const block = await file.slice(offset, offset + READ_BLOCK).arrayBuffer();
@@ -809,18 +1050,42 @@ export class WarpPeer {
             this.cancelledIds.delete(item.id);
             return false;
           }
+          if (this.pausedIds.has(item.id)) {
+            this.pausedIds.delete(item.id);
+            return false;
+          }
           // Backpressure: wait until the send buffer drains below the high-water
           // mark. Counts the chunk we're ABOUT to send, so we can never push
           // bufferedAmount toward the browser's hard cap and blow up send().
           while (ch.bufferedAmount + sendChunk > SEND_HIGH_WATER) {
             await this.waitForDrain(ch);
             if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
+            // Pause/cancel that landed while parked takes effect on this chunk
+            // boundary — never mid-send, and not inside waitForDrain itself.
+            if (this.cancelledIds.has(item.id)) {
+              this.cancelledIds.delete(item.id);
+              return false;
+            }
+            if (this.pausedIds.has(item.id)) {
+              this.pausedIds.delete(item.id);
+              return false;
+            }
           }
           if (ch.readyState !== "open") throw new Error("channel-closed-mid-send");
 
           const end = Math.min(pos + sendChunk, block.byteLength);
-          // slice() copies; fine and avoids retaining the whole 4 MiB block per send.
-          ch.send(block.slice(pos, end));
+          // Send a VIEW into the block, not a slice() copy — one fewer 256 KiB
+          // memcpy per message on the send hot path. The view pins its 4 MiB
+          // block until queued, which the backpressure bound already covers.
+          const view = new Uint8Array(block, pos, end - pos);
+          // Compression (#130): pack each chunk independently when a codec was
+          // negotiated. The receiver decompresses per chunk (stateless), so this
+          // never breaks byte-offset resume. Offset accounting stays plaintext.
+          if (codec) {
+            ch.send(await compressChunk(view, codec));
+          } else {
+            ch.send(view);
+          }
           offset += end - pos;
           pos = end;
         }
@@ -902,10 +1167,28 @@ export class WarpPeer {
     }
     // Binary chunk for the active incoming file.
     if (data instanceof ArrayBuffer) {
-      this.onChunk(data);
+      this.onBinary(data);
     } else if (data instanceof Blob) {
-      void data.arrayBuffer().then((b) => this.onChunk(b));
+      void data.arrayBuffer().then((b) => this.onBinary(b));
     }
+  }
+
+  /**
+   * Route an inbound binary frame (#137). Normally a frame is the next sequential
+   * chunk of the in-flight file (onChunk). But right after a `piece` control frame
+   * the NEXT binary is a re-requested piece: route it to the verifier's injectPiece
+   * instead of the sequential append path, so a corrected piece lands at its index
+   * without disturbing the ordered stream.
+   */
+  private onBinary(buf: ArrayBuffer): void {
+    const inc = this.incoming;
+    if (inc && inc.verifier && inc.pendingPieceIndex !== null) {
+      const index = inc.pendingPieceIndex;
+      inc.pendingPieceIndex = null;
+      this.injectRequestedPiece(inc, index, buf);
+      return;
+    }
+    this.onChunk(buf);
   }
 
   private onControl(msg: ControlMessage): void {
@@ -921,7 +1204,8 @@ export class WarpPeer {
         if (batch && !batch.settled) {
           batch.settled = true;
           this.outgoing.delete(msg.batchId);
-          batch.resolve(msg.resume); // carries per-file resume offsets (undefined = fresh)
+          // Carry the receiver's resume offsets AND its advertised codecs (#130).
+          batch.resolve({ resume: msg.resume, codecs: msg.codecs });
         }
         break;
       }
@@ -936,11 +1220,23 @@ export class WarpPeer {
         break;
       }
       case "file-begin": {
-        this.startIncoming(msg.id, msg.offset);
+        this.startIncoming(msg.id, msg.offset, msg.codec, msg.pieces);
         break;
       }
       case "file-end": {
         this.finishIncoming(msg.id);
+        break;
+      }
+      case "piece-request": {
+        // Receiver detected a corrupt piece (#137): re-send just that one piece.
+        void this.answerPieceRequest(msg.id, msg.index);
+        break;
+      }
+      case "piece": {
+        // The sender's re-requested piece follows as the NEXT binary frame (#137);
+        // tag it so onBinary routes that frame to injectPiece, not sequential append.
+        const inc = this.incoming;
+        if (inc && inc.item.id === msg.id && inc.verifier) inc.pendingPieceIndex = msg.index;
         break;
       }
       case "cancel": {
@@ -948,6 +1244,11 @@ export class WarpPeer {
         // cancelled. Idempotent — a no-op if the out-of-band signaling cancel
         // already landed (or vice-versa).
         this.applyCancel(msg.id);
+        break;
+      }
+      case "pause": {
+        // Remote paused this file (in-band path). Leave the sink alone.
+        this.applyPause(msg.id);
         break;
       }
       case "text": {
@@ -979,7 +1280,7 @@ export class WarpPeer {
    * write chunks straight through (no Blob accumulation); otherwise accumulate in
    * memory exactly as before.
    */
-  private startIncoming(id: string, offset = 0): void {
+  private startIncoming(id: string, offset = 0, codec?: Codec, pieces?: PieceManifest): void {
     if (this.cancelledIds.has(id)) return; // cancelled before bytes flowed
     const item = this.items.get(id);
     if (!item || item.direction !== "receive") return; // unaccepted / unknown -> ignore
@@ -1002,7 +1303,39 @@ export class WarpPeer {
     // (offset === 0): a resumed receive already holds [0,offset) whose bytes we
     // never see, so hashing from here would produce a digest of the tail alone.
     const hash = offset === 0 ? createHashSession() : null;
-    this.incoming = { item, sink, hash };
+    // Per-piece verifier (#137, extended by #171): build it whenever file-begin
+    // carried a manifest — for a FRESH receive (offset 0) AND for a RESUMED one.
+    // A manifest receive only ever writes WHOLE verified pieces, so a resumed
+    // offset is a piece boundary; seeding the verifier there (offset / pieceSize)
+    // verifies the tail piece-by-piece, so a corrupt tail piece is re-requested by
+    // index, not trusted (research P5 — resume from verified bytes, not written
+    // bytes). Guards keep this safe: the manifest must describe THIS file
+    // (pieces.size === item.size) and the offset must be an exact piece boundary
+    // within it; otherwise fall back to the legacy trust-the-stream path rather
+    // than seed a misaligned verifier (which would re-emit pieces the sink already
+    // holds). Absent manifest => legacy path (unchanged).
+    let verifier: PieceVerifier | null = null;
+    if (pieces && pieces.size === item.size && pieces.pieceSize > 0) {
+      if (offset === 0) verifier = new PieceVerifier(pieces);
+      else if (offset % pieces.pieceSize === 0 && offset <= pieces.size) {
+        verifier = new PieceVerifier(pieces, offset / pieces.pieceSize);
+      }
+    }
+    // `codec` (#130): when set, binary frames are compressed and routed through the
+    // decompress chain in onChunk; the hash + sink see PLAINTEXT, matching the
+    // sender (which hashes plaintext too). Undefined => raw frames, sync path.
+    this.incoming = {
+      item,
+      sink,
+      hash,
+      codec,
+      chain: Promise.resolve(),
+      cancelled: false,
+      verifier,
+      awaitingPiece: null,
+      pendingPieceIndex: null,
+      ended: false,
+    };
     item.status = "transferring";
     item.transferred = sink.bytesWritten;
     item.progress = Math.min(100, Math.round((item.transferred / Math.max(1, item.size)) * 100));
@@ -1012,13 +1345,61 @@ export class WarpPeer {
   private onChunk(buf: ArrayBuffer): void {
     const inc = this.incoming;
     if (!inc) return; // no active incoming file (cancelled / not accepted)
+    if (inc.codec) {
+      // Compressed frame (#130): decompress through the ordered chain so plaintext
+      // appends stay in wire order (decompression is async and could finish out of
+      // sequence). A chunk that won't decompress poisons the receive honestly.
+      const codec = inc.codec;
+      inc.chain = inc.chain.then(async () => {
+        if (inc.cancelled) return;
+        try {
+          const plain = await decompressChunk(buf, codec);
+          if (inc.cancelled) return;
+          this.applyChunk(inc, plain);
+        } catch {
+          if (inc.cancelled) return;
+          inc.cancelled = true;
+          inc.hash?.dispose();
+          await inc.sink.abort();
+          this.host.end(inc.item.id);
+          this.markStatus(inc.item.id, "error");
+        }
+      });
+      return;
+    }
+    this.applyChunk(inc, buf);
+  }
+
+  /** Append one PLAINTEXT chunk to the sink + hash and advance progress (Fable H1/L2). */
+  private applyChunk(inc: IncomingState, buf: ArrayBuffer): void {
+    if (inc.verifier) {
+      // #137: verify piece-by-piece. Only VERIFIED pieces reach the sink + hash, so
+      // the sink never holds an unverified byte (Fable H1, extended to pieces). A
+      // piece that fails its manifest hash is re-requested by index, not appended.
+      const r = inc.verifier.push(buf);
+      for (const piece of r.verified) {
+        inc.sink.append(pieceBuffer(piece));
+        inc.hash?.update(piece);
+      }
+      if (r.mismatch !== null && inc.awaitingPiece === null) {
+        inc.awaitingPiece = r.mismatch;
+        this.requestPiece(inc.item.id, r.mismatch);
+      }
+      this.advanceProgress(inc);
+      return;
+    }
     inc.sink.append(buf);
     // Feed the same chunk into the off-thread hash worker. postMessage clones
     // (no transfer list), so the sink's reference is not detached out from
     // under it. Skipped on a resumed receive (see startIncoming).
     inc.hash?.update(buf);
-    // Durable count is the single source of truth (Fable H1): for disk it advances
-    // as writes resolve, so progress is conservative, never ahead of what's on disk.
+    this.advanceProgress(inc);
+  }
+
+  /** Update the durable byte ledger + throttled progress emit (Fable H1/L2). The
+   *  durable count is the single source of truth: for disk it advances as writes
+   *  resolve, so progress is conservative, never ahead of what's on disk. */
+  private advanceProgress(inc: IncomingState): void {
     inc.item.transferred = inc.sink.bytesWritten;
     const p = Math.min(100, Math.round((inc.item.transferred / Math.max(1, inc.item.size)) * 100));
     // Throttle UI emits to ~1% deltas (Fable L2) — the byte ledger above still
@@ -1027,6 +1408,78 @@ export class WarpPeer {
       inc.item.progress = p;
       this.emit("transfer", { ...inc.item });
     }
+  }
+
+  /** Receiver -> sender (#137): ask for one corrupt piece to be re-sent by index. */
+  private requestPiece(id: string, index: number): void {
+    const ch = this.channel;
+    if (ch && ch.readyState === "open") this.send(ch, { t: "piece-request", id, index });
+  }
+
+  /**
+   * Feed a re-requested piece (#137) to the verifier. Accepted only if it now
+   * passes its hash (injectPiece checks); verified bytes — this piece plus any
+   * ahead-bytes that buffered during the gap — go to the sink + hash. If a mismatch
+   * persists (still bad, or a later buffered piece also fails) re-request that
+   * index. When file-end already arrived and the verifier is now done, finish.
+   */
+  private injectRequestedPiece(inc: IncomingState, index: number, buf: ArrayBuffer): void {
+    if (!inc.verifier) return;
+    const r = inc.verifier.injectPiece(index, buf);
+    for (const piece of r.verified) {
+      inc.sink.append(pieceBuffer(piece));
+      inc.hash?.update(piece);
+    }
+    if (r.mismatch !== null) {
+      inc.awaitingPiece = r.mismatch;
+      this.requestPiece(inc.item.id, r.mismatch);
+    } else {
+      inc.awaitingPiece = null;
+    }
+    this.advanceProgress(inc);
+    // file-end waited on this re-request; if the verifier is satisfied, complete.
+    if (inc.ended && inc.verifier.done) this.finishIncoming(inc.item.id);
+  }
+
+  /**
+   * Sender: answer a receiver's piece-request (#137) by re-reading and re-sending
+   * JUST that one piece. The `piece` control frame and the piece bytes are sent
+   * back-to-back with no await between, so the ordered channel delivers them
+   * adjacently and the receiver routes the binary to injectPiece (not the
+   * sequential path).
+   *
+   * Liveness: a receiver that asked for a piece holds EVERY other byte and has
+   * usually already seen `file-end` — it sits with a stuck verifier waiting on
+   * exactly this answer (finishIncoming defers completion until the verifier is
+   * done). A silent no-op here would therefore strand it FOREVER: no error, no
+   * timeout, a transfer frozen at ~99% with no way out but a manual cancel. So
+   * when we genuinely cannot produce the piece (the picked File's backing
+   * disappeared and the slice read throws), we fail the file HONESTLY with an
+   * in-band cancel instead — the receiver tears the partial down through the
+   * well-tested cancel path rather than hanging. Within this codebase the read
+   * essentially never fails (a session-lived File handle); this closes the
+   * theoretical hole the old "best-effort no-op" comment hand-waved away.
+   * (Spurious requests — unknown id, negative/out-of-range index — still no-op:
+   * no legitimate receiver is waiting on those, so there is nothing to strand.)
+   */
+  private async answerPieceRequest(id: string, index: number): Promise<void> {
+    const entry = this.manifestSends.get(id);
+    if (!entry || index < 0) return;
+    const { file, pieceSize } = entry;
+    const start = index * pieceSize;
+    if (start >= file.size) return;
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await file.slice(start, Math.min(start + pieceSize, file.size)).arrayBuffer();
+    } catch {
+      const ch = this.channel;
+      if (ch && ch.readyState === "open") this.send(ch, { t: "cancel", id });
+      return;
+    }
+    const ch = this.channel;
+    if (!ch || ch.readyState !== "open") return;
+    this.send(ch, { t: "piece", id, index });
+    ch.send(bytes);
   }
 
   /**
@@ -1043,6 +1496,16 @@ export class WarpPeer {
   private finishIncoming(id: string): void {
     const inc = this.incoming;
     if (!inc || inc.item.id !== id) return;
+    // #137: a manifest receive may still be resolving a re-request when file-end
+    // arrives (the bad piece's re-send is in flight, or ahead-bytes sit buffered
+    // behind a gap). Defer completion until the verifier is satisfied; the inject
+    // path calls us again once it's done. A sender that never answers can't happen
+    // within this codebase (only a manifest sender gets piece-requests, and it
+    // always answers); a dropped channel still tears down via cancel/close.
+    if (inc.verifier && !inc.verifier.done) {
+      inc.ended = true;
+      return;
+    }
     this.incoming = null;
     void this.completeIncoming(id, inc);
   }
@@ -1054,6 +1517,10 @@ export class WarpPeer {
    * with no blob (bytes already on disk).
    */
   private async completeIncoming(id: string, inc: IncomingState): Promise<void> {
+    // Drain the decompress chain first (#130): for a compressed receive, chunks
+    // still in flight must land before we trust the durable byte count. No-op for
+    // the raw path (chain is an already-resolved promise).
+    await inc.chain;
     await inc.sink.quiesce();
     const bytes = inc.sink.bytesWritten;
     if (bytes !== inc.item.size || inc.sink.failed) {
@@ -1097,6 +1564,8 @@ export class WarpPeer {
     this.rejectPendingOffers();
     this.disposed = true;
     this.clearRestartTimer();
+    this.manifestSends.clear(); // drop lazy File handles held for piece re-requests (#137)
+    this.manifestCache.clear(); // drop cached piece manifests (#171)
     try {
       this.channel?.close();
     } catch {
@@ -1110,7 +1579,6 @@ export class WarpPeer {
   }
 }
 
-/** Max edge of a generated thumbnail, in CSS pixels. */
 /**
  * Validate a receiver-supplied resume offset (Fable L1): must be a non-negative
  * integer no larger than the file. Anything else (NaN, negative, >size, non-int —
@@ -1121,30 +1589,55 @@ function clampOffset(v: unknown, size: number): number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= size ? v : 0;
 }
 
+/**
+ * Right-size a verified piece (#137) to an ArrayBuffer for a sink's `append`
+ * (the OPFS sink transfers the buffer into its worker, so it must be a whole
+ * ArrayBuffer, not an oversized view). No copy when the piece already owns its
+ * entire buffer — the common wire-aligned case where one chunk is one piece.
+ */
+function pieceBuffer(p: Uint8Array): ArrayBuffer {
+  return p.byteOffset === 0 && p.buffer.byteLength === p.byteLength
+    ? (p.buffer as ArrayBuffer)
+    : p.slice().buffer;
+}
+
+/** Max edge of a generated thumbnail, in CSS pixels. */
 const THUMB_MAX = 64;
+
+/** Skip thumbnail decoding above this source size (issue #90): a single enormous
+ *  TIFF/PSD shouldn't stall the whole batch's offer behind one multi-second decode. */
+const THUMB_SOURCE_MAX = 50 * 1024 * 1024;
 
 /**
  * Best-effort image thumbnail as a small low-quality JPEG data URL. Returns
  * undefined for non-images or any failure (decode error, no canvas, etc.) — the
  * caller treats a missing thumb as fine.
+ *
+ * Decodes AT thumbnail scale: `createImageBitmap` is handed `resizeWidth` so the
+ * browser downscales DURING decode instead of materializing the full image (a
+ * 12 MP phone photo is ~45 MB of RGBA) just to throw it away on a 64 px canvas
+ * (issue #90). One resize dimension preserves aspect ratio — a portrait comes
+ * out THUMB_MAX wide and proportionally tall, which the tray's fixed display box
+ * constrains anyway.
  */
 async function makeThumb(file: File): Promise<string | undefined> {
   if (!file.type.startsWith("image/")) return undefined;
+  if (file.size > THUMB_SOURCE_MAX) return undefined;
   if (typeof document === "undefined" || typeof createImageBitmap !== "function") return undefined;
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, THUMB_MAX / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * scale));
-    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const bitmap = await createImageBitmap(file, {
+      resizeWidth: THUMB_MAX,
+      resizeQuality: "low",
+    });
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       bitmap.close();
       return undefined;
     }
-    ctx.drawImage(bitmap, 0, 0, w, h);
+    ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
     return canvas.toDataURL("image/jpeg", 0.5);
   } catch {

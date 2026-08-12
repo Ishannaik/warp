@@ -1,14 +1,15 @@
 # Security Policy
 
 Warp moves people's files, so security reports are taken seriously.
+For the system trust boundaries and what the signaling server can and cannot access, see [Threat Model](./docs/THREAT-MODEL.md).
 
 ## Reporting a vulnerability
 
 **Please do not open a public issue for security problems.**
 
 Use GitHub's [Private Vulnerability Reporting](https://github.com/Ishannaik/warp/security/advisories/new)
-(Security tab → "Report a vulnerability"). If that's unavailable, email
-**ainewstweets@gmail.com** with details and reproduction steps.
+(Security tab → "Report a vulnerability"). It is the only reporting channel, and
+it keeps the report private until a fix ships.
 
 You can expect an initial response within a few days. Please give a reasonable
 window to fix the issue before any public disclosure.

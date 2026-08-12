@@ -71,7 +71,10 @@ export default function App() {
   const { path, code } = useRoute();
 
   const { title, description } = seoForRoute(path);
-  useDocumentSeo(title, description);
+  // Session URLs (/r/<code>) are ephemeral — canonicalize them to the stable
+  // receive page so shared links don't fragment indexing across room codes.
+  const canonicalPath = path.startsWith("/r/") ? "/receive" : path;
+  useDocumentSeo(title, description, canonicalPath);
 
   if (path === "/") return <Landing />;
   if (path === "/send") return <TransferFlow />;

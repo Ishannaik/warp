@@ -41,6 +41,8 @@ class FakePeer {
     this.acceptTargets = [];
     this.declined = [];
     this.cancelled = [];
+    this.paused = [];
+    this.resumeRequested = [];
     this.resumes = [];
     this.closed = false;
     this._listeners = {};
@@ -68,6 +70,12 @@ class FakePeer {
   }
   cancel(id) {
     this.cancelled.push(id);
+  }
+  pause(id) {
+    this.paused.push(id);
+  }
+  requestResume(id) {
+    this.resumeRequested.push(id);
   }
   close() {
     this.closed = true;
@@ -363,9 +371,10 @@ assert(fsPickers.fileCalls === 0 && fsPickers.dirCalls === 0, "no picker is prom
 // inactive entry auto-accepts with the durable offset and NO modal.
 const receiveReg = new Map();
 const cancelledKeys = new Set();
+const pausedKeys = new Set();
 
-function fakeSink(bytes) {
-  return { bytesWritten: bytes, async quiesce() {}, async abort() {} };
+function fakeSink(bytes, failed = false) {
+  return { bytesWritten: bytes, failed, async quiesce() {}, async abort() {} };
 }
 
 async function handleOffer(peerId, info) {
@@ -376,7 +385,15 @@ async function handleOffer(peerId, info) {
     info.items.length > 0 &&
     info.items.every((it) => {
       const e = it.key ? receiveReg.get(it.key) : undefined;
-      return !!e && !e.active && !!it.resumeToken && e.resumeToken === it.resumeToken && !cancelledKeys.has(it.key);
+      return (
+        !!e &&
+        !e.active &&
+        !e.sink.failed &&
+        !!it.resumeToken &&
+        e.resumeToken === it.resumeToken &&
+        !cancelledKeys.has(it.key) &&
+        !pausedKeys.has(it.key)
+      );
     });
   if (!allResumable) {
     incoming = { ...info, peerId };
@@ -446,6 +463,389 @@ receiveReg.set("busy|9|9", { key: "busy|9|9", size: 9, resumeToken: "tok-E", sin
 incoming = null;
 await handleOffer(rp.remoteId, { batchId: "re6", items: [{ id: "e1", key: "busy|9|9", size: 9, resumeToken: "tok-E" }] });
 assert(incoming && incoming.batchId === "re6", "a duplicate offer for an ACTIVE file is not double-accepted");
+
+// 6g. A POISONED sink (a write failed before the drop) -> modal, not auto-resume.
+// Auto-resuming onto a dead sink would stream the tail into nowhere and only fail
+// at file-end; the honest path is to surface the offer and let the user restart.
+receiveReg.set("sick|8|7", { key: "sick|8|7", size: 8, resumeToken: "tok-F", sink: fakeSink(3, true), active: false, target: undefined });
+incoming = null;
+rp.accepted.length = 0;
+await handleOffer(rp.remoteId, { batchId: "re7", items: [{ id: "s1", key: "sick|8|7", size: 8, resumeToken: "tok-F" }] });
+assert(incoming && incoming.batchId === "re7", "a re-offer onto a POISONED sink surfaces the modal, not auto-resume");
+assert(rp.accepted.length === 0, "a poisoned-sink re-offer is NOT auto-accepted");
+
+// 6h. Pause/resume guard (#247): a paused key is NOT auto-resumed by an unrelated
+// reconnect; explicit resume clears the guard; cancel after pause poisons the sink.
+receiveReg.set("held.bin|20|3", {
+  key: "held.bin|20|3",
+  size: 20,
+  resumeToken: "tok-P",
+  sink: fakeSink(8),
+  active: false,
+  target: undefined,
+});
+pausedKeys.add("held.bin|20|3");
+incoming = null;
+rp.accepted.length = 0;
+await handleOffer(rp.remoteId, {
+  batchId: "re8",
+  items: [{ id: "p1", key: "held.bin|20|3", size: 20, resumeToken: "tok-P" }],
+});
+assert(incoming && incoming.batchId === "re8", "a paused key is not auto-resumed by an unrelated reconnect");
+assert(rp.accepted.length === 0, "paused-key re-offer is NOT auto-accepted");
+
+// Explicit resume clears the paused key — a following re-offer auto-resumes.
+pausedKeys.delete("held.bin|20|3");
+incoming = null;
+await handleOffer(rp.remoteId, {
+  batchId: "re9",
+  items: [{ id: "p2", key: "held.bin|20|3", size: 20, resumeToken: "tok-P" }],
+});
+assert(incoming === null, "explicit resume clears the paused key and auto-resumes");
+assert(rp.resumes.at(-1) && rp.resumes.at(-1)["p2"] === 8, "post-resume auto-accept reports the durable offset");
+
+// Cancel after pause poisons the sink; a later re-offer surfaces the modal.
+receiveReg.set("held.bin|20|3", {
+  key: "held.bin|20|3",
+  size: 20,
+  resumeToken: "tok-P",
+  sink: fakeSink(8),
+  active: false,
+  target: undefined,
+});
+pausedKeys.add("held.bin|20|3");
+// cancel(id) mirror: poison + drop entry + cancelledKeys (and clear pausedKeys)
+{
+  const key = "held.bin|20|3";
+  cancelledKeys.add(key);
+  pausedKeys.delete(key);
+  const e = receiveReg.get(key);
+  if (e) void e.sink.abort();
+  receiveReg.delete(key);
+}
+incoming = null;
+rp.accepted.length = 0;
+// Even if a stale entry were re-created with a healthy sink, cancelledKeys blocks resume:
+receiveReg.set("held.bin|20|3", {
+  key: "held.bin|20|3",
+  size: 20,
+  resumeToken: "tok-P",
+  sink: fakeSink(8),
+  active: false,
+  target: undefined,
+});
+await handleOffer(rp.remoteId, {
+  batchId: "re10",
+  items: [{ id: "p3", key: "held.bin|20|3", size: 20, resumeToken: "tok-P" }],
+});
+assert(incoming && incoming.batchId === "re10", "cancel after pause poisons the path — re-offer surfaces the modal");
+assert(rp.accepted.length === 0, "cancel-after-pause re-offer is NOT auto-accepted");
+
+// 7. Reload-resume (issue #36, extended to OPFS by #169): the registry is repopulated
+// from the durable ledger on mount, and the EXISTING auto-resume path then continues
+// from the staged offset. hydrateFromLedger mirrors the hook 1:1: BOTH durable kinds
+// reconcile the ledger offset against what is really staged now and resume at
+// min(real, ledger) — never the ledger alone (H1). OPFS measures the file's real
+// length (opfsDurableLength); an unreadable length (undefined) is dropped for an
+// honest restart. IDB measures the contiguous staged prefix (idbDurableLength); the
+// staging rows and the ledger row live in separate DBs with independent TTL GCs, so a
+// prefix row can be reaped while a fresher ledger row survives — trusting the ledger
+// alone would finalize a truncated file. A durable prefix of 0 resumes at 0 (an honest
+// full re-receive). Complete / corrupt rows are always skipped.
+function hydrateFromLedger(rows, opfsLength, idbLength) {
+  const hydrated = [];
+  for (const row of rows) {
+    if (row.sinkKind !== "idb" && row.sinkKind !== "opfs") continue;
+    if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) continue;
+    if (receiveReg.has(row.key)) continue;
+    let offset = row.bytesWritten;
+    if (row.sinkKind === "opfs") {
+      const real = opfsLength(row.fileId);
+      if (real === undefined) continue; // length unreadable -> honest restart
+      offset = Math.min(real, row.bytesWritten);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) continue;
+    } else {
+      // IDB: reconcile against the contiguous durable prefix (idbDurableLength).
+      const real = idbLength(row.fileId);
+      offset = Math.min(real, row.bytesWritten);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) continue;
+    }
+    receiveReg.set(row.key, {
+      key: row.key,
+      size: row.size,
+      resumeToken: row.resumeToken,
+      sink: fakeSink(offset),
+      active: false,
+      target: undefined,
+    });
+    hydrated.push(row.key);
+  }
+  return hydrated;
+}
+
+// The durable OPFS lengths a reload would measure: img-stage holds 40 bytes (the
+// ledger acked 50, so reconciliation must pull the offset back to 40); vid-stage is
+// absent, so its length reads undefined (file gone / unreadable -> honest restart).
+const opfsFiles = { "img-stage": 40 };
+const opfsLength = (fileId) => (fileId in opfsFiles ? opfsFiles[fileId] : undefined);
+
+// The durable IDB contiguous-prefix lengths a reload would measure: big-stage holds
+// the full 60 the ledger acked (no reconciliation needed); db-stage holds only 30 of
+// the 50 acked (a mid-prefix gap pulls the offset back); gc-stage holds 0 — its prefix
+// row was reaped by the staging TTL GC while the ledger row survived.
+const idbFiles = { "big-stage": 60, "db-stage": 30, "gc-stage": 0 };
+const idbLength = (fileId) => (fileId in idbFiles ? idbFiles[fileId] : 0);
+
+const ledgerRows = [
+  { key: "big.bin|100|7", sinkKind: "idb", fileId: "big-stage", resumeToken: "tok-R", size: 100, bytesWritten: 60 },
+  { key: "img.iso|80|11", sinkKind: "opfs", fileId: "img-stage", resumeToken: "tok-V", size: 80, bytesWritten: 50 },
+  { key: "vid.mp4|50|8", sinkKind: "opfs", fileId: "vid-stage", resumeToken: "tok-S", size: 50, bytesWritten: 20 },
+  { key: "db.iso|90|12", sinkKind: "idb", fileId: "db-stage", resumeToken: "tok-W", size: 90, bytesWritten: 50 },
+  { key: "gc.bin|70|13", sinkKind: "idb", fileId: "gc-stage", resumeToken: "tok-X", size: 70, bytesWritten: 40 },
+  { key: "done.bin|30|9", sinkKind: "idb", fileId: "done-stage", resumeToken: "tok-T", size: 30, bytesWritten: 30 },
+  { key: "bad.bin|40|10", sinkKind: "idb", fileId: "bad-stage", resumeToken: "tok-U", size: 40, bytesWritten: -5 },
+];
+const hydrated = hydrateFromLedger(ledgerRows, opfsLength, idbLength);
+assert(
+  hydrated.length === 4 &&
+    hydrated.includes("big.bin|100|7") &&
+    hydrated.includes("img.iso|80|11") &&
+    hydrated.includes("db.iso|90|12") &&
+    hydrated.includes("gc.bin|70|13"),
+  "hydration rebuilds the sane IDB + OPFS partials, reconciling each to its durable prefix",
+);
+assert(receiveReg.has("big.bin|100|7"), "the IDB partial is back in the registry after reload");
+assert(receiveReg.get("big.bin|100|7").sink.bytesWritten === 60, "an IDB prefix that matches the ledger resumes at the ledger offset");
+assert(receiveReg.has("img.iso|80|11"), "a readable OPFS partial is rehydrated after reload (#169)");
+assert(
+  receiveReg.get("img.iso|80|11").sink.bytesWritten === 40,
+  "the OPFS resume offset is reconciled to min(durable length, ledger) — 40, not the 50 the ledger acked",
+);
+assert(
+  receiveReg.get("db.iso|90|12").sink.bytesWritten === 30,
+  "the IDB resume offset is reconciled to the contiguous durable prefix — 30, not the 50 the ledger acked",
+);
+assert(
+  receiveReg.get("gc.bin|70|13").sink.bytesWritten === 0,
+  "an IDB prefix reaped by GC resumes at 0 (honest full re-receive), not the 40 the stale ledger claims",
+);
+assert(!receiveReg.has("vid.mp4|50|8"), "an OPFS partial with an unreadable length is dropped (honest restart)");
+assert(!receiveReg.has("done.bin|30|9"), "a complete row is dropped, not resumed");
+assert(!receiveReg.has("bad.bin|40|10"), "a corrupt (negative) offset is dropped, not trusted");
+
+// The sender (still up) re-offers the hydrated file with the SAME token -> the
+// existing auto-resume path continues from the durable offset (60), no modal.
+const rp2 = new FakePeer("reloadpeer1", true);
+rp2.isConnected = true;
+peersMap.set(rp2.remoteId, rp2);
+bind(rp2.remoteId, rp2);
+
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl1", items: [{ id: "z1", key: "big.bin|100|7", size: 100, resumeToken: "tok-R" }] });
+assert(incoming === null, "after reload, the re-offered IDB partial auto-resumes with NO modal");
+assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z1"] === 60, "reload-resume continues from the durable offset (60)");
+
+// The rehydrated OPFS partial (#169) likewise auto-resumes — from the RECONCILED
+// offset (40), not the 50 the ledger acked, so the sender re-sends only what's missing.
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl3", items: [{ id: "z3", key: "img.iso|80|11", size: 80, resumeToken: "tok-V" }] });
+assert(incoming === null, "after reload, the re-offered OPFS partial auto-resumes with NO modal (#169)");
+assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z3"] === 40, "OPFS reload-resume continues from the reconciled offset (40)");
+
+// The reconciled IDB partial (db.iso) likewise auto-resumes — from the contiguous
+// durable prefix (30), not the 50 the ledger acked, so the sender re-sends only the
+// bytes that are actually missing rather than trusting a stale ledger offset.
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl4", items: [{ id: "z4", key: "db.iso|90|12", size: 90, resumeToken: "tok-W" }] });
+assert(incoming === null, "after reload, the re-offered IDB partial auto-resumes with NO modal");
+assert(rp2.resumes.at(-1) && rp2.resumes.at(-1)["z4"] === 30, "IDB reload-resume continues from the reconciled durable prefix (30)");
+
+// The vid.mp4 OPFS row was dropped (its durable length was unreadable), so its re-offer
+// is an "unknown" key -> modal (an honest restart rather than a resume onto a hole).
+incoming = null;
+await handleOffer(rp2.remoteId, { batchId: "rl2", items: [{ id: "z2", key: "vid.mp4|50|8", size: 50, resumeToken: "tok-S" }] });
+assert(incoming && incoming.batchId === "rl2", "an OPFS file with an unreadable length restarts via the accept modal");
+
+// 8. Ledger sinkKind stays consistent across an OPFS -> IDB fallback (issue #170).
+// The progress upsert reads the sink's live `activeKind` and syncs the ledger row's
+// sinkKind to it BEFORE writing, so a reload reconstructs the SAME kind of sink that
+// actually holds the bytes. resolveLedgerKind mirrors the hook's upsert 1:1.
+function resolveLedgerKind(ledger, sink) {
+  const liveKind = sink.activeKind;
+  if (liveKind) ledger.sinkKind = liveKind;
+  return ledger.sinkKind;
+}
+
+// A receive that fell back to IDB reports activeKind "idb": the row seeded "opfs"
+// at accept time must flip to "idb" so a reload builds an idbSink over the IDB rows.
+{
+  const ledger = { sinkKind: "opfs" };
+  const fellBack = { activeKind: "idb", bytesWritten: 40 };
+  assert(resolveLedgerKind(ledger, fellBack) === "idb", "a fallback sink flips the ledger row opfs -> idb");
+  assert(ledger.sinkKind === "idb", "the registry ledger object is synced in place");
+}
+
+// A healthy OPFS receive keeps the row "opfs".
+{
+  const ledger = { sinkKind: "opfs" };
+  const healthy = { activeKind: "opfs", bytesWritten: 40 };
+  assert(resolveLedgerKind(ledger, healthy) === "opfs", "a healthy OPFS sink keeps the ledger row opfs");
+}
+
+// A plain sink (memory/disk/IDB, no activeKind) leaves the row untouched.
+{
+  const ledger = { sinkKind: "idb" };
+  const plain = { bytesWritten: 40 }; // no activeKind property
+  assert(resolveLedgerKind(ledger, plain) === "idb", "a sink without activeKind leaves the ledger row unchanged");
+}
+
+// ---- 9. Filename collisions in the directory-picker path (issue #133) --------
+//
+// The hook's uniqueName, reproduced 1:1 from useWarpTransfer.ts. It de-dupes
+// against BOTH the names used earlier in this batch and the files already on
+// disk, so an existing file keeps its name and the incoming one steps aside.
+
+async function existsInDir(dir, name) {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch (err) {
+    return err?.name === "NotFoundError" ? false : "unknown";
+  }
+}
+
+async function uniqueName(used, name, dir) {
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+
+  let candidate = name;
+  for (let n = 1; ; n += 1) {
+    if (!used.has(candidate)) {
+      const onDisk = dir ? await existsInDir(dir, candidate) : false;
+      if (onDisk !== true) {
+        used.add(candidate);
+        return candidate;
+      }
+    }
+    candidate = `${stem} (${n})${ext}`;
+  }
+}
+
+/** A fake directory handle over a set of existing names. Records every probe. */
+function fakeDir(existing = [], opts = {}) {
+  const files = new Set(existing);
+  return {
+    files,
+    probes: [],
+    created: [],
+    async getFileHandle(name, options) {
+      if (options?.create) {
+        this.created.push(name);
+        files.add(name);
+        return { name };
+      }
+      this.probes.push(name);
+      if (opts.throwOnProbe) throw opts.throwOnProbe;
+      if (!files.has(name)) {
+        const e = new Error(`no such file: ${name}`);
+        e.name = "NotFoundError";
+        throw e;
+      }
+      return { name };
+    },
+  };
+}
+
+/** Resolve a whole batch the way accept() does: one shared used-set, in order. */
+async function resolveBatch(dir, names) {
+  const used = new Set();
+  const out = [];
+  for (const n of names) out.push(await uniqueName(used, n, dir));
+  return out;
+}
+
+// 9a. AC1 — a name already on disk is preserved; the incoming file steps aside.
+{
+  const dir = fakeDir(["report.pdf"]);
+  const got = await resolveBatch(dir, ["report.pdf"]);
+  assert(got[0] === "report (1).pdf", "an existing on-disk name yields 'report (1).pdf', not an overwrite");
+  assert(dir.files.has("report.pdf"), "the pre-existing file is still present (never clobbered)");
+  assert(dir.created.length === 0, "resolving a name never creates a file by itself");
+}
+
+// 9b. AC2 — three identical names in ONE batch, empty folder.
+{
+  const dir = fakeDir([]);
+  const got = await resolveBatch(dir, ["a.txt", "a.txt", "a.txt"]);
+  assert(
+    JSON.stringify(got) === JSON.stringify(["a.txt", "a (1).txt", "a (2).txt"]),
+    "three same-named files in one batch become a.txt, a (1).txt, a (2).txt",
+  );
+}
+
+// 9c. AC3 — no collision means no behaviour change.
+{
+  const dir = fakeDir(["other.txt"]);
+  const got = await resolveBatch(dir, ["fresh.txt"]);
+  assert(got[0] === "fresh.txt", "a non-colliding name is returned unchanged");
+}
+
+// 9d. On-disk AND in-batch collisions compose, continuing past both.
+{
+  const dir = fakeDir(["a.txt", "a (1).txt"]);
+  const got = await resolveBatch(dir, ["a.txt", "a.txt"]);
+  assert(
+    JSON.stringify(got) === JSON.stringify(["a (2).txt", "a (3).txt"]),
+    "disk-taken and batch-taken names are both skipped: a (2).txt then a (3).txt",
+  );
+}
+
+// 9e. The probe is CHEAP: only exact candidates, never a directory scan.
+{
+  const dir = fakeDir(["a.txt", "a (1).txt"]);
+  await resolveBatch(dir, ["a.txt"]);
+  assert(
+    JSON.stringify(dir.probes) === JSON.stringify(["a.txt", "a (1).txt", "a (2).txt"]),
+    "probes exactly the candidates it needs and stops at the first free slot",
+  );
+  assert(typeof dir.entries !== "function" && typeof dir.keys !== "function", "never enumerates the directory");
+}
+
+// 9f. An inconclusive probe (revoked permission) must NOT loop and must NOT be
+//     read as "free to overwrite something else". It yields the current
+//     candidate so the real create:true write reports the real error.
+{
+  const denied = new Error("permission denied");
+  denied.name = "NotAllowedError";
+  const dir = fakeDir(["a.txt"], { throwOnProbe: denied });
+  const got = await resolveBatch(dir, ["a.txt"]);
+  assert(got[0] === "a.txt", "an unreadable directory yields the original name and defers to the real write");
+  assert(dir.probes.length === 1, "an inconclusive probe stops probing instead of spinning for a free slot");
+}
+
+// 9g. No directory target (single-file picker / in-memory): pure in-batch
+//     behaviour, byte-identical to before, and zero probes.
+{
+  const used = new Set();
+  const a = await uniqueName(used, "a.txt", undefined);
+  const b = await uniqueName(used, "a.txt", undefined);
+  assert(a === "a.txt" && b === "a (1).txt", "with no folder target the in-batch de-dupe is unchanged");
+}
+
+// 9h. Dotfiles keep their whole name as the stem.
+{
+  const dir = fakeDir([".env"]);
+  const got = await resolveBatch(dir, [".env"]);
+  assert(got[0] === ".env (1)", "a dotfile de-dupes as '.env (1)', not ' (1).env'");
+}
+
+// 9i. Extensionless names.
+{
+  const dir = fakeDir(["README"]);
+  const got = await resolveBatch(dir, ["README"]);
+  assert(got[0] === "README (1)", "an extensionless name de-dupes as 'README (1)'");
+}
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

@@ -1,5 +1,5 @@
 /**
- * React hook orchestrating a Wrap transfer: signaling socket, the WebRTC peers,
+ * React hook orchestrating a Warp transfer: signaling socket, the WebRTC peers,
  * and the symmetric file-transfer tray. Both sender and receiver use this hook —
  * pass `joinCode` to act as the receiver who joins an existing room.
  *
@@ -27,7 +27,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { zipSync, type Zippable } from "fflate";
 import { SignalingClient, type SignalData } from "./signaling";
 import {
   WarpPeer,
@@ -38,8 +37,15 @@ import {
   type ReceiveHost,
 } from "./peer";
 import { diskSink, memorySink, type ReceiveSink } from "./receiveController";
-import { estimateFits, gcOrphanStaging, idbSink } from "./idbStage";
+import { estimateFits, gcOrphanStaging, idbDurableLength, idbSink, storageFits } from "./idbStage";
+import { gcOrphanOpfs, opfsDurableLength, opfsSink, opfsSinkWithIdbFallback, opfsSupported } from "./opfsStage";
+import { gcRxLedger, putRxLedger, readRxLedger, removeRxLedger, type LedgerSinkKind } from "./rxLedger";
+import { chooseReceiveStrategy, detectFsAccessSupport, isLargeBatch } from "./receiveStrategy";
+import { supportedCodecs } from "./compress";
+import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
+import { SpeedTracker } from "./transferStats";
+import { guardTargetFor } from "./receiveGuards";
 
 /**
  * One in-flight (or paused) incoming file's durable state, owned by the HOOK
@@ -60,16 +66,16 @@ interface RxEntry {
   ownerToken?: string;
   /** On-disk name chosen (disk mode). */
   savedName?: string;
+  /**
+   * Durable coordinates for reload-resume (issue #36), present only for the
+   * origin-storage sinks whose staged bytes SURVIVE a tab reload (IDB today; OPFS
+   * recorded for forward-compat). `fileId` is the staging name the sink used, so a
+   * reload reconstructs the SAME sink over the SAME bytes; the ledger row this
+   * feeds is written on durable progress and read back at mount to repopulate the
+   * registry. Absent for memory / disk sinks (they can't reload-resume here).
+   */
+  ledger?: { fileId: string; sinkKind: LedgerSinkKind; mime: string; name: string };
 }
-
-/**
- * At/above this many bytes (256 MiB) — total batch OR any single file — we stream
- * accepted files STRAIGHT TO DISK via the File System Access API instead of
- * accumulating an in-memory Blob (which would crash the tab on a multi-GB game).
- * Below it we keep the small-file in-memory tray (so we never reintroduce the
- * "1000 save prompts" problem). See `accept()`.
- */
-const LARGE_THRESHOLD = 256 * 1024 * 1024;
 
 /**
  * Minimal File System Access API surface the hook calls. `lib.dom` here doesn't
@@ -118,6 +124,24 @@ export interface WarpError {
   message: string;
 }
 
+/**
+ * Live throughput readout for the session, computed CLIENT-SIDE from the items'
+ * progress (the signaling relay never sees a byte). Aggregated across every
+ * in-flight file, both directions — in a mesh room several files may move at
+ * once, so the figure is the sum of their throughput. `etaSeconds` is null
+ * until the smoothed speed is stable enough to divide remaining bytes by.
+ */
+export interface TransferStats {
+  /** True while at least one file is actively transferring. */
+  active: boolean;
+  /** Smoothed throughput in bytes/second (0 before it stabilizes / on a stall). */
+  speedBps: number;
+  /** Seconds remaining at the current speed, or null when not yet computable. */
+  etaSeconds: number | null;
+  /** Bytes still to move across the active files (for the UI's own labels). */
+  remainingBytes: number;
+}
+
 export interface UseWarpTransfer {
   mode: WarpMode;
   code: string | null;
@@ -133,6 +157,8 @@ export interface UseWarpTransfer {
   /** A pending offer from a peer awaiting accept/decline (tagged peerId), or null. */
   incoming: IncomingOffer | null;
   error: WarpError | null;
+  /** Live throughput + ETA across the in-flight files (client-side only). */
+  stats: TransferStats;
   /** Sender: open a fresh room and wait for peers. */
   createRoom: () => void;
   /** Offer files to EVERY connected device (each gated by that device's accept).
@@ -154,6 +180,10 @@ export interface UseWarpTransfer {
   decline: () => void;
   /** Cancel an in-flight item (either direction) by id — routed to its peer. */
   cancel: (id: string) => void;
+  /** Pause an in-flight item — sink stays healthy; resume continues from the durable offset. */
+  pause: (id: string) => void;
+  /** Resume a paused item — re-offers with the same resumeToken (or asks the sender to). */
+  resume: (id: string) => void;
   /** Save one received file's blob to disk via an anchor download. */
   downloadOne: (id: string) => void;
   /** Zip all received, done file-items into warp-files.zip and download it. */
@@ -166,7 +196,7 @@ const ERROR_MESSAGES: Record<WarpError["kind"], string> = {
   "nat-failed": "Couldn't open a direct path between the devices. One side may be on a restrictive network.",
   disconnected:
     "The connection dropped and couldn't be restored. Retry to reconnect — unfinished files will be offered again.",
-  "channel-error": "The data channel hit an error.",
+  "channel-error": "The direct link between the devices hit an error. Retry to reconnect.",
   signaling: "Lost contact with the signaling server.",
   "no-files": "Add at least one file before opening a channel.",
   "too-large": "This device can't receive a file this large. Try a desktop browser (Chrome/Edge).",
@@ -180,20 +210,61 @@ function labelFor(peerId: string): string {
   return peerId.slice(0, 8);
 }
 
-/** De-dupe a filename within a folder target: "a.txt", "a (1).txt", … */
-function uniqueName(used: Set<string>, name: string): string {
-  if (!used.has(name)) {
-    used.add(name);
-    return name;
+/**
+ * Does `name` already exist in `dir`?
+ *
+ * Deliberately cheap: ONE `getFileHandle` for the exact name, never a directory
+ * scan. A `NotFoundError` is the API's way of saying the slot is free.
+ *
+ * Returns "unknown" when the probe fails for any OTHER reason (a revoked
+ * permission, a transient FS error). That third state matters: treating an
+ * unreadable directory as "free" would let us overwrite a file we simply could
+ * not see, and treating it as "taken" would spin forever looking for a free slot.
+ */
+async function existsInDir(dir: FsDirHandle, name: string): Promise<boolean | "unknown"> {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch (err) {
+    return (err as { name?: string } | null)?.name === "NotFoundError" ? false : "unknown";
   }
+}
+
+/**
+ * De-dupe a filename for a folder target: "a.txt", "a (1).txt", …
+ *
+ * Two different things can collide and both are checked:
+ *   - names already claimed by EARLIER FILES IN THE SAME BATCH (`used`), and
+ *   - files ALREADY ON DISK in the chosen folder (`dir`).
+ *
+ * Without the second check, receiving `report.pdf` into a folder that already
+ * holds one silently clobbered the existing file (issue #133). The existing file
+ * now always wins its name and the incoming one steps aside.
+ *
+ * When a disk probe is inconclusive we take the current candidate and stop
+ * probing, so the real `create: true` write surfaces the real error rather than
+ * this helper inventing a different filename or looping.
+ *
+ * `dir` is optional so callers with no folder target keep the pure in-batch
+ * behaviour.
+ */
+async function uniqueName(used: Set<string>, name: string, dir?: FsDirHandle): Promise<string> {
   const dot = name.lastIndexOf(".");
+  // dot > 0 keeps dotfiles whole: ".env" stems to ".env", not "" + ".env".
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";
-  let n = 1;
-  let candidate = `${stem} (${n})${ext}`;
-  while (used.has(candidate)) candidate = `${stem} (${(n += 1)})${ext}`;
-  used.add(candidate);
-  return candidate;
+
+  let candidate = name;
+  for (let n = 1; ; n += 1) {
+    if (!used.has(candidate)) {
+      const onDisk = dir ? await existsInDir(dir, candidate) : false;
+      if (onDisk !== true) {
+        used.add(candidate);
+        return candidate;
+      }
+    }
+    candidate = `${stem} (${n})${ext}`;
+  }
 }
 
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
@@ -232,17 +303,32 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   const receiveRegRef = useRef<Map<string, RxEntry>>(new Map());
   /** Keys the user explicitly cancelled — a re-offer of these must NOT auto-resume. */
   const cancelledKeysRef = useRef<Set<string>>(new Set());
+  /** Keys the user paused — skipped by auto-resume until an explicit resume() clears them. */
+  const pausedKeysRef = useRef<Set<string>>(new Set());
   /** Receive item id -> file key, so cancel(id) can find & poison the right entry. */
   const rxIdKeyRef = useRef<Map<string, string>>(new Map());
   /** Ref mirrors so long-lived peer event listeners never read stale state. */
   const itemsRef = useRef<TransferItem[]>([]);
   const peersListRef = useRef<string[]>([]);
+  /** Current room code, for stamping ledger rows from long-lived listeners. */
+  const codeRef = useRef<string | null>(joinCode ?? null);
+  /** Rolling-window throughput sampler fed by the aggregate progress ticks. */
+  const speedRef = useRef(new SpeedTracker());
+  const [stats, setStats] = useState<TransferStats>({
+    active: false,
+    speedBps: 0,
+    etaSeconds: null,
+    remainingBytes: 0,
+  });
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
   useEffect(() => {
     peersListRef.current = peers;
   }, [peers]);
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
 
   const shareUrl = useMemo(
     () => (code ? `${window.location.origin}/r/${code}` : null),
@@ -284,6 +370,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /** Salvage-and-rebuild for a dead peer; assigned below (breaks the
    *  bindPeer <-> salvagePeer <-> addInitiator callback cycle). */
   const salvageRef = useRef<(peerId: string) => void>(() => {});
+  /** Late-bound resume so bindPeer's resume-requested listener stays stable. */
+  const resumeRef = useRef<(id: string) => void>(() => {});
   /** Late-bound self-reference so connect's own handlers can re-connect. */
   const connectRef = useRef<(room?: string) => void>(() => {});
 
@@ -322,7 +410,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       end(id) {
         const key = idKey.get(id);
         idKey.delete(id);
-        if (key) reg.delete(key); // completion or cancel -> drop the durable entry
+        if (key) {
+          reg.delete(key); // completion or cancel -> drop the durable entry
+          void removeRxLedger(key); // ...and its reload-resume ledger row (#36)
+        }
       },
     };
   }, []);
@@ -330,9 +421,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   /**
    * Decide what to do with an inbound offer (Fable H3/H5/M1/M2): if EVERY item is a
    * known in-progress file — its key is in the registry, not active, token matches,
-   * and it wasn't cancelled — auto-accept it with each file's durable resume offset
-   * and NO modal. Otherwise surface the accept modal. Duplicate keys in one batch
-   * disable resume (force the modal).
+   * not cancelled, AND its sink is healthy — auto-accept it with each file's durable
+   * resume offset and NO modal. Otherwise surface the accept modal. Duplicate keys
+   * in one batch disable resume (force the modal). A POISONED sink (a failed write)
+   * also forces the modal: silently auto-resuming onto a sink that can no longer
+   * accept bytes would just stream the whole tail into nowhere and die at file-end.
    */
   const handleIncomingOffer = useCallback(
     (peerId: string, info: { batchId: string; items: OfferItem[] }) => {
@@ -347,9 +440,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           return (
             !!e &&
             !e.active &&
+            !e.sink.failed &&
             !!it.resumeToken &&
             e.resumeToken === it.resumeToken &&
-            !cancelledKeysRef.current.has(it.key!)
+            !cancelledKeysRef.current.has(it.key!) &&
+            !pausedKeysRef.current.has(it.key!)
           );
         });
 
@@ -371,7 +466,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           rxIdKeyRef.current.set(it.id, it.key!);
           if (!target) target = e.target;
         }
-        peer.acceptOffer(info.batchId, target, resume);
+        peer.acceptOffer(info.batchId, target, resume, supportedCodecs());
       })();
     },
     [],
@@ -410,7 +505,49 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
 
       // Both directions: an item was created or its progress changed. Stamp the
       // device it belongs to so the UI can tag tray rows / route cancels.
-      peer.on("transfer", (item) => upsertItem({ ...item, peerId }));
+      peer.on("transfer", (item) => {
+        upsertItem({ ...item, peerId });
+        // A pause (local or remote) must park the durable entry inactive and
+        // remember the key so an unrelated reconnect does not auto-resume.
+        // Unlike cancel, the sink stays healthy.
+        if (guardTargetFor(item.status, item.direction) === "paused") {
+          const key = rxIdKeyRef.current.get(item.id);
+          if (key) {
+            pausedKeysRef.current.add(key);
+            const e = receiveRegRef.current.get(key);
+            if (e) e.active = false;
+          }
+        }
+        // Reload-resume (#36): persist a resumable receive's DURABLE offset to the
+        // ledger. For a receive, item.transferred IS sink.bytesWritten (durable), and
+        // the peer throttles these emits to ~1% deltas, so this is a cheap upsert on
+        // the commit point — the ledger can never claim more than is staged (H1).
+        if (item.direction === "receive" && item.kind === "file") {
+          const key = rxIdKeyRef.current.get(item.id);
+          const e = key ? receiveRegRef.current.get(key) : undefined;
+          const room = codeRef.current;
+          if (e?.ledger && key && room) {
+            // Keep the ledger row's sinkKind in step with the sink that ACTUALLY
+            // holds the bytes: an OPFS receive that fell back to IDB (#170) reports
+            // activeKind "idb", so a reload reconstructs an idbSink over the IDB
+            // rows rather than probing an OPFS file that was never written.
+            const liveKind = (e.sink as { activeKind?: LedgerSinkKind }).activeKind;
+            if (liveKind) e.ledger.sinkKind = liveKind;
+            void putRxLedger({
+              key,
+              room,
+              fileId: e.ledger.fileId,
+              resumeToken: e.resumeToken,
+              size: e.size,
+              bytesWritten: item.transferred,
+              sinkKind: e.ledger.sinkKind,
+              mime: e.ledger.mime,
+              name: e.ledger.name,
+              ts: Date.now(),
+            });
+          }
+        }
+      });
 
       // A whole manifest arrived from THIS peer — auto-resume a known in-progress
       // file (no modal), else surface the accept modal.
@@ -422,6 +559,10 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
+
+      peer.on("resume-requested", ({ id }) => {
+        resumeRef.current(id);
+      });
 
       peer.on("error", (kind) => {
         // A mid-session transport death is salvageable: rebuild the link and
@@ -475,6 +616,7 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       setError(null);
       setConnections([]);
       setStatus("connecting");
+      speedRef.current.reset(); // a fresh session starts its speed window clean
 
       const sig = new SignalingClient();
       signalingRef.current = sig;
@@ -600,7 +742,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           t.kind === "file" &&
           t.status !== "done" &&
           t.status !== "declined" &&
-          t.status !== "cancelled",
+          t.status !== "cancelled" &&
+          t.status !== "paused", // user-held; wait for explicit resume()
       );
 
       // Sender side: put the Files behind unfinished sends back on the staging
@@ -702,16 +845,23 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     // else stays in the in-memory tray.
     const total = off.items.reduce((s, it) => s + it.size, 0);
     const biggest = off.items.reduce((m, it) => Math.max(m, it.size), 0);
-    const large = total >= LARGE_THRESHOLD || biggest >= LARGE_THRESHOLD;
+    const large = isLargeBatch(total, biggest);
     const fs = window as unknown as WindowWithFsPickers;
-    const canStream = large && (off.items.length > 1 ? !!fs.showDirectoryPicker : !!fs.showSaveFilePicker);
+    // Single source of truth for the disk-vs-memory decision (#54): a multi-file
+    // batch needs the directory picker, a single file the save-file picker; a
+    // browser without the matching picker falls through to "memory".
+    const strategy = chooseReceiveStrategy({
+      itemCount: off.items.length,
+      large,
+      fs: detectFsAccessSupport(window),
+    });
 
     let target: AcceptTarget | undefined;
-    if (canStream) {
+    if (strategy !== "memory") {
       // Prompt FROM the accept user-gesture (we haven't awaited anything yet).
       // If the user dismisses the picker (AbortError) we fall back to in-memory.
       try {
-        if (off.items.length > 1) {
+        if (strategy === "disk-dir") {
           const dirHandle = await fs.showDirectoryPicker!();
           target = { dirHandle };
         } else {
@@ -723,20 +873,27 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       }
     }
 
-    // Large but NO disk target (no FS Access API, or the picker was cancelled): fall
-    // back to IndexedDB staging — but GATE it so we don't OOM-crash the tab. If the
-    // device genuinely can't hold it (iOS memory ceiling / no storage room), refuse
-    // honestly (decline the offer) instead of crashing (Fable M3/M4).
+    // Large but NO disk target (no FS Access API, or the picker was cancelled):
+    // stage to origin storage. PREFER OPFS — it streams chunks straight to a bucket
+    // file in place with no in-RAM Blob-of-Blobs assembly (research-2026-07 P1), so
+    // it sidesteps the iOS jetsam ceiling the IndexedDB path works around. Fall back
+    // to IndexedDB Blob staging only where OPFS sync access is unavailable. Gate on
+    // storage quota either way and refuse honestly if it won't fit (Fable M3/M4).
+    // OPFS has no assembly step, so it skips estimateFits' iOS MEMORY cap and gates
+    // on quota alone — letting iOS receive larger files than the IDB path could.
+    let useOpfs = false;
     let useIdb = false;
     if (large && !target) {
-      const fit = await estimateFits(total);
+      const opfs = opfsSupported();
+      const fit = opfs ? await storageFits(total) : await estimateFits(total);
       if (!fit.ok) {
         setIncoming(null);
         peer.declineOffer(off.batchId);
         fail("too-large", fit.reason);
         return;
       }
-      useIdb = true;
+      if (opfs) useOpfs = true;
+      else useIdb = true;
     }
 
     // Build a durable registry entry + sink per file BEFORE accepting, so the
@@ -746,22 +903,44 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     const usedNames = new Set<string>();
     for (const it of off.items) {
       if (!it.key) continue;
+      // A prior partial for this key (a poisoned sink, or a re-offer the user
+      // chose to accept fresh) is being REPLACED — abort it so its OPFS staging
+      // file / IDB rows are freed now instead of lingering until the TTL GC.
+      const prev = receiveRegRef.current.get(it.key);
+      if (prev) void prev.sink.abort();
       let sink: ReceiveSink;
       let savedName: string | undefined;
       if (target && "dirHandle" in target) {
-        savedName = uniqueName(usedNames, it.name);
         const dir = target.dirHandle;
+        // Probes the folder as well as this batch, so an existing file keeps its
+        // name and the incoming one becomes "name (1).ext" (issue #133).
+        savedName = await uniqueName(usedNames, it.name, dir);
         const name = savedName;
         sink = diskSink(async () => (await dir.getFileHandle(name, { create: true })).createWritable());
       } else if (target && "fileHandle" in target) {
         savedName = target.fileHandle.name || it.name;
         const fh = target.fileHandle;
         sink = diskSink(async () => fh.createWritable());
+      } else if (useOpfs) {
+        // large, no FS Access -> OPFS (streams in place), with a runtime fallback
+        // to IDB staging if the OPFS sync access handle is unavailable and the sink
+        // poisons before acking a single byte (issue #170). The fallback keeps the
+        // receive alive on the exact browsers the IDB last-resort targets.
+        sink = opfsSinkWithIdbFallback(it.id, it.mime);
       } else if (useIdb) {
-        sink = idbSink(it.id, it.mime); // large, no FS Access -> IDB staging (bounded RAM)
+        sink = idbSink(it.id, it.mime); // large, no OPFS -> IDB staging (last resort)
       } else {
         sink = memorySink(it.mime);
       }
+      // Reload-resume coordinates (#36): only the origin-storage sinks stage bytes
+      // that survive a reload, so only they get a ledger row. `fileId` is the staging
+      // name (the offer item id) so a reload reconstructs the SAME sink over the SAME
+      // IDB rows / OPFS file. Both IDB and OPFS rows are rehydrated on mount (#169);
+      // OPFS reconciles its offset against the file's real durable length first.
+      const ledger =
+        useIdb || useOpfs
+          ? { fileId: it.id, sinkKind: (useIdb ? "idb" : "opfs") as LedgerSinkKind, mime: it.mime, name: it.name }
+          : undefined;
       receiveRegRef.current.set(it.key, {
         key: it.key,
         size: it.size,
@@ -770,20 +949,55 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
         target,
         active: false,
         savedName,
+        ledger,
       });
       rxIdKeyRef.current.set(it.id, it.key);
+      // Seed the ledger row at offset 0 so an early reload (before the first progress
+      // tick) still finds a resumable entry; progress upserts refine bytesWritten.
+      if (ledger) {
+        const room = codeRef.current;
+        if (room) {
+          void putRxLedger({
+            key: it.key,
+            room,
+            fileId: ledger.fileId,
+            resumeToken: it.resumeToken ?? "",
+            size: it.size,
+            bytesWritten: 0,
+            sinkKind: ledger.sinkKind,
+            mime: ledger.mime,
+            name: ledger.name,
+            ts: Date.now(),
+          });
+        }
+      }
     }
 
     // Clear the modal only after the picker settles, so a cancelled picker can
     // still fall through to an in-memory accept of the same offer.
     setIncoming(null);
-    peer.acceptOffer(off.batchId, target);
+    // Advertise the codecs we can decode (#130) so the sender may compress
+    // compressible files; a stack without CompressionStream advertises nothing
+    // and receives raw bytes (backward compatible).
+    peer.acceptOffer(off.batchId, target, undefined, supportedCodecs());
   }, [incoming]);
 
   const decline = useCallback(() => {
     const off = incoming;
     if (!off) return;
     setIncoming(null);
+    // A decline can land on an offer that fell back to the modal despite a stale
+    // partial (e.g. a poisoned sink). Drop those durable entries + ledger rows now
+    // so they neither linger until the TTL GC nor auto-resume on a later re-offer.
+    for (const it of off.items) {
+      if (!it.key) continue;
+      const e = receiveRegRef.current.get(it.key);
+      if (e) {
+        void e.sink.abort();
+        receiveRegRef.current.delete(it.key);
+        void removeRxLedger(it.key);
+      }
+    }
     peersRef.current.get(off.peerId)?.declineOffer(off.batchId);
   }, [incoming]);
 
@@ -795,9 +1009,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       const key = rxIdKeyRef.current.get(id);
       if (key) {
         cancelledKeysRef.current.add(key);
+        pausedKeysRef.current.delete(key); // cancel wins over pause
         const e = receiveRegRef.current.get(key);
         if (e) void e.sink.abort();
         receiveRegRef.current.delete(key);
+        void removeRxLedger(key); // a cancelled file must not reload-resume (#36)
       }
 
       // Route to the peer that owns the item; the item carries its peerId.
@@ -817,6 +1033,66 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     },
     [],
   );
+
+  const pause = useCallback((id: string) => {
+    // Do NOT poison the sink (that is cancel's job). The transfer handler adds
+    // the key to pausedKeysRef when status flips to paused.
+    const item = itemsRef.current.find((t) => t.id === id);
+    const peer = item?.peerId ? peersRef.current.get(item.peerId) : undefined;
+    if (peer) {
+      peer.pause(id);
+      return;
+    }
+    for (const p of peersRef.current.values()) p.pause(id);
+  }, []);
+
+  /** Re-offer a paused send item. `notifyPeer` asks the receiver to clear its
+   *  pausedKeys before the offer arrives; skip it when WE are answering their
+   *  resume-requested (otherwise the two sides ping-pong). */
+  const reofferPausedSend = useCallback((id: string, notifyPeer: boolean) => {
+    const item = itemsRef.current.find((t) => t.id === id);
+    if (!item || item.direction !== "send" || item.status !== "paused") return;
+    const peer = item.peerId ? peersRef.current.get(item.peerId) : undefined;
+    const pool = allFilesRef.current;
+    const i = pool.findIndex((f) => f.name === item.name && f.size === item.size);
+    if (i === -1 || !peer) return;
+    const file = pool[i];
+    setItems((prev) => prev.filter((t) => t.id !== id));
+    if (notifyPeer) peer.requestResume(id);
+    void peer.offerFiles([file]).catch(() => {
+      pendingFilesRef.current = [file];
+    });
+  }, []);
+
+  const resume = useCallback(
+    (id: string) => {
+      const item = itemsRef.current.find((t) => t.id === id);
+      if (!item || item.status !== "paused") return;
+
+      // Clear the auto-resume guard so a re-offer continues from the durable offset.
+      const key = rxIdKeyRef.current.get(id);
+      if (key) pausedKeysRef.current.delete(key);
+
+      if (item.direction === "send") {
+        reofferPausedSend(id, true);
+        return;
+      }
+
+      // Receive side: ask the sender to re-offer.
+      const peer = item.peerId ? peersRef.current.get(item.peerId) : undefined;
+      if (peer) peer.requestResume(id);
+      else for (const p of peersRef.current.values()) p.requestResume(id);
+    },
+    [reofferPausedSend],
+  );
+
+  // resume-requested from the other side: clear our guard, and re-offer if we
+  // hold the File. Do NOT echo requestResume — that would loop.
+  resumeRef.current = (id: string) => {
+    const key = rxIdKeyRef.current.get(id);
+    if (key) pausedKeysRef.current.delete(key);
+    reofferPausedSend(id, false);
+  };
 
   const downloadOne = useCallback(
     (id: string) => {
@@ -843,30 +1119,13 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     );
     if (!received.length) return;
 
-    const zippable: Zippable = {};
-    const used = new Set<string>();
-    Promise.all(
-      received.map(async (t) => {
-        // De-dupe identical filenames so the zip doesn't clobber entries.
-        let name = t.name || "file";
-        if (used.has(name)) {
-          const dot = name.lastIndexOf(".");
-          const base = dot > 0 ? name.slice(0, dot) : name;
-          const ext = dot > 0 ? name.slice(dot) : "";
-          let n = 2;
-          while (used.has(`${base} (${n})${ext}`)) n += 1;
-          name = `${base} (${n})${ext}`;
-        }
-        used.add(name);
-        const buf = new Uint8Array(await t.blob!.arrayBuffer());
-        zippable[name] = buf;
-      }),
-    )
-      .then(() => {
-        const zipped = zipSync(zippable, { level: 0 }); // level 0: files are usually already compressed
-        saveBlob(new Blob([zipped], { type: "application/zip" }), "warp-files.zip");
-      })
-      .catch(() => fail("channel-error"));
+    // Stream the archive slice-by-slice (issue #28) instead of zipSync, which
+    // blocked the main thread for the whole build and held a second full copy of
+    // every blob in memory (a 1.5 GB batch peaked at ~3 GB and OOM-killed tabs).
+    void streamZipDownload(
+      received.map((t) => ({ name: t.name, blob: t.blob! })),
+      "warp-files.zip",
+    ).catch(() => fail("channel-error"));
   }, [items, fail]);
 
   const retry = useCallback(() => {
@@ -936,15 +1195,150 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     };
   }, [transferring]);
 
-  // Prune abandoned IDB staging rows from crashed sessions once on mount (best-effort).
+  // Warn before the tab closes while bytes are in flight — an accidental ⌘W
+  // or reload kills every in-flight transfer for all peers. Native
+  // beforeunload prompt only while something is transferring/reconnecting/
+  // paused; removed the moment nothing is (an always-on listener disables
+  // bfcache and is hostile). Mirrors the wake-lock effect's shape.
+  const inFlight = items.some(
+    (t) => t.status === "transferring" || t.status === "reconnecting" || t.status === "paused",
+  );
+  useEffect(() => {
+    if (!inFlight) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [inFlight]);
+
+  // Prune abandoned staging (IDB rows + OPFS files) and stale reload-resume ledger
+  // rows from crashed sessions once on mount (best-effort).
   useEffect(() => {
     void gcOrphanStaging();
+    void gcOrphanOpfs();
+    void gcRxLedger();
   }, []);
 
-  // Receiver: auto-join the room from the URL on mount.
+  // Live speed + ETA: on every progress tick, feed the aggregate bytes-in-flight
+  // into the rolling-window sampler and republish a client-side throughput
+  // readout. Aggregating across items means a mesh room moving several files at
+  // once reports their COMBINED speed; the sampler's window smooths chunk bursts
+  // and self-heals after a stall. Runs only while something is transferring, so
+  // an idle session publishes a single inactive readout and then stops.
   useEffect(() => {
-    if (joinCode) connect(joinCode);
+    const active = items.filter(
+      (t) => t.kind === "file" && (t.status === "transferring" || t.status === "reconnecting"),
+    );
+    if (!active.length) {
+      speedRef.current.reset();
+      setStats((s) =>
+        s.active ? { active: false, speedBps: 0, etaSeconds: null, remainingBytes: 0 } : s,
+      );
+      return;
+    }
+    const transferred = active.reduce((sum, t) => sum + t.transferred, 0);
+    const remaining = active.reduce((sum, t) => sum + Math.max(0, t.size - t.transferred), 0);
+    const tracker = speedRef.current;
+    tracker.add(transferred);
+    const speedBps = tracker.speed();
+    const etaSeconds = tracker.etaSeconds(remaining);
+    setStats({ active: true, speedBps, etaSeconds, remainingBytes: remaining });
+  }, [items]);
+
+  /**
+   * Reload-resume (#36): repopulate the receive registry from the durable ledger so
+   * an accidental tab reload doesn't restart a large receive from zero. The sender
+   * never gives up — it re-offers unfinished files with the same `resumeToken` — and
+   * `handleIncomingOffer` already auto-resumes any inactive registry entry whose
+   * key + token match. So reload-survival is just "rebuild the entries from durable
+   * storage on mount"; the existing auto-resume path does the rest.
+   *
+   * Both durable kinds reconcile the ledger offset against what is REALLY staged now
+   * and resume at `min(real, ledger)` — never the ledger alone (H1). The ledger's
+   * `bytesWritten` was durable when written, but it can outlive the staged bytes:
+   * OPFS flushes are BATCHED, so after an unclean close the file's real length can lag
+   * the ledger (#169, measured via `opfsDurableLength`); and the IDB staging rows and
+   * the ledger row live in separate databases with independent TTL GCs, so a prefix
+   * row can be reaped while a fresher ledger row survives (measured via
+   * `idbDurableLength`, the contiguous-prefix length). If the durable length can't be
+   * read (OPFS file gone / unavailable) we drop the row; if it measures 0 we resume at
+   * 0 (an honest full re-receive through the auto-resume path). Memory / disk receives
+   * have no row and restart honestly (the sender's re-offer shows the accept modal).
+   */
+  const hydrateFromLedger = useCallback(async (room: string) => {
+    const rows = await readRxLedger(room);
+    const reg = receiveRegRef.current;
+    for (const row of rows) {
+      if (row.sinkKind !== "idb" && row.sinkKind !== "opfs") continue; // others: honest restart
+      // Trust the offset only if it's a sane, incomplete count — a corrupt or
+      // already-complete row is dropped, never resumed (H1/H2).
+      if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) {
+        void removeRxLedger(row.key);
+        continue;
+      }
+      if (reg.has(row.key)) continue; // a live entry already owns this file
+      if (row.sinkKind === "idb") {
+        // Reconcile the ledger offset against the rows that are ACTUALLY durable now,
+        // mirroring the OPFS branch below. The ledger's bytesWritten was durable when
+        // written, but the staging rows and the ledger row live in separate databases
+        // with independent TTL GCs (gcOrphanStaging vs gcRxLedger), so a prefix row can
+        // be reaped while a fresher ledger row survives. Trusting the ledger alone
+        // would then report an offset whose prefix is gone and finalize a truncated
+        // file (H1). Resume at min(durable prefix, ledger) — never the ledger alone.
+        const real = await idbDurableLength(row.fileId);
+        const offset = Math.min(real, row.bytesWritten);
+        if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) {
+          void removeRxLedger(row.key);
+          continue;
+        }
+        reg.set(row.key, {
+          key: row.key,
+          size: row.size,
+          resumeToken: row.resumeToken,
+          sink: idbSink(row.fileId, row.mime, offset),
+          active: false,
+          ledger: { fileId: row.fileId, sinkKind: "idb", mime: row.mime, name: row.name },
+        });
+        continue;
+      }
+      // OPFS: reconcile the ledger offset against the file's real durable length.
+      // A length we can't read means we can't prove where the durable prefix ends, so
+      // drop the row and let the sender's re-offer show the accept modal (honest
+      // restart) rather than resume onto a hole.
+      const real = await opfsDurableLength(row.fileId);
+      if (real === undefined) {
+        void removeRxLedger(row.key);
+        continue;
+      }
+      const offset = Math.min(real, row.bytesWritten);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) {
+        void removeRxLedger(row.key);
+        continue;
+      }
+      reg.set(row.key, {
+        key: row.key,
+        size: row.size,
+        resumeToken: row.resumeToken,
+        sink: opfsSink(row.fileId, row.mime, offset),
+        active: false,
+        ledger: { fileId: row.fileId, sinkKind: "opfs", mime: row.mime, name: row.name },
+      });
+    }
+  }, []);
+
+  // Receiver: auto-join the room from the URL on mount — hydrating the durable
+  // ledger FIRST so the sender's re-offer resumes from the staged offset (#36). The
+  // IDB read is fast and settles well before the signaling join + re-offer RTT.
+  useEffect(() => {
+    if (!joinCode) return;
+    let cancelled = false;
+    void hydrateFromLedger(joinCode).finally(() => {
+      if (!cancelled) connect(joinCode);
+    });
     return () => {
+      cancelled = true;
       for (const p of peersRef.current.values()) p.close();
       peersRef.current.clear();
       signalingRef.current?.close();
@@ -962,12 +1356,15 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
     items,
     incoming,
     error,
+    stats,
     createRoom,
     sendFiles,
     sendText,
     accept,
     decline,
     cancel,
+    pause,
+    resume,
     downloadOne,
     downloadAll,
     retry,

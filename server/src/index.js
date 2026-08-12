@@ -4,10 +4,12 @@
 
 const MAX_PEERS = 8;                                       // mesh blows up past this; honest cap
 const MAX_DISCOVER = 8;                                    // >this many sockets per public IP => CGNAT/cellular; hide devices (privacy)
+const MAX_SIGNAL_BYTES = 64 * 1024;                        // #98: real SDP/ICE frames are a few KB; this is generous headroom, not a guess-tight cap
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no ambiguous 0/O/1/I/L
 const CODE_LEN = 6;
 const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
 const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
+const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-guessed UA hint, relayed as-is
 
 export default {
   async fetch(request, env) {
@@ -74,6 +76,18 @@ export class SignalingRoom {
 
   // --- message handling ------------------------------------------------------
   async webSocketMessage(ws, raw) {
+    // Size guard (#98): reject oversized frames BEFORE parsing/relay. Workers raised
+    // the WebSocket message limit to 32 MiB, so without this one bad client could
+    // push huge frames that each cost a JSON.parse + relay inside the single shared
+    // DO — burning CPU for every room on the instance. Signaling only ever carries
+    // SDP offers/answers and ICE candidates (a few KB), so a generous byte ceiling
+    // never touches a legitimate handshake. `raw` is a string for text frames or an
+    // ArrayBuffer for binary; measure bytes either way (a string's .length is UTF-16
+    // units, a fine lower-bound proxy for a large-frame guard).
+    const bytes = typeof raw === 'string' ? raw.length : (raw && raw.byteLength) || 0;
+    if (bytes > MAX_SIGNAL_BYTES) {
+      return this.send(ws, { type: 'error', error: 'message-too-large', message: `Message exceeds ${MAX_SIGNAL_BYTES} bytes.` });
+    }
     let msg;
     try { msg = JSON.parse(raw); }
     catch { return this.send(ws, { type: 'error', error: 'bad-message', message: 'Expected JSON.' }); }
@@ -127,6 +141,9 @@ export class SignalingRoom {
       ip: prev.ip,                                        // keep the IP stamped at connect time
       peerId,
       name: String(msg.name || 'Device').slice(0, 40),
+      // Client-guessed display hint (phone/tablet/desktop icon) — relayed as-is,
+      // never interpreted server-side; unrecognized values fall back to 'desktop'.
+      deviceType: DEVICE_TYPES.has(msg.deviceType) ? msg.deviceType : 'desktop',
       discoverable: true,
     });
     this.broadcastNearby(prev.ip);
@@ -152,13 +169,21 @@ export class SignalingRoom {
         .filter((x) => x !== m)
         .map((x) => {
           const xa = x.deserializeAttachment();
-          return { peerId: xa.peerId, name: xa.name };
+          return { peerId: xa.peerId, name: xa.name, deviceType: xa.deviceType || 'desktop' };
         });
       this.send(m, { type: 'nearby', selfId: a.peerId, devices });
     }
   }
 
   handleSignal(ws, msg) {
+    // Refuse obviously malformed frames. A non-string `to` just failed the lookup below
+    // and vanished silently; a missing `data` still reached the peer as `data: undefined`,
+    // which every client then had to special-case. `data` itself stays opaque — this
+    // checks that the key is present, never what is inside it, so `null` is a value and
+    // relays normally.
+    if (typeof msg.to !== 'string' || msg.data === undefined) {
+      return this.send(ws, { type: 'error', error: 'bad-message', message: 'signal requires to + data.' });
+    }
     const a = ws.deserializeAttachment();
     if (!a) return;
     // Relay to the target peer if it's reachable from this sender: either same room,

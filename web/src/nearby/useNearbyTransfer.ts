@@ -22,9 +22,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { zipSync, type Zippable } from "fflate";
 import { useNearby, type IncomingConnection, type NearbyDevice } from "../lib/warp/useNearby";
 import type { WarpPeer } from "../lib/warp/peer";
+import { streamZipDownload } from "../lib/warp/zipDownload";
 import { type OfferItem, type TransferItem } from "../lib/warp/transfer";
 
 export type { NearbyDevice } from "../lib/warp/useNearby";
@@ -53,6 +53,7 @@ export interface UseNearbyTransfer {
   deviceName: string;
   devices: NearbyDevice[];
   crowded: boolean;
+
   rename: (name: string) => void;
   sessions: NearbySession[];
   incoming: IncomingRequest[];
@@ -72,7 +73,7 @@ export interface UseNearbyTransfer {
 const PEER_ERROR_COPY: Record<string, string> = {
   "nat-failed": "Couldn't open a direct channel. One device may be on a restrictive network.",
   disconnected: "The other device disconnected before the transfer finished.",
-  "channel-error": "The data channel hit an error.",
+  "channel-error": "The direct link to the other device broke.",
 };
 
 /** Trigger a browser download of a blob via a transient object-URL anchor. */
@@ -93,6 +94,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
   const [sessions, setSessions] = useState<NearbySession[]>([]);
   const [incoming, setIncoming] = useState<IncomingRequest[]>([]);
+
 
   /** One live peer per nearby device. */
   const peersRef = useRef<Map<string, WarpPeer>>(new Map());
@@ -168,7 +170,12 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
-      peer.on("error", (kind) =>failSession(peerId, PEER_ERROR_COPY[kind] ?? "The transfer failed."),);
+      
+
+      peer.on(
+        "error",
+        (kind) => failSession(peerId, PEER_ERROR_COPY[kind] ?? "The transfer failed."),
+      );
     },
     [failSession, upsertItem],
   );
@@ -323,11 +330,16 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
         const activePeer = peer;
 
+        
+
         const offer = () =>
           activePeer
             .offerFiles(files)
             .catch(() =>
-              failSession(peerId, "The data channel hit an error."),
+              failSession(
+                peerId,
+                PEER_ERROR_COPY["channel-error"] ?? "The data channel hit an error.",
+              ),
             );
 
         if (activePeer.isConnected) {
@@ -338,6 +350,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
             void offer();
           });
         }
+           
       }
     },
     [connectTo, devices, failSession, openSession],
@@ -360,11 +373,28 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     peersRef.current.get(peerId)?.cancel(id);
   }, []);
 
+  const pause = useCallback((peerId: string, id: string) => {
+    peersRef.current.get(peerId)?.pause(id);
+  }, []);
+
+  const resume = useCallback((peerId: string, id: string) => {
+    const item = itemsRef.current.get(peerId)?.find((t) => t.id === id);
+    const peer = peersRef.current.get(peerId);
+
+    if (!item || item.status !== "paused" || !peer) return;
+
+    if (item.direction === "send") {
+      
+      return;
+    }
+
+    peer.requestResume(id);
+  }, [failSession]);
+
   const downloadOne = useCallback((peerId: string, id: string) => {
     const item = itemsRef.current
       .get(peerId)
       ?.find((t) => t.id === id);
-
     if (!item?.blob) return;
 
     saveBlob(item.blob, item.name);
@@ -380,48 +410,23 @@ export function useNearbyTransfer(): UseNearbyTransfer {
               t.direction === "receive" &&
               t.kind === "file" &&
               t.status === "done" &&
-              !!t.blob,
+              t.blob,
           ) ?? [];
 
       if (!received.length) return;
 
-      const zippable: Zippable = {};
-      const used = new Set<string>();
-
-      Promise.all(
-        received.map(async (t: TransferItem) => {
-          let name = t.name || "file";
-
-          if (used.has(name)) {
-            const dot = name.lastIndexOf(".");
-            const base = dot > 0 ? name.slice(0, dot) : name;
-            const ext = dot > 0 ? name.slice(dot) : "";
-
-            let n = 2;
-            while (used.has(`${base} (${n})${ext}`)) n += 1;
-
-            name = `${base} (${n})${ext}`;
-          }
-
-          used.add(name);
-          zippable[name] = new Uint8Array(await t.blob!.arrayBuffer());
-        }),
-      )
-        .then(() => {
-          const zipped = zipSync(zippable, { level: 0 });
-
-          saveBlob(
-            new Blob([zipped], { type: "application/zip" }),
-            "nearby-files.zip",
-          );
-        })
-        .catch(() =>
-          failSession(peerId, "Couldn't build the zip."),
-        );
+      void streamZipDownload(
+        received.map((t) => ({
+          name: t.name,
+          blob: t.blob!,
+        })),
+        "nearby-files.zip",
+      ).catch(() =>
+        failSession(peerId, "Couldn't build the zip."),
+      );
     },
     [failSession],
   );
-
   const dismissSession = useCallback((peerId: string) => {
     peersRef.current.get(peerId)?.close();
     peersRef.current.delete(peerId);
@@ -433,10 +438,29 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       prev.filter((request) => request.peerId !== peerId),
     );
 
+    
+
     setSessions((prev) =>
       prev.filter((session) => session.peerId !== peerId),
     );
   }, []);
+
+  // #14: warn before the tab closes while bytes are in flight (LAN flow too).
+  // Native beforeunload prompt only while something is transferring/
+  // reconnecting/paused; removed the moment nothing is.
+  const sessionItems = sessions.flatMap((session) => session.items);
+  const nearbyInFlight = sessionItems.some(
+    (t) => t.status === "transferring" || t.status === "reconnecting" || t.status === "paused",
+  );
+  useEffect(() => {
+    if (!nearbyInFlight) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [nearbyInFlight]);
 
   return useMemo(
     () => ({
@@ -451,6 +475,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       acceptIncoming,
       declineIncoming,
       cancel,
+      pause,
+      resume,
       downloadOne,
       downloadAll,
       rename,
@@ -468,6 +494,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       acceptIncoming,
       declineIncoming,
       cancel,
+      pause,
+      resume,
       downloadOne,
       downloadAll,
       rename,

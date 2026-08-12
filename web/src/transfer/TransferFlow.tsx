@@ -3,14 +3,15 @@ import type { CSSProperties, DragEvent } from "react";
 import QRCode from "qrcode";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
-import { useWarpTransfer, type Connection } from "../lib/warp/useWarpTransfer";
+import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/useWarpTransfer";
 import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
+import { useTransferTitle } from "../lib/useTransferTitle";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { AcceptModal, SessionView } from "./SessionView";
 
 /**
- * Wrap Transfer flow — a real, WebRTC-backed transfer surface.
+ * Warp Transfer flow — a real, WebRTC-backed transfer surface.
  *
  * Review-before-receive redesign: there are now two pre-connect screens and then
  * one PERSISTENT session view shared with the LAN flow:
@@ -39,6 +40,9 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const wrap = useWarpTransfer(joinCode);
   const { mode, code, shareUrl, status, items, incoming, error, connections } = wrap;
   const isMobile = useIsMobile();
+
+  // #15: live progress in the tab title while any transfer is in flight.
+  useTransferTitle(items);
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
@@ -166,7 +170,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
       >
         <div style={{ width: "100%", maxWidth: "720px" }}>
           {error ? (
-            <ErrorPanel message={error.message} onRetry={wrap.retry} isMobile={isMobile} />
+            <ErrorPanel
+              kind={error.kind}
+              message={error.message}
+              onRetry={wrap.retry}
+              isMobile={isMobile}
+            />
           ) : showSession ? (
             <>
               {reconnecting && (
@@ -201,9 +210,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 peerLabel={peerLabel}
                 connections={connections}
                 items={items}
+                stats={wrap.stats}
                 onSendFiles={wrap.sendFiles}
                 onSendText={wrap.sendText}
                 onCancel={wrap.cancel}
+                onPause={wrap.pause}
+                onResume={wrap.resume}
                 onDownloadOne={wrap.downloadOne}
                 onDownloadAll={wrap.downloadAll}
                 isMobile={isMobile}
@@ -444,6 +456,7 @@ function QueueList({
               <div style={{ width: "8px", height: "8px", background: "var(--acc)" }} />
             </div>
             <span
+              title={q.file.name}
               style={{
                 fontSize: "14px",
                 fontWeight: 500,
@@ -1026,15 +1039,30 @@ const shareBtn: CSSProperties = {
 
 /* -------------------------------------------------------------- error panel */
 
+/** Eyebrow + headline per error kind — the NAT/STUN framing is only true for
+ *  `nat-failed`; every other kind gets its own honest chrome instead of
+ *  borrowing "No direct route." (issue #174). */
+const ERROR_PANEL_COPY: Record<WarpError["kind"], { eyebrow: string; title: string; natFooter?: boolean }> = {
+  "nat-failed": { eyebrow: "Channel failed", title: "No direct route.", natFooter: true },
+  disconnected: { eyebrow: "Connection lost", title: "Connection dropped." },
+  "channel-error": { eyebrow: "Channel failed", title: "The channel broke." },
+  signaling: { eyebrow: "Couldn't connect", title: "Couldn't reach the room." },
+  "no-files": { eyebrow: "Nothing to send", title: "Add a file first." },
+  "too-large": { eyebrow: "Too large", title: "File too large." },
+};
+
 function ErrorPanel({
+  kind,
   message,
   onRetry,
   isMobile,
 }: {
+  kind: WarpError["kind"];
   message: string;
   onRetry: () => void;
   isMobile: boolean;
 }) {
+  const copy = ERROR_PANEL_COPY[kind];
   return (
     <div style={{ animation: "warpFade .5s ease both", textAlign: "center" }}>
       <div
@@ -1064,7 +1092,7 @@ function ErrorPanel({
           marginBottom: "12px",
         }}
       >
-        Channel failed
+        {copy.eyebrow}
       </div>
       <h1
         style={{
@@ -1076,11 +1104,12 @@ function ErrorPanel({
           margin: "0 0 12px",
         }}
       >
-        No direct route.
+        {copy.title}
       </h1>
       <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>
-        {message} Warp is STUN-only — there's no relay fallback, so some networks simply can't be
-        bridged.
+        {message}
+        {copy.natFooter &&
+          " Warp is STUN-only — there's no relay fallback, so some networks simply can't be bridged."}
       </p>
       <div
         style={{

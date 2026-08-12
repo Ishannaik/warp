@@ -1,5 +1,7 @@
 # Warp architecture
 
+For the security trust boundary of the signaling server, see [Threat Model](./THREAT-MODEL.md).
+
 How a file gets from one browser to another without any server ever touching it. This is the deep tour for new contributors — everything here cites the real files and functions, so you can read along in the code.
 
 **The one-paragraph version:** a tiny Cloudflare Worker introduces two browsers to each other over WebSocket (the *signaling* plane), the browsers negotiate a direct, encrypted WebRTC data channel (the *data* plane), and files stream peer-to-peer over that channel using a small JSON-control + binary-chunk wire protocol with backpressure, accept-gating, instant cancel, and byte-exact resume. The server never sees a file byte — it can't, by construction.
@@ -131,7 +133,9 @@ sender                                  receiver
 - `TARGET_SEND_CHUNK = 256 KiB` — each gulp is sliced into SCTP messages of this size, capped at the *negotiated* `pc.sctp.maxMessageSize` (`sendChunkSize()`; a too-big message closes the channel) and floored at `MIN_SEND_CHUNK = 16 KiB`.
 - `SEND_HIGH_WATER = 8 MiB` / `LOW_WATER_MARK = 1 MiB` — classic high/low-water backpressure on `channel.bufferedAmount`: above high water the pump parks on `waitForDrain()`; `bufferedamountlow` (threshold = low water) resumes it.
 
-**Why 8 MiB is load-bearing:** Chrome's SCTP send buffer hard-caps at 16 MiB, and `bufferedAmount` *can never exceed it* — `send()` throws first. A high-water mark ≥ 16 MiB therefore never triggers, backpressure never engages, and every large transfer deterministically dies mid-send once the file outpaces the link (the historical "frozen at 40%" bug). The check also counts the chunk *about to be sent* (`bufferedAmount + sendChunk > SEND_HIGH_WATER`) so the buffer can't be pushed toward the cap. Relatedly, `waitForDrain()` also resolves on channel `close`/`error` — a channel that dies mid-drain must fail loudly, not park the pump forever.
+**Why 8 MiB is load-bearing:** three distinct limits are in play here and it's easy to conflate them. The default `maxMessageSize` is 64 KiB (RFC 8841 §6.1). The usrsctp/Chromium SCTP association send buffer is a separate 256 KiB (`kSendBufferSize`). Neither of those is what `SEND_HIGH_WATER` guards against — it's tuned against the 16 MiB `bufferedAmount` send-queue cap that libwebrtc enforces (`MaxSendQueueSize`), and `bufferedAmount` *can never exceed it* — `send()` throws first. A high-water mark ≥ 16 MiB therefore never triggers, backpressure never engages, and every large transfer deterministically dies mid-send once the file outpaces the link (the historical "frozen at 40%" bug). The check also counts the chunk *about to be sent* (`bufferedAmount + sendChunk > SEND_HIGH_WATER`) so the buffer can't be pushed toward the cap. Relatedly, `waitForDrain()` also resolves on channel `close`/`error` — a channel that dies mid-drain must fail loudly, not park the pump forever.
+
+Separately, `TARGET_SEND_CHUNK`'s 256 KiB messages exceed RFC 8831 §6.6's SHOULD of 16 KB per message (to avoid one stream monopolizing the association when interleaving isn't supported). Defensible for Warp's single bulk-transfer stream, and still capped to the negotiated peer `maxMessageSize`.
 
 ### Cancel: instant, from either side
 
