@@ -53,26 +53,19 @@ export interface UseNearbyTransfer {
   deviceName: string;
   devices: NearbyDevice[];
   crowded: boolean;
-  session: NearbySession | null;
-  incoming: IncomingRequest | null;
-  /** Begin / continue sending `files` to a discovered (or active) device. */
-  sendTo: (peerId: string, files: File[]) => void;
-  /** Send a text snippet over the active session (no accept needed). */
-  sendText: (text: string) => void;
-  /** Accept the pending inbound file offer -> bytes flow into the tray. */
-  acceptIncoming: () => void;
-  /** Decline the pending inbound file offer -> nothing is received. */
-  declineIncoming: () => void;
-  /** Cancel an in-flight item (either direction). */
-  cancel: (id: string) => void;
-  /** Save one received file's blob via an anchor download. */
-  downloadOne: (id: string) => void;
-  /** Zip all received, done file-items into nearby-files.zip and download. */
-  downloadAll: () => void;
-  /** Rename this device; empty input falls back to "Device". */
   rename: (name: string) => void;
-  /** Close the active session panel and tear the peer down. */
-  dismissSession: () => void;
+  sessions: NearbySession[];
+  incoming: IncomingRequest[];
+  /** Begin / continue sending `files` to a discovered (or active) device. */
+  sendTo: (peerId: string | string[], files: File[]) => void;
+  /** Send a text snippet over the active session (no accept needed). */
+  sendText: (peerId: string, text: string) => void;
+  acceptIncoming: (peerId: string) => void;
+  declineIncoming: (peerId: string) => void;
+  cancel: (peerId: string, id: string) => void;
+  downloadOne: (peerId: string, id: string) => void;
+  downloadAll: (peerId: string) => void;
+  dismissSession: (peerId: string) => void;
 }
 
 
@@ -98,50 +91,76 @@ export function useNearbyTransfer(): UseNearbyTransfer {
   const nearby = useNearby();
   const { selfId, devices, crowded, deviceName, connectTo, onIncoming, rename } = nearby;
 
-  const [session, setSession] = useState<NearbySession | null>(null);
-  const [incoming, setIncoming] = useState<IncomingRequest | null>(null);
+  const [sessions, setSessions] = useState<NearbySession[]>([]);
+  const [incoming, setIncoming] = useState<IncomingRequest[]>([]);
 
-  /** The peer backing the active session (so dismiss can close it). */
-  const peerRef = useRef<WarpPeer | null>(null);
-  /** Items kept in a ref too, so downloadOne/All resolve blobs without re-binding. */
-  const itemsRef = useRef<TransferItem[]>([]);
-  /** Name of the active session peer, for the accept prompt. */
-  const peerNameRef = useRef<string>("Device");
-  /** Discovery id of the active session peer. */
-  const peerIdRef = useRef<string>("");
+  /** One live peer per nearby device. */
+  const peersRef = useRef<Map<string, WarpPeer>>(new Map());
+
+  /** Items kept per peer so downloads resolve the correct blobs. */
+  const itemsRef = useRef<Map<string, TransferItem[]>>(new Map());
+
+  /** Display names keyed by discovery peer id. */
+  const peerNamesRef = useRef<Map<string, string>>(new Map());
 
   // ---- session-state plumbing ---------------------------------------------
 
-  const upsertItem = useCallback((item: TransferItem) => {
-    setSession((prev) => {
-      if (!prev) return prev;
-      const idx = prev.items.findIndex((t) => t.id === item.id);
-      const items = idx === -1 ? [...prev.items, item] : prev.items.slice();
-      if (idx !== -1) items[idx] = item;
-      itemsRef.current = items;
-      return { ...prev, items };
-    });
+  const upsertItem = useCallback((peerId: string, item: TransferItem) => {
+  const currentItems = itemsRef.current.get(peerId) ?? [];
+  const idx = currentItems.findIndex((t) => t.id === item.id);
+  const items = idx === -1 ? [...currentItems, item] : currentItems.slice();
+
+  if (idx !== -1) {
+    items[idx] = item;
+  }
+
+  itemsRef.current.set(peerId, items);
+
+  setSessions((prev) => {
+    const session = prev.find((s) => s.peerId === peerId);
+    if (!session) return prev;
+
+    return prev.map((s) =>
+      s.peerId === peerId ? { ...s, items } : s,
+    );
+  });
   }, []);
 
-  const failSession = useCallback((message: string) => {
-    setSession((prev) => (prev ? { ...prev, errorMessage: message } : prev));
+  const failSession = useCallback((peerId: string, message: string) => {
+    setSessions((prev) =>
+      prev.map((session) =>
+        session.peerId === peerId
+          ? { ...session, errorMessage: message }
+          : session,
+      ),
+    );
   }, []);
 
   /** Bind a peer's lifecycle events into the active session. */
   const bindPeer = useCallback(
-    (peer: WarpPeer) => {
+
+    (peer: WarpPeer, peerId: string, peerName: string) => {
       peer.on("connected", () =>
-        setSession((prev) => (prev ? { ...prev, connected: true } : prev)),
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.peerId === peerId
+              ? { ...session, connected: true }
+              : session,
+          ),
+        ),
       );
-      peer.on("transfer", (item) => upsertItem(item));
+      peer.on("transfer", (item) => upsertItem(peerId, item));
       // A FILE offer arrived: surface the accept modal with the manifest.
       peer.on("incoming-offer", (info) =>
-        setIncoming({
-          peerId: peerIdRef.current,
-          peerName: peerNameRef.current,
-          batchId: info.batchId,
-          items: info.items,
-        }),
+        setIncoming((prev) => [
+           ...prev.filter((request) => request.peerId !== peerId),
+          {
+            peerId,
+            peerName,
+            batchId: info.batchId,
+            items: info.items,
+          },
+        ]),
       );
       // Received files / text already arrive via "transfer" with the blob/text
       // attached; nothing extra to do here (no auto-download).
@@ -149,103 +168,187 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
-      peer.on("error", (kind) => failSession(PEER_ERROR_COPY[kind] ?? "The transfer failed."));
+      peer.on("error", (kind) =>failSession(peerId, PEER_ERROR_COPY[kind] ?? "The transfer failed."),);
     },
     [failSession, upsertItem],
   );
 
   /** Spin up a fresh session around a peer (or replace the current one). */
   const openSession = useCallback(
-    (peer: WarpPeer, peerId: string, peerName: string) => {
-      if (peerRef.current && peerRef.current !== peer) peerRef.current.close();
-      peerRef.current = peer;
-      peerNameRef.current = peerName;
-      peerIdRef.current = peerId;
-      itemsRef.current = [];
-      setSession({ peerId, peerName, connected: peer.isConnected, items: [], errorMessage: null });
-      bindPeer(peer);
-    },
-    [bindPeer],
-  );
+  (peer: WarpPeer, peerId: string, peerName: string) => {
+    const existing = peersRef.current.get(peerId);
+
+    if (existing === peer) {
+      return;
+    }
+
+    if (existing) {
+      existing.close();
+    }
+
+    peersRef.current.set(peerId, peer);
+    peerNamesRef.current.set(peerId, peerName);
+
+    if (!itemsRef.current.has(peerId)) {
+      itemsRef.current.set(peerId, []);
+    }
+
+    setSessions((prev) => {
+      const existingSession = prev.find((s) => s.peerId === peerId);
+
+      if (existingSession) {
+        return prev.map((s) =>
+          s.peerId === peerId
+            ? {
+                ...s,
+                peerName,
+                connected: peer.isConnected,
+                errorMessage: null,
+              }
+            : s,
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          peerId,
+          peerName,
+          connected: peer.isConnected,
+          items: itemsRef.current.get(peerId) ?? [],
+          errorMessage: null,
+        },
+      ];
+    });
+
+    bindPeer(peer, peerId, peerName);
+  },
+  [bindPeer],
+);
 
   // ---- inbound offers ------------------------------------------------------
 
   useEffect(() => {
     const off = onIncoming((conn: IncomingConnection) => {
-      // A nearby device opened a channel to us. If we already have a DIFFERENT
-      // active peer, refuse the new one (single 1:1 session in v1). If it's the
-      // same peer reconnecting, or we're idle, adopt it as the session peer.
-      if (peerRef.current && peerRef.current !== conn.peer) {
-        conn.peer.close();
-        return;
-      }
-      // Bind silently — the user is only prompted when a FILE offer arrives.
       openSession(conn.peer, conn.from, conn.name);
     });
+
     return off;
   }, [onIncoming, openSession]);
+  const acceptIncoming = useCallback(
+    (peerId: string) => {
+      const req = incoming.find((request) => request.peerId === peerId);
+      if (!req) return;
 
-  const acceptIncoming = useCallback(() => {
-    const req = incoming;
-    setIncoming(null);
-    if (!req) return;
-    peerRef.current?.acceptOffer(req.batchId);
-  }, [incoming]);
+      setIncoming((prev) =>
+        prev.filter((request) => request.peerId !== peerId),
+      );
 
-  const declineIncoming = useCallback(() => {
-    const req = incoming;
-    setIncoming(null);
-    if (!req) return;
-    peerRef.current?.declineOffer(req.batchId);
-  }, [incoming]);
+      peersRef.current.get(peerId)?.acceptOffer(req.batchId);
+    },
+    [incoming],
+  );
+
+  const declineIncoming = useCallback(
+    (peerId: string) => {
+      const req = incoming.find((request) => request.peerId === peerId);
+      if (!req) return;
+
+      setIncoming((prev) =>
+        prev.filter((request) => request.peerId !== peerId),
+      );
+
+      peersRef.current.get(peerId)?.declineOffer(req.batchId);
+    },
+    [incoming],
+  );
 
   // ---- outbound sends ------------------------------------------------------
 
   const sendTo = useCallback(
-    (peerId: string, files: File[]) => {
+    (peerIds: string | string[], files: File[]) => {
       if (!files.length) return;
-      const peerName = devices.find((d) => d.peerId === peerId)?.name ?? "Device";
 
-      // Reuse the live session if it's already the same peer; otherwise open one.
-      let peer = peerRef.current;
-      const samePeer = peer && session?.peerId === peerId;
-      if (!samePeer) {
-        const fresh = connectTo(peerId);
-        if (!fresh) {
-          setSession({
-            peerId,
-            peerName,
-            connected: false,
-            items: [],
-            errorMessage: "Network isn't ready yet — give it a second and try again.",
-          });
-          return;
+      const targets = Array.isArray(peerIds) ? peerIds : [peerIds];
+
+      for (const peerId of targets) {
+        const peerName =
+          devices.find((device) => device.peerId === peerId)?.name ??
+          peerNamesRef.current.get(peerId) ??
+          "Device";
+
+        let peer = peersRef.current.get(peerId);
+
+        if (!peer) {
+          const fresh = connectTo(peerId);
+
+          if (!fresh) {
+            setSessions((prev) => {
+              const existing = prev.find((s) => s.peerId === peerId);
+
+              if (existing) {
+                return prev.map((s) =>
+                  s.peerId === peerId
+                    ? {
+                        ...s,
+                        connected: false,
+                        errorMessage:
+                          "Network isn't ready yet — give it a second and try again.",
+                      }
+                    : s,
+                );
+              }
+
+              return [
+                ...prev,
+                {
+                  peerId,
+                  peerName,
+                  connected: false,
+                  items: [],
+                  errorMessage:
+                    "Network isn't ready yet — give it a second and try again.",
+                },
+              ];
+            });
+
+            continue;
+          }
+
+          peer = fresh;
+          openSession(peer, peerId, peerName);
         }
-        peer = fresh;
-        openSession(fresh, peerId, peerName);
-      }
-      if (!peer) return;
-      const activePeer = peer;
 
-      // Offer the files once the channel is open (offerFiles requires an open channel).
-      const offer = () =>
-        activePeer.offerFiles(files).catch(() => failSession("The data channel hit an error."));
-      if (activePeer.isConnected) {
-        void offer();
-      } else {
-        const offConnected = activePeer.on("connected", () => {
-          offConnected();
+        if (!peer) continue;
+
+        const activePeer = peer;
+
+        const offer = () =>
+          activePeer
+            .offerFiles(files)
+            .catch(() =>
+              failSession(peerId, "The data channel hit an error."),
+            );
+
+        if (activePeer.isConnected) {
           void offer();
-        });
+        } else {
+          const offConnected = activePeer.on("connected", () => {
+            offConnected();
+            void offer();
+          });
+        }
       }
     },
-    [connectTo, devices, failSession, openSession, session],
+    [connectTo, devices, failSession, openSession],
   );
 
-  const sendText = useCallback((text: string) => {
-    const peer = peerRef.current;
+  const sendText = useCallback((peerId: string, text: string) => {
+    const peer = peersRef.current.get(peerId);
     const clean = text.trim();
+
     if (!peer || !peer.isConnected || !clean) return;
+
     try {
       peer.sendText(clean);
     } catch {
@@ -253,52 +356,86 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     }
   }, []);
 
-  const cancel = useCallback((id: string) => {
-    peerRef.current?.cancel(id);
+  const cancel = useCallback((peerId: string, id: string) => {
+    peersRef.current.get(peerId)?.cancel(id);
   }, []);
 
-  const downloadOne = useCallback((id: string) => {
-    const item = itemsRef.current.find((t) => t.id === id);
+  const downloadOne = useCallback((peerId: string, id: string) => {
+    const item = itemsRef.current
+      .get(peerId)
+      ?.find((t) => t.id === id);
+
     if (!item?.blob) return;
+
     saveBlob(item.blob, item.name);
   }, []);
 
-  const downloadAll = useCallback(() => {
-    const received = itemsRef.current.filter(
-      (t) => t.direction === "receive" && t.kind === "file" && t.status === "done" && t.blob,
+  const downloadAll = useCallback(
+    (peerId: string) => {
+      const received =
+        itemsRef.current
+          .get(peerId)
+          ?.filter(
+            (t: TransferItem) =>
+              t.direction === "receive" &&
+              t.kind === "file" &&
+              t.status === "done" &&
+              !!t.blob,
+          ) ?? [];
+
+      if (!received.length) return;
+
+      const zippable: Zippable = {};
+      const used = new Set<string>();
+
+      Promise.all(
+        received.map(async (t: TransferItem) => {
+          let name = t.name || "file";
+
+          if (used.has(name)) {
+            const dot = name.lastIndexOf(".");
+            const base = dot > 0 ? name.slice(0, dot) : name;
+            const ext = dot > 0 ? name.slice(dot) : "";
+
+            let n = 2;
+            while (used.has(`${base} (${n})${ext}`)) n += 1;
+
+            name = `${base} (${n})${ext}`;
+          }
+
+          used.add(name);
+          zippable[name] = new Uint8Array(await t.blob!.arrayBuffer());
+        }),
+      )
+        .then(() => {
+          const zipped = zipSync(zippable, { level: 0 });
+
+          saveBlob(
+            new Blob([zipped], { type: "application/zip" }),
+            "nearby-files.zip",
+          );
+        })
+        .catch(() =>
+          failSession(peerId, "Couldn't build the zip."),
+        );
+    },
+    [failSession],
+  );
+
+  const dismissSession = useCallback((peerId: string) => {
+    peersRef.current.get(peerId)?.close();
+    peersRef.current.delete(peerId);
+
+    itemsRef.current.delete(peerId);
+    peerNamesRef.current.delete(peerId);
+
+    setIncoming((prev) =>
+      prev.filter((request) => request.peerId !== peerId),
     );
-    if (!received.length) return;
 
-    const zippable: Zippable = {};
-    const used = new Set<string>();
-    Promise.all(
-      received.map(async (t) => {
-        let name = t.name || "file";
-        if (used.has(name)) {
-          const dot = name.lastIndexOf(".");
-          const base = dot > 0 ? name.slice(0, dot) : name;
-          const ext = dot > 0 ? name.slice(dot) : "";
-          let n = 2;
-          while (used.has(`${base} (${n})${ext}`)) n += 1;
-          name = `${base} (${n})${ext}`;
-        }
-        used.add(name);
-        zippable[name] = new Uint8Array(await t.blob!.arrayBuffer());
-      }),
-    )
-      .then(() => {
-        const zipped = zipSync(zippable, { level: 0 });
-        saveBlob(new Blob([zipped], { type: "application/zip" }), "nearby-files.zip");
-      })
-      .catch(() => failSession("Couldn't build the zip."));
-  }, [failSession]);
-
-  const dismissSession = useCallback(() => {
-    peerRef.current?.close();
-    peerRef.current = null;
-    itemsRef.current = [];
-    setIncoming(null);
-    setSession(null);
+    setSessions((prev) =>
+      prev.filter((session) => session.peerId !== peerId),
+    );
   }, []);
 
   return useMemo(
@@ -307,7 +444,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       deviceName,
       devices,
       crowded,
-      session,
+      sessions,
       incoming,
       sendTo,
       sendText,
@@ -324,7 +461,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       deviceName,
       devices,
       crowded,
-      session,
+      sessions,
       incoming,
       sendTo,
       sendText,

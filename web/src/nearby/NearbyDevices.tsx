@@ -26,7 +26,7 @@ const HAIRLINE = "rgba(239,233,218,.13)";
 export default function NearbyDevices() {
   const isMobile = useIsMobile();
   const nearby = useNearbyTransfer();
-  const { devices, crowded, deviceName, session, incoming, rename } = nearby;
+  const { devices, crowded, deviceName, sessions, incoming, rename } = nearby;
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(deviceName);
@@ -260,37 +260,53 @@ export default function NearbyDevices() {
         )}
       </div>
 
-      {/* incoming FILE offer -> shared accept modal (manifest + thumbnails) */}
-      {incoming && (
-        <AcceptModal
-          items={incoming.items}
-          peerName={incoming.peerName}
-          onAccept={nearby.acceptIncoming}
-          onDecline={nearby.declineIncoming}
-          isMobile={isMobile}
-        />
-      )}
-
-      {/* live session (send + receive, stays open) */}
-      {session && (
-        <SessionModal onClose={nearby.dismissSession}>
-          {session.errorMessage ? (
-            <SessionError message={session.errorMessage} onClose={nearby.dismissSession} isMobile={isMobile} />
+      {sessions.map((currentSession) => (
+        <SessionModal
+          key={currentSession.peerId}
+          onClose={() => nearby.dismissSession(currentSession.peerId)}
+        >
+          {currentSession.errorMessage ? (
+            <SessionError
+              message={currentSession.errorMessage}
+              onClose={() => nearby.dismissSession(currentSession.peerId)}
+              isMobile={isMobile}
+            />
           ) : (
             <SessionView
-              peerLabel={session.peerName}
-              items={session.items}
-              onSendFiles={(files) => nearby.sendTo(session.peerId, files)}
-              onSendText={nearby.sendText}
-              onCancel={nearby.cancel}
-              onDownloadOne={nearby.downloadOne}
-              onDownloadAll={nearby.downloadAll}
+              peerLabel={currentSession.peerName}
+              items={currentSession.items}
+              onSendFiles={(files) =>
+                nearby.sendTo(currentSession.peerId, files)
+              }
+              onSendText={(text) =>
+                nearby.sendText(currentSession.peerId, text)
+              }
+              onCancel={(id) =>
+                nearby.cancel(currentSession.peerId, id)
+              }
+              onDownloadOne={(id) =>
+                nearby.downloadOne(currentSession.peerId, id)
+              }
+              onDownloadAll={() =>
+                nearby.downloadAll(currentSession.peerId)
+              }
               isMobile={isMobile}
-              heading={session.connected ? "Connected" : "Opening channel"}
             />
           )}
         </SessionModal>
-      )}
+      ))}
+
+      {/* incoming FILE offer — MUST BE AFTER SessionModal */}
+      {incoming.map((request) => (
+        <AcceptModal
+          key={`${request.peerId}:${request.batchId}`}
+          items={request.items}
+          peerName={request.peerName}
+          onAccept={() => nearby.acceptIncoming(request.peerId)}
+          onDecline={() => nearby.declineIncoming(request.peerId)}
+          isMobile={isMobile}
+        />
+      ))}
     </section>
   );
 }
