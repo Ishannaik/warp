@@ -155,14 +155,14 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       // A FILE offer arrived: surface the accept modal with the manifest.
       peer.on("incoming-offer", (info) =>
         setIncoming((prev) => [
-           ...prev.filter((request) => request.peerId !== peerId),
+          ...prev,
           {
             peerId,
             peerName,
             batchId: info.batchId,
             items: info.items,
           },
-        ]),
+        ])
       );
       // Received files / text already arrive via "transfer" with the blob/text
       // attached; nothing extra to do here (no auto-download).
@@ -285,6 +285,10 @@ export function useNearbyTransfer(): UseNearbyTransfer {
           "Device";
 
         let peer = peersRef.current.get(peerId);
+        if (peer?.isDisposed) {
+          peersRef.current.delete(peerId);
+          peer = undefined;
+        }
 
         if (!peer) {
           const fresh = connectTo(peerId);

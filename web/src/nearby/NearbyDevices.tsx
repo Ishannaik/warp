@@ -291,7 +291,7 @@ export default function NearbyDevices() {
             {multiSelect ? "✓ Multi-select on" : "Select multiple"}
           </button>
 
-          {multiSelect && selectedPeers.length > 0 && (
+          {multiSelect && selectedFiles.length > 0 && selectedPeers.length > 0 && (
             <>
               <span
                 style={{
@@ -537,6 +537,15 @@ function DeviceCard({
     <label
       onClick={(e) => {
         if (multiSelect) {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      tabIndex={multiSelect ? 0 : undefined}
+      role={multiSelect ? "checkbox" : undefined}
+      aria-checked={multiSelect ? selected : undefined}
+      onKeyDown={(e) => {
+        if (multiSelect && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
           onSelect();
         }
