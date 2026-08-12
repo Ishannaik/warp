@@ -30,6 +30,10 @@ export default function NearbyDevices() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(deviceName);
+
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const isSavingRef = useRef(false);
 
   useEffect(() => {
@@ -60,6 +64,28 @@ export default function NearbyDevices() {
   const sendToDevice = (peerId: string, list: FileList | File[] | null) => {
     if (!list || !("length" in list) || !list.length) return;
     nearby.sendTo(peerId, Array.from(list));
+  };
+  const togglePeer = (peerId: string) => {
+    setSelectedPeers((prev) =>
+      prev.includes(peerId)
+        ? prev.filter((id) => id !== peerId)
+        : [...prev, peerId],
+    );
+  };
+
+  const handleMultiSelectFiles = (list: FileList | null) => {
+    if (!list || !list.length || !selectedPeers.length) return;
+
+    setSelectedFiles(Array.from(list));
+  };
+
+  const sendToSelected = () => {
+    if (!selectedPeers.length || !selectedFiles.length) return;
+
+    nearby.sendTo(selectedPeers, selectedFiles);
+
+    setSelectedFiles([]);
+    setSelectedPeers([]);
   };
 
   return (
@@ -224,6 +250,129 @@ export default function NearbyDevices() {
         >
           Devices nearby.
         </h2>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: "10px",
+            marginBottom: "16px",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setMultiSelect((prev) => !prev);
+              setSelectedPeers([]);
+              setSelectedFiles([]);
+            }}
+            style={{
+              padding: "9px 13px",
+              border: `1px solid ${
+                multiSelect ? "var(--acc)" : "rgba(239,233,218,.22)"
+              }`,
+              background: multiSelect
+                ? "rgba(var(--acc-rgb),.10)"
+                : "transparent",
+              color: multiSelect ? "var(--acc)" : "#a8a293",
+              fontFamily: MONO,
+              fontSize: "11px",
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            {multiSelect ? "✓ Multi-select on" : "Select multiple"}
+          </button>
+
+          {multiSelect && selectedPeers.length > 0 && (
+            <>
+              <span
+                style={{
+                  fontFamily: MONO,
+                  fontSize: "11px",
+                  color: "#6f6a5d",
+                }}
+              >
+                {selectedPeers.length} device
+                {selectedPeers.length !== 1 ? "s" : ""} selected
+              </span>
+
+              <label
+                style={{
+                  padding: "9px 13px",
+                  border: "1px solid var(--acc)",
+                  color: "#efe9da",
+                  fontFamily: MONO,
+                  fontSize: "11px",
+                  letterSpacing: ".06em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                }}
+              >
+                + Pick files
+                <input
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    handleMultiSelectFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </>
+          )}
+        </div>
+
+        {multiSelect && selectedFiles.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: isMobile ? "stretch" : "center",
+              flexDirection: isMobile ? "column" : "row",
+              gap: "10px",
+              marginBottom: "18px",
+              padding: "12px 14px",
+              border: "1px solid rgba(var(--acc-rgb),.25)",
+              background: "rgba(var(--acc-rgb),.05)",
+            }}
+          >
+            <span
+              style={{
+                flex: 1,
+                fontFamily: MONO,
+                fontSize: "11px",
+                color: "#a8a293",
+              }}
+            >
+              {selectedFiles.length} file
+              {selectedFiles.length !== 1 ? "s" : ""} ready ·{" "}
+              {selectedPeers.length} recipient
+              {selectedPeers.length !== 1 ? "s" : ""}
+            </span>
+
+            <button
+              type="button"
+              onClick={sendToSelected}
+              style={{
+                padding: "11px 16px",
+                border: "1px solid var(--acc)",
+                background: "var(--acc)",
+                color: "#121110",
+                fontFamily: MONO,
+                fontSize: "11px",
+                fontWeight: 700,
+                letterSpacing: ".06em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+            >
+              Send to {selectedPeers.length} device
+              {selectedPeers.length !== 1 ? "s" : ""}
+            </button>
+          </div>
+        )}
         <p
           style={{
             fontSize: isMobile ? "14.5px" : "15.5px",
@@ -253,6 +402,9 @@ export default function NearbyDevices() {
               <DeviceCard
                 key={d.peerId}
                 device={d}
+                multiSelect={multiSelect}
+                selected={selectedPeers.includes(d.peerId)}
+                onSelect={() => togglePeer(d.peerId)}
                 onPickFiles={(list) => sendToDevice(d.peerId, list)}
               />
             ))}
@@ -315,13 +467,25 @@ export default function NearbyDevices() {
 
 function DeviceCard({
   device,
+  multiSelect,
+  selected,
+  onSelect,
   onPickFiles,
 }: {
   device: NearbyDevice;
+  multiSelect: boolean;
+  selected: boolean;
+  onSelect: () => void;
   onPickFiles: (list: FileList | null) => void;
 }) {
   return (
     <label
+      onClick={(e) => {
+        if (multiSelect) {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       className="nearby-card"
       style={{
         display: "flex",
@@ -338,15 +502,42 @@ function DeviceCard({
         font: "inherit",
       }}
     >
-      <input
-        type="file"
-        multiple
-        style={{ display: "none" }}
-        onChange={(e) => {
-          onPickFiles(e.target.files);
-          e.target.value = "";
-        }}
-      />
+      {!multiSelect && (
+        <input
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            onPickFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      )}
+
+      {multiSelect && (
+        <span
+          style={{
+            flexShrink: 0,
+            width: "20px",
+            height: "20px",
+            border: `1px solid ${
+              selected ? "var(--acc)" : "rgba(239,233,218,.3)"
+            }`,
+            background: selected
+              ? "var(--acc)"
+              : "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#121110",
+            fontFamily: MONO,
+            fontSize: "13px",
+            fontWeight: 700,
+          }}
+        >
+          {selected ? "✓" : ""}
+        </span>
+      )}
       {/* device glyph */}
       <span
         style={{
@@ -402,7 +593,11 @@ function DeviceCard({
             marginTop: "3px",
           }}
         >
-          Tap to send
+          {multiSelect
+            ? selected
+              ? "Selected"
+              : "Tap to select"
+            : "Tap to send"}
         </span>
       </span>
 
