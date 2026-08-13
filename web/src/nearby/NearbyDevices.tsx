@@ -418,45 +418,42 @@ export default function NearbyDevices() {
         )}
       </div>
 
-      {sessions.map((currentSession) => (
+      {sessions.length > 0 && (
         <SessionModal
-          key={currentSession.peerId}
-          onClose={() => nearby.dismissSession(currentSession.peerId)}
+          onClose={() => nearby.dismissSession(sessions[0].peerId)}
         >
-          {currentSession.errorMessage ? (
+          {sessions[0].errorMessage ? (
             <SessionError
-              message={currentSession.errorMessage}
-              onClose={() => nearby.dismissSession(currentSession.peerId)}
+              message={sessions[0].errorMessage}
+              onClose={() => nearby.dismissSession(sessions[0].peerId)}
               isMobile={isMobile}
             />
           ) : (
             <SessionView
-              
-              peerLabel={currentSession.peerName}
-              items={currentSession.items}
+              peerLabel={sessions[0].peerName}
+              items={sessions[0].items}
               onSendFiles={(files) =>
-                nearby.sendTo(currentSession.peerId, files)
+                nearby.sendTo(sessions[0].peerId, files)
               }
               onSendText={(text) =>
-                nearby.sendText(currentSession.peerId, text)
+                nearby.sendText(sessions[0].peerId, text)
               }
               onCancel={(id) =>
-                nearby.cancel(currentSession.peerId, id)
+                nearby.cancel(sessions[0].peerId, id)
               }
               onPause={() => {}}
               onResume={() => {}}
               onDownloadOne={(id) =>
-                nearby.downloadOne(currentSession.peerId, id)
+                nearby.downloadOne(sessions[0].peerId, id)
               }
               onDownloadAll={() =>
-                nearby.downloadAll(currentSession.peerId)
+                nearby.downloadAll(sessions[0].peerId)
               }
               isMobile={isMobile}
             />
           )}
         </SessionModal>
-      ))}
-
+      )}
       {/* incoming FILE offer — MUST BE AFTER SessionModal */}
       {incoming.map((request) => (
         <AcceptModal
