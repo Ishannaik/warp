@@ -233,7 +233,15 @@ export function useNearby(): UseNearby {
       if (!sig) return null;
       // Reuse an existing peer for this target if one is already live.
       const existing = peersRef.current.get(targetPeerId);
-      if (existing) return existing;
+
+      if (existing && !existing.isDisposed && existing.isConnected) {
+        return existing;
+      }
+
+      if (existing) {
+        existing.close();
+        peersRef.current.delete(targetPeerId);
+      }
 
       const peer = new WarpPeer(sig, targetPeerId, true);
       peersRef.current.set(targetPeerId, peer);

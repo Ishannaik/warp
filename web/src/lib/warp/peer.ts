@@ -579,6 +579,9 @@ export class WarpPeer {
   get isConnected(): boolean {
     return this.channel?.readyState === "open";
   }
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
 
   // ---- sending -------------------------------------------------------------
 
