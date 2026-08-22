@@ -11,6 +11,11 @@ const ROOM_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LEN}}$`);
 const RECLAIM_MS = 3 * 60 * 1000;                         // reserve a code ~3 min after its last socket drops (H6=A)
 const DEVICE_TYPES = new Set(['mobile', 'tablet', 'desktop']); // #138: client-guessed UA hint, relayed as-is
 
+// #42: spoken word aliases ("otter-maple-fox-ember-linx") resolve to the
+// canonical server-minted code. One shared module with the web app, so the
+// mapping can never drift between the two ends.
+import { codeToAlias, aliasToCode, looksLikeAlias } from '../../shared/codewords.js';
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -107,22 +112,34 @@ export class SignalingRoom {
     let code = msg.room;
     if (code == null) {
       code = this.makeCode();                             // no code given => create a room
-    } else if (typeof code !== 'string' || !ROOM_RE.test(code)) {
+    } else if (typeof code !== 'string') {
       return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
-    } else if (!this.roomExists(code)) {
-      // Room has no live sockets — but if it was reserved within the reclaim window
-      // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
-      // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
-      // (an alarm can be delayed/coalesced). No transfer state is restored — the
-      // client registry + resumeToken carry the file resume; the server only owes
-      // the same rendezvous code.
-      const rec = await this.state.storage.get('reclaim:' + code);
-      if (!rec || rec.expiresAt < Date.now()) {
-        return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+    } else {
+      // #42: word alias ("otter-maple-…") resolves to its canonical code before
+      // validation. The server never lets an alias mint anything.
+      if (looksLikeAlias(code)) {
+        const resolved = aliasToCode(code);
+        if (!resolved) return this.send(ws, { type: 'error', error: 'bad-room', message: 'Unknown code words.' });
+        code = resolved;
       }
-      await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
-    } else if (this.sockets(code, null).length >= MAX_PEERS) {
-      return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+      if (!ROOM_RE.test(code)) {
+        return this.send(ws, { type: 'error', error: 'bad-room', message: 'Invalid room code.' });
+      }
+      if (!this.roomExists(code)) {
+        // Room has no live sockets — but if it was reserved within the reclaim window
+        // (both devices dropped at once, e.g. a shared tunnel), resurrect it under the
+        // SAME code so they can rejoin and resume (H6=A). Re-validate expiry on read
+        // (an alarm can be delayed/coalesced). No transfer state is restored — the
+        // client registry + resumeToken carry the file resume; the server only owes
+        // the same rendezvous code.
+        const rec = await this.state.storage.get('reclaim:' + code);
+        if (!rec || rec.expiresAt < Date.now()) {
+          return this.send(ws, { type: 'error', error: 'room-not-found', message: 'Room not found.' });
+        }
+        await this.state.storage.delete('reclaim:' + code); // first reclaim-join wins; the second sees a live room
+      } else if (this.sockets(code, null).length >= MAX_PEERS) {
+        return this.send(ws, { type: 'error', error: 'room-full', message: `Room is full (max ${MAX_PEERS}).` });
+      }
     }
 
     const existing = this.sockets(code, ws);              // current members, before we join
