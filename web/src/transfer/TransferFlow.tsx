@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/useWarpTransfer";
+import { deviceName } from "../lib/warp/deviceName";
 import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
@@ -113,7 +114,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   // mesh room SessionView renders the per-device chips from `connections` itself.
   const peerLabel = useMemo(() => {
     const others = wrap.peers;
-    if (others.length) return others[0].slice(0, 8);
+    if (others.length) return deviceName(others[0]);
     return mode === "receive" ? "the sender" : "your peer";
   }, [wrap.peers, mode]);
 
@@ -121,7 +122,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const incomingPeerLabel = useMemo(() => {
     if (!incoming) return peerLabel;
     const match = connections.find((c) => c.peerId === incoming.peerId);
-    return match?.label ?? incoming.peerId.slice(0, 8);
+    return match?.label ?? deviceName(incoming.peerId);
   }, [incoming, connections, peerLabel]);
 
   return (
@@ -1054,6 +1055,17 @@ const ERROR_PANEL_COPY: Record<WarpError["kind"], { eyebrow: string; title: stri
   "too-large": { eyebrow: "Too large", title: "File too large." },
 };
 
+/** Issue #32 — ordered by real-world success rate. Same Wi-Fi always works
+ *  (LAN needs no punching); a hotspot is the same trick on demand; VPNs and
+ *  corporate firewalls are the most common culprits; some NATs are simply
+ *  flaky, so retry stays worth one shot. */
+const NAT_REMEDIES: string[] = [
+  "Put both devices on the same Wi-Fi — a local transfer needs no hole-punching at all.",
+  "No shared network? Hotspot one device to the other and reconnect.",
+  "Turn off any VPN, or leave the corporate/school network — those block peer connections.",
+  "Still stuck? Try once more — some routers only cooperate occasionally.",
+];
+
 function ErrorPanel({
   kind,
   message,
@@ -1109,11 +1121,102 @@ function ErrorPanel({
       >
         {copy.title}
       </h1>
-      <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>
-        {message}
-        {copy.natFooter &&
-          " Warp is STUN-only — there's no relay fallback, so some networks simply can't be bridged."}
-      </p>
+      {kind === "nat-failed" ? (
+        /* Issue #32: the honest-error IS the product for pairs that can't
+           punch through. Structured remedies instead of one flat paragraph. */
+        <div style={{ textAlign: "left", maxWidth: "500px", margin: "0 auto 30px" }}>
+          <p style={{ fontSize: "15px", color: "#a8a293", lineHeight: 1.55, margin: "0 0 16px", textAlign: "center" }}>
+            {message}
+          </p>
+          <div
+            style={{
+              border: `1px solid ${HAIRLINE}`,
+              background: "rgba(239,233,218,.02)",
+              padding: isMobile ? "14px 15px" : "16px 20px",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: MONO,
+                fontSize: "11px",
+                letterSpacing: ".16em",
+                textTransform: "uppercase",
+                color: "#6f6a5d",
+                marginBottom: "8px",
+              }}
+            >
+              Why Warp stops here
+            </div>
+            <p style={{ fontSize: "13.5px", color: "#a8a293", lineHeight: 1.5, margin: 0 }}>
+              Your files never touch a server — so there is no relay to quietly route around a blocked network.
+              That refusal is the promise. This screen is what keeping it looks like.
+            </p>
+            <a
+              href="/how"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/how#nat");
+              }}
+              style={{
+                display: "inline-block",
+                marginTop: "10px",
+                fontFamily: MONO,
+                fontSize: "12px",
+                letterSpacing: ".07em",
+                textTransform: "uppercase",
+                color: "var(--acc)",
+                textDecoration: "none",
+                borderBottom: "1px solid rgba(var(--acc-rgb),.5)",
+                paddingBottom: "1px",
+              }}
+            >
+              The full story →
+            </a>
+          </div>
+          <div style={{ marginTop: "20px" }}>
+            <div
+              style={{
+                fontFamily: MONO,
+                fontSize: "11px",
+                letterSpacing: ".16em",
+                textTransform: "uppercase",
+                color: "#6f6a5d",
+                marginBottom: "10px",
+              }}
+            >
+              What works, in order
+            </div>
+            {NAT_REMEDIES.map((remedy, i) => (
+              <div
+                key={remedy}
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  alignItems: "baseline",
+                  padding: isMobile ? "9px 0" : "7px 0",
+                  borderTop: i === 0 ? undefined : `1px solid rgba(239,233,218,.07)`,
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: "11px",
+                    color: "var(--amb)",
+                    flexShrink: 0,
+                    width: "16px",
+                    textAlign: "right",
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <span style={{ fontSize: "13.5px", color: "#efe9da", lineHeight: 1.45 }}>{remedy}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p style={{ fontSize: "15px", color: "#a8a293", margin: "0 auto 30px", maxWidth: "440px" }}>{message}</p>
+      )}
       <div
         style={{
           display: "flex",

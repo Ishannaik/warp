@@ -910,6 +910,18 @@ export default function Theory() {
   const isMobile = useIsMobile();
   const [activeLayer, setActiveLayer] = useState(0);
 
+  // Deep links like /how#nat (from the transfer error panel, issue #32): the
+  // client router renders after mount, so a plain browser hash-jump fires
+  // before the section exists. Re-run the scroll once rendering has settled.
+  useEffect(() => {
+    if (!window.location.hash) return;
+    const id = window.location.hash.slice(1);
+    const t = setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, []);
+
   /* PART B layer definitions — placeholder prose; Assemble fills from the doc. */
   const layers: LayerDef[] = [
     {
@@ -1360,8 +1372,10 @@ export default function Theory() {
         dark
       />
 
-      {/* A4 · NAT + STUN */}
+      {/* A4 · NAT + STUN — `nat` is the deep-link anchor from the transfer
+          error panel (issue #32). */}
       <Section
+        id="nat"
         eyebrow="04 / NAT traversal"
         heading="Finding a public address with STUN — and being honest when there isn't one."
         lede={
