@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "check:engine": "node scripts/run-checks.mjs"
+    "check:engine": "node scripts/run-checks.mjs",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
+    "test:e2e": "playwright test",
+    "lhci": "lhci autorun"
   },
   "dependencies": {
     "fflate": "^0.8.3",
@@ -19,7 +22,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.2.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
