@@ -3,6 +3,7 @@ import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
 import { CODE_LEN, VALID_RE, sanitize } from "../lib/warp/roomCode";
+import { aliasToCode, looksLikeAlias } from "../../../shared/codewords.js";
 
 /**
  * ReceiveEntry — the "/receive" page. The second device needs a way to *enter*
@@ -28,12 +29,20 @@ export default function ReceiveEntry({
   const [code, setCode] = useState(() => sanitize(initialCode));
 
   const valid = useMemo(() => VALID_RE.test(code), [code]);
-  // Only nag once they've typed a full-length code that still doesn't match.
-  const showHint = code.length === CODE_LEN && !valid;
+  // #42: a typed/pasted word alias ("otter maple fox …") resolves to its
+  // canonical code client-side for routing — the server re-validates it.
+  const aliasCode = useMemo(
+    () => (looksLikeAlias(code) ? aliasToCode(code) : null),
+    [code],
+  );
+  const joinable = valid || !!aliasCode;
+  // Only nag once they've typed a full-length code that still doesn't match
+  // (aliases get their own hint; never nag mid-word).
+  const showHint = code.length === CODE_LEN && !valid && !looksLikeAlias(code);
 
   const connect = () => {
-    if (!valid) return;
-    navigate("/r/" + code);
+    if (!joinable) return;
+    navigate("/r/" + (aliasCode ?? code));
   };
 
   return (
@@ -165,13 +174,21 @@ export default function ReceiveEntry({
             id="rcv-code"
             className="rcv-input"
             value={code}
-            onChange={(e) => setCode(sanitize(e.target.value))}
+            onChange={(e) => {
+              const raw = e.target.value;
+              // #42: word aliases arrive lowercase with dashes/spaces — keep
+              // them verbatim; codes keep the sanitize-to-alphabet behavior.
+              setCode(looksLikeAlias(raw) || /[a-z]/.test(raw) ? raw : sanitize(raw));
+            }}
             onPaste={(e) => {
               e.preventDefault();
-              const next = sanitize(e.clipboardData.getData("text"));
+              const text = e.clipboardData.getData("text");
+              const next = looksLikeAlias(text) ? text.trim() : sanitize(text);
               setCode(next);
               // Full valid paste → connect immediately (typing the 6th char does not).
               if (VALID_RE.test(next)) navigate("/r/" + next);
+              const pastedAlias = aliasToCode(next);
+              if (pastedAlias) navigate("/r/" + pastedAlias);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") connect();
@@ -179,10 +196,10 @@ export default function ReceiveEntry({
             autoFocus
             autoComplete="off"
             autoCorrect="off"
-            autoCapitalize="characters"
+            autoCapitalize="none"
             spellCheck={false}
             inputMode="text"
-            maxLength={CODE_LEN}
+            maxLength={45}
             aria-invalid={showHint}
             aria-describedby={showHint ? "rcv-hint" : undefined}
             placeholder="••••••"
@@ -194,11 +211,13 @@ export default function ReceiveEntry({
               border: `1px solid ${showHint ? "var(--amb)" : HAIR}`,
               color: "var(--acc)",
               fontFamily: MONO,
-              fontSize: isMobile ? "clamp(26px,8vw,34px)" : "34px",
+              fontSize: looksLikeAlias(code)
+                ? isMobile ? "clamp(15px,4.5vw,19px)" : "19px"
+                : isMobile ? "clamp(26px,8vw,34px)" : "34px",
               fontWeight: 700,
-              letterSpacing: ".34em",
+              letterSpacing: looksLikeAlias(code) ? ".04em" : ".34em",
               textAlign: "center",
-              textTransform: "uppercase",
+              textTransform: "none",
               caretColor: "var(--acc)",
             }}
           />
@@ -217,7 +236,9 @@ export default function ReceiveEntry({
           >
             {showHint
               ? "That doesn't look like a valid code — check the sending device."
-              : "Letters A–Z (no I, L, O) and digits 2–9."}
+              : looksLikeAlias(code) && !aliasCode
+                ? "Keep typing — five words, dashes or spaces."
+                : "Letters A–Z (no I, L, O) and digits 2–9, or the five code words."}
           </div>
 
           {/* connect button */}
@@ -225,16 +246,16 @@ export default function ReceiveEntry({
             type="button"
             className="rcv-cta"
             onClick={connect}
-            disabled={!valid}
-            data-disabled={!valid}
+            disabled={!joinable}
+            data-disabled={!joinable}
             style={{
               display: "block",
               width: "100%",
               marginTop: "20px",
               padding: "16px 26px",
               border: "none",
-              background: valid ? "var(--acc)" : "rgba(239,233,218,.12)",
-              color: valid ? "#fff" : "#6f6a5d",
+              background: joinable ? "var(--acc)" : "rgba(239,233,218,.12)",
+              color: joinable ? "#fff" : "#6f6a5d",
               fontFamily: MONO,
               fontSize: "12.5px",
               fontWeight: 600,

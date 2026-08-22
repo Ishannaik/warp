@@ -5,6 +5,7 @@ import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/useWarpTransfer";
 import { deviceName } from "../lib/warp/deviceName";
+import { codeToAlias } from "../../../shared/codewords.js";
 import { formatBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
@@ -834,6 +835,23 @@ function PairStep({
       >
         {code ?? "········"}
       </div>
+
+      {/* #42: speakable alias of the same room — read either form out loud. */}
+      {code && (
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: isMobile ? "13px" : "14.5px",
+            letterSpacing: ".05em",
+            color: "#a8a293",
+            margin: "6px 0 4px",
+            wordBreak: "break-word",
+          }}
+          data-testid="room-alias"
+        >
+          say it: {codeToAlias(code)}
+        </div>
+      )}
 
       {isReceiver ? (
         <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d" }}>
