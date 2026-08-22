@@ -23,3 +23,8 @@ bash.exe.stackdump
 
 # Internal research and strategy, never public
 research/
+
+# e2e + lighthouse artifacts
+web/test-results/
+web/playwright-report/
+web/.lighthouseci/

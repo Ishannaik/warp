@@ -1150,6 +1150,7 @@ export function AcceptModal({
             type="button"
             className="warp-cta"
             onClick={onAccept}
+            data-testid="accept-offer"
             style={{
               order: isMobile ? 0 : 1,
               padding: "13px 26px",

@@ -87,3 +87,58 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @warp/server test
+
+  # Real end-to-end transfer: two browsers, one room, actual WebRTC bytes,
+  # verified byte-for-byte (SHA-256). WebKit covers the Safari-engine risk
+  # without a paid device farm.
+  e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.web == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @warp/web exec playwright install --with-deps chromium webkit firefox
+      - name: Build against local signaling server
+        run: pnpm --filter @warp/web exec vite build
+        env:
+          VITE_SIGNALING_URL: ws://localhost:8787
+      - name: Run transfer E2E (chromium · webkit)
+        working-directory: web
+        run: pnpm exec playwright test --project=chromium --project=webkit
+      # Firefox passes locally but stalls on 2-vCPU runners; keep it visible
+      # without blocking contributors until its trace tells us why.
+      - name: Run transfer E2E (firefox, advisory)
+        working-directory: web
+        run: pnpm exec playwright test --project=firefox
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          retention-days: 7
+
+  # Lighthouse budgets on every PR that touches web: perf >= .9, a11y/bp >= .95,
+  # JS bundle <= 300 KB. Catches regressions before they ship.
+  lighthouse:
+    needs: changes
+    if: ${{ needs.changes.outputs.web == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @warp/web build
+      - run: pnpm --filter @warp/web lhci

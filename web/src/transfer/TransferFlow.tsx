@@ -276,6 +276,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
         ref={fileInput}
         type="file"
         multiple
+        data-testid="file-input"
         style={{ display: "none" }}
         onChange={(e) => {
           if (e.target.files) addFiles(e.target.files);
@@ -612,6 +613,7 @@ function SelectStep({
           className={files.length ? "warp-cta" : undefined}
           onClick={onOpenChannel}
           disabled={!files.length}
+          data-testid="open-channel"
           style={{
             display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
@@ -827,6 +829,7 @@ function PairStep({
           margin: "10px 0 4px",
           wordBreak: "break-all",
         }}
+        data-testid="room-code"
       >
         {code ?? "········"}
       </div>
