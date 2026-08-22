@@ -28,6 +28,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignalingClient, type SignalData } from "./signaling";
+import { deviceName } from "./deviceName";
 import {
   WarpPeer,
   type AcceptTarget,
@@ -205,9 +206,10 @@ const ERROR_MESSAGES: Record<WarpError["kind"], string> = {
 /** How long "reconnecting" may last before we surface an honest failure. */
 const RECONNECT_WATCHDOG_MS = 25_000;
 
-/** Short, stable label for a remote device id. */
+/** Short, stable, friendly label for a remote device id (#26) — deterministic
+ *  from the id itself, so both peers see the same name with zero state. */
 function labelFor(peerId: string): string {
-  return peerId.slice(0, 8);
+  return deviceName(peerId);
 }
 
 /**

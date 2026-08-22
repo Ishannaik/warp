@@ -28,6 +28,7 @@ import {
 } from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
+import { deviceName } from "../lib/warp/deviceName";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
 import { convertToJpeg, isHeicMime, jpegFilename } from "../lib/warp/imageConvert";
@@ -1349,7 +1350,7 @@ export function SessionView({
   // Map peerId -> label, so tray rows can name their to/from device.
   const labelForPeer = multiDevice
     ? (peerId?: string): string | undefined =>
-        peerId ? liveConnections.find((c) => c.peerId === peerId)?.label ?? peerId.slice(0, 8) : undefined
+        peerId ? liveConnections.find((c) => c.peerId === peerId)?.label ?? deviceName(peerId) : undefined
     : undefined;
 
   return (
