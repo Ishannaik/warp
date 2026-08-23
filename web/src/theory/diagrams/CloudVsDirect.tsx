@@ -74,6 +74,8 @@ export default function CloudVsDirect() {
   return (
     <DiagramFrame caption="FIG 01 · CLOUD VS DIRECT" tone="amb">
       <div
+        role="img"
+        aria-label="Cloud transfer makes two hops and leaves a stored copy; direct peer-to-peer transfer makes one hop and retains no copy."
         style={{
           display: "grid",
           // Phones: stack the CLOUD and DIRECT panels so each gets full width.
