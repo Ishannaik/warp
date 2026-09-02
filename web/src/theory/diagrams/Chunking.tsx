@@ -92,6 +92,8 @@ export default function Chunking() {
         tone={valveOpen ? "acc" : "amb"}
       >
         <div
+          role="img"
+          aria-label="A 4.2 GB file is sliced into 16 KB chunks and streamed to Peer B, which reassembles them; buffer high- and low-water marks pause and resume sending so memory stays flat."
           style={{
             display: "flex",
             alignItems: "stretch",
