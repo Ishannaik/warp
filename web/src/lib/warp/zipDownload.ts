@@ -23,6 +23,7 @@
  */
 
 import { Zip, ZipPassThrough } from "fflate";
+import { saveBlob } from "../saveBlob";
 
 /** One received file to pack: its (de-duped downstream) name and in-memory blob. */
 export interface ZipEntry {
@@ -48,19 +49,6 @@ function uniqueName(used: Set<string>, name: string): string {
   const out = `${stem} (${n})${ext}`;
   used.add(out);
   return out;
-}
-
-/** Trigger a browser download of a blob via a transient object-URL anchor. */
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Revoke on the next tick so the click has time to start the download.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
