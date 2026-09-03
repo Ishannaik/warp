@@ -27,6 +27,7 @@ import {
   type TransferItem,
 } from "../lib/warp/transfer";
 import { copyToClipboard } from "../lib/copyToClipboard";
+import { saveBlob } from "../lib/saveBlob";
 import type { Connection, TransferStats } from "../lib/warp/useWarpTransfer";
 import { deviceName } from "../lib/warp/deviceName";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
@@ -54,20 +55,6 @@ function typeGlyph(mime: string, kind: TransferItem["kind"]): string {
 /** Aggregate size label for a manifest. */
 function totalBytes(items: { size: number }[]): number {
   return items.reduce((s, i) => s + i.size, 0);
-}
-
-/** Trigger a browser download of a blob via a transient object-URL anchor
- *  (same small helper duplicated per-file elsewhere — useWarpTransfer.ts,
- *  useNearbyTransfer.ts, zipDownload.ts — rather than shared). */
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ----------------------------------------------------------------- thumbnail */
