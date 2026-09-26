@@ -1,0 +1,28 @@
+[package]
+name = "warp-cli"
+version = "0.1.0"
+edition = "2021"
+# is_multiple_of (1.87), Option::is_none_or (1.82), Option::take_if (1.80)
+rust-version = "1.87"
+description = "Warp CLI — peer-to-peer WebRTC file transfer from the terminal"
+
+[[bin]]
+name = "warp"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+bytes = "1"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+rand = "0.8"
+webrtc = "0.17"
+sha2 = "0.10"
+hex = "0.4"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+console = "0.15"
+env_logger = "0.11"

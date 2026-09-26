@@ -1,0 +1,56 @@
+name: cli
+
+on:
+  push:
+    paths:
+      - 'cli/**'
+      - 'shared/codewords.js'
+      - '.github/workflows/cli.yml'
+  pull_request:
+    paths:
+      - 'cli/**'
+      - 'shared/codewords.js'
+      - '.github/workflows/cli.yml'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: fmt · clippy · test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (fmt + clippy pinned)
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: cli
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Unit tests
+        # includes the WORDS parity check against ../shared/codewords.js
+        run: cargo test --lib
+
+      - name: Live signaling integration tests
+        run: cargo test --test live_signaling
+        # Hits the real warp signaling worker; needs network. Marked so a
+        # local-only run can skip with: cargo test --test live_signaling -- --skip live
