@@ -30,7 +30,7 @@ const code = out.outputFiles[0].text;
 const dataUrl = "data:text/javascript;base64," + Buffer.from(code).toString("base64");
 const mod = await import(dataUrl);
 
-const { CODE_LEN, VALID_RE, sanitize } = mod;
+const { CODE_LEN, VALID_RE, sanitize, resolveDeepLink, isWordy } = mod;
 
 // --- CODE_LEN: matches the server's minted code length ---
 assert.equal(CODE_LEN, 6, "CODE_LEN is 6, matching server/src/index.js CODE_LEN");
@@ -67,4 +67,24 @@ for (let i = 0; i < 200; i++) {
   assert.ok(VALID_RE.test(clean), "sanitize output of full length from the allowed alphabet always validates");
 }
 
-console.log("OK: roomCode.ts sanitize() happy path + ambiguous-char stripping + VALID_RE accept/reject boundaries");
+// --- resolveDeepLink: /r/<alias> must join the alias's room, not sanitize(alias) ---
+const { codeToAlias } = await import("../../../../shared/codewords.js");
+for (const c of ["K7P2QR", "A2B3C4", "ZZZZZZ", "222222"]) {
+  const alias = codeToAlias(c);
+  assert.deepEqual(resolveDeepLink(alias), { join: c }, `dashed alias for ${c} joins ${c}`);
+  assert.deepEqual(resolveDeepLink(alias.replace(/-/g, " ")), { join: c }, `spaced alias for ${c} joins ${c}`);
+  assert.notEqual(sanitize(alias), c, "sanitize() alone would have mangled the alias (the regression)");
+}
+assert.deepEqual(resolveDeepLink("K7P2QR"), { join: "K7P2QR" }, "plain code joins");
+assert.deepEqual(resolveDeepLink("k7p2qr"), { join: "K7P2QR" }, "lowercase code still joins");
+assert.deepEqual(resolveDeepLink("K7P-2QR"), { join: "K7P2QR" }, "dashed code still joins");
+assert.deepEqual(resolveDeepLink("ABC"), { prefill: "ABC" }, "short code prefills the form");
+assert.deepEqual(
+  resolveDeepLink("anchor quartz nope bamboo lotus"),
+  { prefill: "anchor quartz nope bamboo lotus" },
+  "a mistyped alias prefills verbatim, never a mashed fake code",
+);
+assert.ok(isWordy("otter maple"), "two words are wordy");
+assert.ok(!isWordy("K7P-2QR"), "a dashed code is not wordy");
+
+console.log("OK: roomCode.ts resolveDeepLink aliases + sanitize() happy path + ambiguous-char stripping + VALID_RE accept/reject boundaries");
