@@ -97,8 +97,13 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
   /** Display names keyed by discovery peer id. */
   const peerNamesRef = useRef<Map<string, string>>(new Map());
-  /** Files offered to each peer, kept so a paused send can be re-offered. */
-  const sentFilesRef = useRef<Map<string, File[]>>(new Map());
+  /** Files handed to offerFiles whose transfer id we haven't seen yet, per
+   *  peer, in offer order. offerFiles emits its items in that same order, so
+   *  the first "transfer" event matching name+size binds that File to its id
+   *  (FIFO keeps two same-named, same-sized files apart). */
+  const unboundFilesRef = useRef<Map<string, File[]>>(new Map());
+  /** Transfer id -> the exact File sent, so a paused send re-offers it. */
+  const fileByIdRef = useRef<Map<string, File>>(new Map());
   /** Late-bound so bindPeer can answer a remote resume without a dep cycle. */
   const reofferRef = useRef<(peerId: string, id: string, notifyPeer: boolean) => void>(
     () => {},
@@ -150,7 +155,14 @@ export function useNearbyTransfer(): UseNearbyTransfer {
           ),
         ),
       );
-      peer.on("transfer", (item) => upsertItem(peerId, item));
+      peer.on("transfer", (item) => {
+        if (item.direction === "send" && !fileByIdRef.current.has(item.id)) {
+          const queue = unboundFilesRef.current.get(peerId) ?? [];
+          const i = queue.findIndex((f) => f.name === item.name && f.size === item.size);
+          if (i !== -1) fileByIdRef.current.set(item.id, queue.splice(i, 1)[0]);
+        }
+        upsertItem(peerId, item);
+      });
       // A FILE offer arrived: surface the accept modal with the manifest.
       peer.on("incoming-offer", (info) =>
         setIncoming((prev) => [
@@ -334,8 +346,8 @@ export function useNearbyTransfer(): UseNearbyTransfer {
         if (!peer) continue;
 
         const activePeer = peer;
-        sentFilesRef.current.set(peerId, [
-          ...(sentFilesRef.current.get(peerId) ?? []),
+        unboundFilesRef.current.set(peerId, [
+          ...(unboundFilesRef.current.get(peerId) ?? []),
           ...files,
         ]);
 
@@ -396,26 +408,41 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     }
 
     peer.requestResume(id);
+    // The sender answers with a fresh offer under a new id; drop the old row
+    // so it doesn't sit there paused next to the new one.
+    dropItem(peerId, id);
   }, []);
+
+  const dropItem = (peerId: string, id: string) => {
+    const rest = (itemsRef.current.get(peerId) ?? []).filter((t) => t.id !== id);
+    itemsRef.current.set(peerId, rest);
+    setSessions((prev) =>
+      prev.map((s) => (s.peerId === peerId ? { ...s, items: rest } : s)),
+    );
+  };
 
   /** A paused send stopped its pump without file-end, so the engine can't
    *  restart it in place: drop the paused row and offer the File again. The
    *  receiver re-accepts it like any new offer. */
   reofferRef.current = (peerId: string, id: string, notifyPeer: boolean) => {
-    const items = itemsRef.current.get(peerId) ?? [];
-    const item = items.find((t) => t.id === id);
+    const item = itemsRef.current.get(peerId)?.find((t) => t.id === id);
     const peer = peersRef.current.get(peerId);
-    if (!item || item.direction !== "send" || item.status !== "paused" || !peer) return;
-    const file = sentFilesRef.current
-      .get(peerId)
-      ?.find((f) => f.name === item.name && f.size === item.size);
+    if (!item || item.status !== "paused" || !peer) return;
+    // The sender resumed a file we were receiving: its new offer replaces
+    // this row.
+    if (item.direction === "receive") {
+      dropItem(peerId, id);
+      return;
+    }
+    const file = fileByIdRef.current.get(id);
     if (!file) return;
-    const rest = items.filter((t) => t.id !== id);
-    itemsRef.current.set(peerId, rest);
-    setSessions((prev) =>
-      prev.map((s) => (s.peerId === peerId ? { ...s, items: rest } : s)),
-    );
+    fileByIdRef.current.delete(id);
+    dropItem(peerId, id);
     if (notifyPeer) peer.requestResume(id);
+    unboundFilesRef.current.set(peerId, [
+      ...(unboundFilesRef.current.get(peerId) ?? []),
+      file,
+    ]);
     void peer.offerFiles([file]).catch(() =>
       failSession(
         peerId,
@@ -466,7 +493,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
     itemsRef.current.delete(peerId);
     peerNamesRef.current.delete(peerId);
-    sentFilesRef.current.delete(peerId);
+    unboundFilesRef.current.delete(peerId);
 
     setIncoming((prev) =>
       prev.filter((request) => request.peerId !== peerId),

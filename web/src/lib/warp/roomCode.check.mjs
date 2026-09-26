@@ -85,6 +85,11 @@ assert.deepEqual(
   "a mistyped alias prefills verbatim, never a mashed fake code",
 );
 assert.ok(isWordy("otter maple"), "two words are wordy");
+assert.deepEqual(
+  resolveDeepLink("anchor2-quartz2"),
+  { prefill: "anchor2-quartz2" },
+  "digits inside words must not sanitize into a code (ANCHR2)",
+);
 assert.ok(!isWordy("K7P-2QR"), "a dashed code is not wordy");
 
 console.log("OK: roomCode.ts resolveDeepLink aliases + sanitize() happy path + ambiguous-char stripping + VALID_RE accept/reject boundaries");

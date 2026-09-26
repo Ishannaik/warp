@@ -40,7 +40,14 @@ export function resolveDeepLink(raw: string): { join: string } | { prefill: stri
 }
 
 /** Multi-word input ("anchor quartz rocket …"): a word alias, even a mistyped
- *  one. Keep it verbatim — sanitize() would mash the words into a fake code. */
+ *  one. Keep it verbatim; sanitize() would mash the words into a fake code. */
 export function isWordy(raw: string): boolean {
-  return raw.trim().split(/[\s-]+/).filter((w) => /^[a-z]+$/i.test(w)).length >= 2;
+  const parts = raw.trim().split(/[\s-]+/).filter(Boolean);
+  // Separated input is wordy unless the pieces join into a real code
+  // ("K7P-2QR"), so a typo like "anchor2-quartz2" can't sanitize into one.
+  return (
+    parts.length >= 2 &&
+    parts.some((w) => /[a-z]/i.test(w)) &&
+    !VALID_RE.test(parts.join("").toUpperCase())
+  );
 }
