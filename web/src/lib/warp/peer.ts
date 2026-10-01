@@ -601,8 +601,12 @@ export class WarpPeer {
    * On accept: streams each file (file-begin / chunks / file-end) updating
    * progress to done. On decline: marks every item "declined". NEVER closes the
    * channel — both peers can offer again afterwards.
+   *
+   * `onIds` (optional) gets the transfer id minted for each file, index-aligned
+   * with `files`, before any "transfer" event fires, so a caller can bind ids to
+   * the exact File even when two offers' thumbnail awaits finish out of order.
    */
-  async offerFiles(files: File[]): Promise<void> {
+  async offerFiles(files: File[], onIds?: (ids: string[]) => void): Promise<void> {
     const ch = this.channel;
     if (!ch || ch.readyState !== "open") throw new Error("channel-not-open");
     if (!files.length) return;
@@ -620,12 +624,12 @@ export class WarpPeer {
     // Each file gets a stable `key` (identity) and a random `resumeToken` so a
     // re-offer after a drop is recognized and can only be resumed by this sender.
     const manifest: OfferItem[] = [];
-    const ids: string[] = [];
+    const ids = files.map(() => fileId());
+    onIds?.(ids);
     const tokens: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i];
-      const id = fileId();
-      ids.push(id);
+      const id = ids[i];
       const mime = file.type || "application/octet-stream";
       const key = fileKey(file);
       const resumeToken = this.tokenForKey(key);
