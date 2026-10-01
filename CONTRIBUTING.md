@@ -57,6 +57,12 @@ pnpm --filter @warp/server test    # signaling e2e: boots wrangler dev, drives r
 
 CI (`.github/workflows/ci.yml`) runs exactly these, path-filtered — only the package you touched is built/tested.
 
+### Fork PRs and CI
+
+Fork PR workflows may remain in GitHub's `action_required` state while awaiting maintainer approval. That is expected — CI has not failed; it has not run yet.
+
+If it has been more than a day, ping in the PR. Do not try to "fix" CI that has not run.
+
 ### The engine check harnesses
 
 The engine has runnable, dependency-free checks next to each module — no test runner, just `node` and small stubs for the browser globals (a fake `RTCDataChannel`, etc.). Run them all with one command:

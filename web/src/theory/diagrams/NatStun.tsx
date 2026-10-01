@@ -51,33 +51,39 @@ export default function NatStun() {
 
   return (
     <DiagramFrame caption="FIG 04 · NAT TRAVERSAL · STUN" tone="neutral">
-      {/* ============================== FULL-CONE / OPEN — success ====== */}
-      <Scenario
-        tone="acc"
-        title="full-cone / open"
-        verdict="hole-punch succeeds"
-        stunReply=":51001"
-        stunNote="stable — same mapping reused"
-        ball="through"
+      <div
+        role="img"
+        aria-label="STUN NAT traversal: with a full-cone NAT the STUN-reported port stays stable and hole-punching succeeds; with a symmetric or CGNAT the port changes per destination and hole-punching fails."
       >
-        <Wall tone="acc" hole reduced={reduced} ball="through" />
-      </Scenario>
+        {/* ============================== FULL-CONE / OPEN — success ====== */}
+        <Scenario
+          tone="acc"
+          title="full-cone / open"
+          verdict="hole-punch succeeds"
+          stunReply=":51001"
+          stunNote="stable — same mapping reused"
+          ball="through"
+        >
+          <Wall tone="acc" hole reduced={reduced} ball="through" />
+        </Scenario>
 
-      <Divider />
+        <Divider />
 
-      {/* ============================== SYMMETRIC / CGNAT — failure ===== */}
-      <Scenario
-        tone="amb"
-        title="symmetric / CGNAT"
-        verdict="hole-punch fails"
-        stunReply={reduced ? PORTS[0] : PORTS[portIdx]}
-        stunNote="port changes per destination"
-        ball="blocked"
-      >
-        <Wall tone="amb" hole={false} reduced={reduced} ball="blocked" />
-      </Scenario>
+        {/* ============================== SYMMETRIC / CGNAT — failure ===== */}
+        <Scenario
+          tone="amb"
+          title="symmetric / CGNAT"
+          verdict="hole-punch fails"
+          stunReply={reduced ? PORTS[0] : PORTS[portIdx]}
+          stunNote="port changes per destination"
+          ball="blocked"
+        >
+          <Wall tone="amb" hole={false} reduced={reduced} ball="blocked" />
+        </Scenario>
+      </div>
 
       {/* ============================== the relay-share bar ============= */}
+      {/* outside the role="img" wrapper so its statistic stays readable */}
       <RelayBar />
     </DiagramFrame>
   );

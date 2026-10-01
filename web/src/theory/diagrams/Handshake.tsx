@@ -80,139 +80,141 @@ export default function Handshake() {
   const serverDim = connected;
 
   return (
-    <DiagramFrame caption="FIG 03 · SDP / ICE HANDSHAKE" tone="acc">
-      {/* signaling server (top center) */}
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: "8px" }}>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "4px",
-            opacity: serverDim ? 0.35 : 1,
-            transition: "opacity .6s ease",
-            color: serverDim ? MUTED : ACC,
-          }}
-        >
-          <span
+    <div role="img" aria-label="SDP and ICE handshake between two peers via the signaling server">
+      <DiagramFrame caption="FIG 03 · SDP / ICE HANDSHAKE" tone="acc">
+        {/* signaling server (top center) */}
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "8px" }}>
+          <div
             style={{
-              display: "inline-flex",
+              display: "flex",
+              flexDirection: "column",
               alignItems: "center",
-              gap: "8px",
-              border: `1px dashed ${serverDim ? DIM : ACC}`,
-              background: CARD,
-              padding: "9px 14px",
+              gap: "4px",
+              opacity: serverDim ? 0.35 : 1,
+              transition: "opacity .6s ease",
               color: serverDim ? MUTED : ACC,
-              transition: "border-color .6s ease, color .6s ease",
             }}
           >
-            {SWITCHBOARD}
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                border: `1px dashed ${serverDim ? DIM : ACC}`,
+                background: CARD,
+                padding: "9px 14px",
+                color: serverDim ? MUTED : ACC,
+                transition: "border-color .6s ease, color .6s ease",
+              }}
+            >
+              {SWITCHBOARD}
+              <span
+                style={{
+                  fontFamily: MONO,
+                  fontSize: "10px",
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                }}
+              >
+                signaling server
+              </span>
+            </span>
             <span
               style={{
                 fontFamily: MONO,
-                fontSize: "10px",
-                letterSpacing: ".14em",
+                fontSize: "8.5px",
+                letterSpacing: ".1em",
                 textTransform: "uppercase",
+                color: MUTED,
               }}
             >
-              signaling server
+              {serverDim ? "introductions done — stepping aside" : "switchboard · relays notes only"}
             </span>
-          </span>
-          <span
-            style={{
-              fontFamily: MONO,
-              fontSize: "8.5px",
-              letterSpacing: ".1em",
-              textTransform: "uppercase",
-              color: MUTED,
-            }}
-          >
-            {serverDim ? "introductions done — stepping aside" : "switchboard · relays notes only"}
-          </span>
-        </div>
-      </div>
-
-      {/* the two uplink legs (A->server, B->server) */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          maxWidth: "440px",
-          margin: "0 auto",
-          gap: 0,
-        }}
-      >
-        <UpLink side="left" dim={serverDim} reduced={reduced} />
-        <UpLink side="right" dim={serverDim} reduced={reduced} />
-      </div>
-
-      {/* peers + direct channel between them */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "auto 1fr auto",
-          alignItems: "center",
-          gap: "12px",
-          maxWidth: "520px",
-          margin: "0 auto",
-        }}
-      >
-        <Endpoint
-          label="peer a"
-          tone="acc"
-          icon={DEVICE}
-          active={connected && !reduced}
-          minWidth={0}
-          style={{ padding: "10px 14px" }}
-        />
-
-        {/* direct beam — lights only when connected */}
-        <div style={{ position: "relative", textAlign: "center" }}>
-          <div
-            style={{
-              height: "12px",
-              backgroundImage: connected
-                ? "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 18px)"
-                : "repeating-linear-gradient(90deg,rgba(239,233,218,.14) 0 4px,transparent 4px 12px)",
-              backgroundSize: "26px 100%",
-              animation: connected && !reduced ? "thyFlow .9s linear infinite" : undefined,
-              WebkitMaskImage:
-                "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
-              maskImage:
-                "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
-              transition: "background .5s ease",
-            }}
-          />
-          <div
-            style={{
-              fontFamily: MONO,
-              fontSize: "9px",
-              letterSpacing: ".12em",
-              textTransform: "uppercase",
-              color: connected ? ACC : MUTED,
-              marginTop: "7px",
-              transition: "color .5s ease",
-            }}
-          >
-            {connected ? "● direct · DTLS" : "no data path yet"}
           </div>
         </div>
 
-        <Endpoint
-          label="peer b"
-          tone="acc"
-          icon={DEVICE}
-          active={connected && !reduced}
-          minWidth={0}
-          style={{ padding: "10px 14px" }}
-        />
-      </div>
+        {/* the two uplink legs (A->server, B->server) */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            maxWidth: "440px",
+            margin: "0 auto",
+            gap: 0,
+          }}
+        >
+          <UpLink side="left" dim={serverDim} reduced={reduced} />
+          <UpLink side="right" dim={serverDim} reduced={reduced} />
+        </div>
 
-      {/* the note in flight / final coordinates */}
-      <div style={{ marginTop: "20px", minHeight: 96 }}>
-        <NotePanel phase={phase} reduced={reduced} />
-      </div>
-    </DiagramFrame>
+        {/* peers + direct channel between them */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "auto 1fr auto",
+            alignItems: "center",
+            gap: "12px",
+            maxWidth: "520px",
+            margin: "0 auto",
+          }}
+        >
+          <Endpoint
+            label="peer a"
+            tone="acc"
+            icon={DEVICE}
+            active={connected && !reduced}
+            minWidth={0}
+            style={{ padding: "10px 14px" }}
+          />
+
+          {/* direct beam — lights only when connected */}
+          <div style={{ position: "relative", textAlign: "center" }}>
+            <div
+              style={{
+                height: "12px",
+                backgroundImage: connected
+                  ? "repeating-linear-gradient(90deg,var(--acc) 0 7px,transparent 7px 18px)"
+                  : "repeating-linear-gradient(90deg,rgba(239,233,218,.14) 0 4px,transparent 4px 12px)",
+                backgroundSize: "26px 100%",
+                animation: connected && !reduced ? "thyFlow .9s linear infinite" : undefined,
+                WebkitMaskImage:
+                  "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
+                maskImage:
+                  "linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)",
+                transition: "background .5s ease",
+              }}
+            />
+            <div
+              style={{
+                fontFamily: MONO,
+                fontSize: "9px",
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: connected ? ACC : MUTED,
+                marginTop: "7px",
+                transition: "color .5s ease",
+              }}
+            >
+              {connected ? "● direct · DTLS" : "no data path yet"}
+            </div>
+          </div>
+
+          <Endpoint
+            label="peer b"
+            tone="acc"
+            icon={DEVICE}
+            active={connected && !reduced}
+            minWidth={0}
+            style={{ padding: "10px 14px" }}
+          />
+        </div>
+
+        {/* the note in flight / final coordinates */}
+        <div style={{ marginTop: "20px", minHeight: 96 }}>
+          <NotePanel phase={phase} reduced={reduced} />
+        </div>
+      </DiagramFrame>
+    </div>
   );
 }
 

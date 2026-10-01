@@ -42,6 +42,10 @@ export default function NearbyDevices() {
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  // Which device's session the modal shows; falls back to the first one when
+  // unset or when that session was dismissed.
+  const [activePeer, setActivePeer] = useState<string | null>(null);
+  const current = sessions.find((s) => s.peerId === activePeer) ?? sessions[0];
   const isSavingRef = useRef(false);
 
   useEffect(() => {
@@ -391,7 +395,7 @@ export default function NearbyDevices() {
             maxWidth: "560px",
           }}
         >
-          Same Wi-Fi, no code. Tap a device to offer files straight across — they review and accept
+          Same Wi-Fi, no code. Tap a device to send files or text straight across — they review and accept
           before anything moves, and the bytes go peer-to-peer, never touching a server.
         </p>
 
@@ -414,44 +418,44 @@ export default function NearbyDevices() {
                 multiSelect={multiSelect}
                 selected={selectedPeers.includes(d.peerId)}
                 onSelect={() => togglePeer(d.peerId)}
+                onOpen={() => {
+                  nearby.open(d.peerId);
+                  setActivePeer(d.peerId);
+                }}
                 onPickFiles={(list) => sendToDevice(d.peerId, list)}
+                isMobile={isMobile}
               />
             ))}
           </div>
         )}
       </div>
 
-      {sessions.length > 0 && (
-        <SessionModal
-          onClose={() => nearby.dismissSession(sessions[0].peerId)}
-        >
-          {sessions[0].errorMessage ? (
+      {current && (
+        <SessionModal onClose={() => nearby.dismissSession(current.peerId)}>
+          {sessions.length > 1 && (
+            <SessionTabs
+              sessions={sessions}
+              activeId={current.peerId}
+              onPick={setActivePeer}
+            />
+          )}
+          {current.errorMessage ? (
             <SessionError
-              message={sessions[0].errorMessage}
-              onClose={() => nearby.dismissSession(sessions[0].peerId)}
+              message={current.errorMessage}
+              onClose={() => nearby.dismissSession(current.peerId)}
               isMobile={isMobile}
             />
           ) : (
             <SessionView
-              peerLabel={sessions[0].peerName}
-              items={sessions[0].items}
-              onSendFiles={(files) =>
-                nearby.sendTo(sessions[0].peerId, files)
-              }
-              onSendText={(text) =>
-                nearby.sendText(sessions[0].peerId, text)
-              }
-              onCancel={(id) =>
-                nearby.cancel(sessions[0].peerId, id)
-              }
-              onPause={() => {}}
-              onResume={() => {}}
-              onDownloadOne={(id) =>
-                nearby.downloadOne(sessions[0].peerId, id)
-              }
-              onDownloadAll={() =>
-                nearby.downloadAll(sessions[0].peerId)
-              }
+              peerLabel={current.peerName}
+              items={current.items}
+              onSendFiles={(files) => nearby.sendTo(current.peerId, files)}
+              onSendText={(text) => nearby.sendText(current.peerId, text)}
+              onCancel={(id) => nearby.cancel(current.peerId, id)}
+              onPause={(id) => nearby.pause(current.peerId, id)}
+              onResume={(id) => nearby.resume(current.peerId, id)}
+              onDownloadOne={(id) => nearby.downloadOne(current.peerId, id)}
+              onDownloadAll={() => nearby.downloadAll(current.peerId)}
               isMobile={isMobile}
             />
           )}
@@ -520,89 +524,10 @@ function DeviceTypeIcon({ type }: { type: DeviceType }) {
 
 /* ----------------------------------------------------------------- device card */
 
-function DeviceCard({
-  device,
-  multiSelect,
-  selected,
-  onSelect,
-  onPickFiles,
-}: {
-  device: NearbyDevice;
-  multiSelect: boolean;
-  selected: boolean;
-  onSelect: () => void;
-  onPickFiles: (list: FileList | null) => void;
-}) {
+/** Device glyph (with live dot) plus name and a one-line hint. */
+function DeviceIdentity({ device, hint }: { device: NearbyDevice; hint: string }) {
   return (
-    <label
-      onClick={(e) => {
-        if (multiSelect) {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      tabIndex={multiSelect ? 0 : undefined}
-      role={multiSelect ? "checkbox" : undefined}
-      aria-checked={multiSelect ? selected : undefined}
-      onKeyDown={(e) => {
-        if (multiSelect && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      className="nearby-card"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "13px",
-        width: "100%",
-        textAlign: "left",
-        padding: "16px 17px",
-        border: `1px solid ${HAIRLINE}`,
-        background: "rgba(239,233,218,.02)",
-        color: "#efe9da",
-        cursor: "pointer",
-        transition: "border-color .15s ease, background .15s ease",
-        font: "inherit",
-      }}
-    >
-      {!multiSelect && (
-        <input
-          type="file"
-          multiple
-          style={{ display: "none" }}
-          onChange={(e) => {
-            onPickFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
-      )}
-
-      {multiSelect && (
-        <span
-          style={{
-            flexShrink: 0,
-            width: "20px",
-            height: "20px",
-            border: `1px solid ${
-              selected ? "var(--acc)" : "rgba(239,233,218,.3)"
-            }`,
-            background: selected
-              ? "var(--acc)"
-              : "transparent",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#121110",
-            fontFamily: MONO,
-            fontSize: "13px",
-            fontWeight: 700,
-          }}
-        >
-          {selected ? "✓" : ""}
-        </span>
-      )}
-      {/* device glyph */}
+    <>
       <span
         style={{
           position: "relative",
@@ -630,7 +555,7 @@ function DeviceCard({
           }}
         />
       </span>
-
+  
       <span style={{ minWidth: 0, flex: 1 }}>
         <span
           style={{
@@ -657,26 +582,185 @@ function DeviceCard({
             marginTop: "3px",
           }}
         >
-          {multiSelect
-            ? selected
-              ? "Selected"
-              : "Tap to select"
-            : "Tap to send"}
+          {hint}
         </span>
       </span>
+    </>
+  );
+}
 
-      <span
-        className="nearby-go"
+function DeviceCard({
+  device,
+  multiSelect,
+  selected,
+  onSelect,
+  onOpen,
+  onPickFiles,
+  isMobile,
+}: {
+  device: NearbyDevice;
+  multiSelect: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  onPickFiles: (list: FileList | null) => void;
+  isMobile: boolean;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (multiSelect) {
+    return (
+      <div
+        onClick={(e) => {
+          e.preventDefault();
+          onSelect();
+        }}
+        tabIndex={0}
+        role="checkbox"
+        aria-checked={selected}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+        className="nearby-card"
         style={{
-          fontFamily: MONO,
-          fontSize: "15px",
-          color: "#6f6a5d",
-          transition: "color .15s ease, transform .15s ease",
+          display: "flex",
+          alignItems: "center",
+          gap: "13px",
+          width: "100%",
+          textAlign: "left",
+          padding: "16px 17px",
+          border: `1px solid ${HAIRLINE}`,
+          background: "rgba(239,233,218,.02)",
+          color: "#efe9da",
+          cursor: "pointer",
+          transition: "border-color .15s ease, background .15s ease",
+          font: "inherit",
         }}
       >
-        →
-      </span>
-    </label>
+        <span
+          style={{
+            flexShrink: 0,
+            width: "20px",
+            height: "20px",
+            border: `1px solid ${
+              selected ? "var(--acc)" : "rgba(239,233,218,.3)"
+            }`,
+            background: selected
+              ? "var(--acc)"
+              : "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#121110",
+            fontFamily: MONO,
+            fontSize: "13px",
+            fontWeight: 700,
+          }}
+        >
+          {selected ? "✓" : ""}
+        </span>
+
+        <DeviceIdentity device={device} hint={selected ? "Selected" : "Tap to select"} />
+
+        <span
+          className="nearby-go"
+          style={{
+            fontFamily: MONO,
+            fontSize: "15px",
+            color: "#6f6a5d",
+            transition: "color .15s ease, transform .15s ease",
+          }}
+        >
+          →
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="nearby-card"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: isMobile ? "8px" : "12px",
+        width: "100%",
+        textAlign: "left",
+        padding: "16px 17px",
+        border: `1px solid ${HAIRLINE}`,
+        background: "rgba(239,233,218,.02)",
+        color: "#efe9da",
+        transition: "border-color .15s ease, background .15s ease",
+        font: "inherit",
+        boxSizing: "border-box",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "13px",
+          flex: 1,
+          minWidth: 0,
+          background: "none",
+          border: "none",
+          padding: 0,
+          margin: 0,
+          font: "inherit",
+          color: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <DeviceIdentity device={device} hint="Tap to open" />
+      </button>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          fileInputRef.current?.click();
+        }}
+        aria-label={`Send files to ${device.name}`}
+        style={{
+          flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: isMobile ? "6px 10px" : "6px 10px",
+          border: `1px solid rgba(239,233,218,.22)`,
+          background: "rgba(239,233,218,.04)",
+          color: "#efe9da",
+          fontFamily: MONO,
+          fontSize: isMobile ? "13px" : "11px",
+          fontWeight: 500,
+          letterSpacing: isMobile ? "normal" : ".04em",
+          textTransform: isMobile ? "none" : "uppercase",
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+          lineHeight: 1,
+          transition: "border-color .15s ease, background .15s ease, color .15s ease",
+        }}
+      >
+        {isMobile ? "+" : "Send files"}
+      </button>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          onPickFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+    </div>
   );
 }
 
@@ -851,6 +935,54 @@ function SessionError({
 }
 
 /* ----------------------------------------------------------------- modal shell */
+
+/** One tab per device when a send fans out to several (each has its own
+ *  progress and cancel). Wraps instead of scrolling so it fits at 360px. */
+function SessionTabs({
+  sessions,
+  activeId,
+  onPick,
+}: {
+  sessions: { peerId: string; peerName: string; errorMessage: string | null }[];
+  activeId: string;
+  onPick: (peerId: string) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Devices in this transfer"
+      style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}
+    >
+      {sessions.map((s) => {
+        const active = s.peerId === activeId;
+        return (
+          <button
+            key={s.peerId}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onPick(s.peerId)}
+            style={{
+              fontFamily: MONO,
+              fontSize: "11px",
+              letterSpacing: ".08em",
+              padding: "6px 10px",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+              color: s.errorMessage ? "var(--amb)" : active ? "#efe9da" : "#a8a293",
+              background: active ? "rgba(239,233,218,.08)" : "transparent",
+              border: `1px solid ${active ? "var(--acc)" : "rgba(239,233,218,.14)"}`,
+            }}
+          >
+            {s.peerName}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function SessionModal({
   children,

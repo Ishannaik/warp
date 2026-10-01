@@ -72,6 +72,19 @@ wrangler pages deploy dist --project-name=wrap
 `https://wrap.pages.dev/anything`) to confirm the SPA `_redirects` fallback serves
 `index.html` with a 200.
 
+### Verify the signaling Worker health endpoint
+
+After deploying the signaling Worker, curl the `/health` endpoint on the
+`*.workers.dev` URL printed by Wrangler:
+
+```sh
+curl -fsS https://warp-signaling.<your-workers-subdomain>.workers.dev/health
+```
+
+A healthy Worker returns HTTP 200 with the body `ok`. The `-f` flag makes curl
+exit non-zero on an HTTP 400 or higher, so it doubles as a quick post-deploy
+smoke check.
+
 Re-deploys: just re-run steps 1 + 3.
 
 ---
