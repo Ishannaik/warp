@@ -33,6 +33,7 @@ import { deviceName } from "../lib/warp/deviceName";
 import { formatDuration, formatSpeed } from "../lib/warp/transferStats";
 import { detectFsAccessSupport, isLargeBatch } from "../lib/warp/receiveStrategy";
 import { convertToJpeg, isHeicMime, jpegFilename } from "../lib/warp/imageConvert";
+import { linkify } from "../lib/linkify";
 
 const MONO = "'JetBrains Mono',monospace";
 const DISPLAY = "'Bricolage Grotesque',sans-serif";
@@ -167,6 +168,14 @@ const ItemRow = memo(function ItemRow({
   // that without attempting it. undefined = not attempted or not decodable
   // (button stays hidden either way); a Blob means the button appears.
   const [jpeg, setJpeg] = useState<Blob | undefined>(undefined);
+  const singleUrl = useMemo(() => {
+    if (!item.text) return null;
+    const trimmed = item.text.trim();
+    const parts = linkify(trimmed);
+    return parts.length === 1 && parts[0].kind === "link" && parts[0].value === trimmed
+      ? trimmed
+      : null;
+  }, [item.text]);
   const wantsJpeg = canDownload && isHeicMime(item.mime);
   useEffect(() => {
     if (!wantsJpeg || !item.blob) return;
@@ -371,27 +380,68 @@ const ItemRow = memo(function ItemRow({
               overflow: "auto",
             }}
           >
-            {item.text}
+            {linkify(item.text).map((part, i) =>
+              part.kind === "link" ? (
+                <a
+                  key={i}
+                  href={part.value}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: "var(--acc)",
+                    textDecoration: "underline",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {part.value}
+                </a>
+              ) : (
+                part.value
+              ),
+            )}
           </div>
-          <button
-            type="button"
-            className="warp-share"
-            onClick={copyText}
-            style={{
-              alignSelf: "flex-start",
-              padding: "7px 14px",
-              background: "rgba(239,233,218,.03)",
-              border: `1px solid ${HAIRLINE}`,
-              color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : "#a8a293",
-              fontFamily: MONO,
-              fontSize: "11px",
-              letterSpacing: ".06em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-            }}
-          >
-            {copyFailed ? "✕ copy failed" : copied ? "✓ copied" : "⧉ copy"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button
+              type="button"
+              className="warp-share"
+              onClick={copyText}
+              style={{
+                alignSelf: "flex-start",
+                padding: "7px 14px",
+                background: "rgba(239,233,218,.03)",
+                border: `1px solid ${HAIRLINE}`,
+                color: copyFailed ? "var(--amb)" : copied ? "var(--acc)" : "#a8a293",
+                fontFamily: MONO,
+                fontSize: "11px",
+                letterSpacing: ".06em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+            >
+              {copyFailed ? "✕ copy failed" : copied ? "✓ copied" : "⧉ copy"}
+            </button>
+            {singleUrl && (
+              <button
+                type="button"
+                className="warp-share"
+                onClick={() => window.open(singleUrl, "_blank", "noopener,noreferrer")}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "7px 14px",
+                  background: "rgba(239,233,218,.03)",
+                  border: `1px solid ${HAIRLINE}`,
+                  color: "var(--acc)",
+                  fontFamily: MONO,
+                  fontSize: "11px",
+                  letterSpacing: ".06em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                }}
+              >
+                Open
+              </button>
+            )}
+          </div>
         </div>
       )}
 
