@@ -97,7 +97,7 @@ export default function FooterCta() {
             textDecoration: "none",
           }}
         >
-          Start a transfer &nbsp;&rarr;
+          Send files or text &nbsp;&rarr;
         </a>
         <div
           style={{

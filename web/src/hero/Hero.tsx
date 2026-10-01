@@ -373,7 +373,7 @@ export default function Hero() {
                 textDecoration: "none",
               }}
             >
-              Send files &nbsp;→
+              Send files or text &nbsp;→
             </a>
             <a
               href="/receive"

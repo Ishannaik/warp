@@ -459,6 +459,7 @@ function Composer({
   onRemovePending,
   onSendPending,
   deviceCount = 1,
+  initialText,
 }: {
   onSendFiles: (files: File[]) => void;
   onSendText: (text: string) => void;
@@ -469,10 +470,11 @@ function Composer({
   onSendPending?: () => void;
   /** Connected devices a send fans out to (>1 in a mesh room). */
   deviceCount?: number;
+  initialText?: string;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
 
   // When staging callbacks are provided (TransferFlow), file pickers ADD to the
   // editable pending queue instead of offering immediately. The nearby flow
@@ -1300,6 +1302,7 @@ export function SessionView({
   onRemovePending,
   onSendPending,
   connections,
+  initialText,
 }: {
   peerLabel: string;
   items: TransferItem[];
@@ -1328,6 +1331,7 @@ export function SessionView({
    * to/from device. Omitted (or a single device) keeps the clean 1-to-1 header.
    */
   connections?: Connection[];
+  initialText?: string;
 }) {
   const liveConnections = connections ?? [];
   const connectedCount = liveConnections.filter((c) => c.connected).length;
@@ -1422,6 +1426,7 @@ export function SessionView({
         onRemovePending={onRemovePending}
         onSendPending={onSendPending}
         deviceCount={multiDevice ? connectedCount : 1}
+        initialText={initialText}
       />
 
       <Tray
