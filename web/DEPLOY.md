@@ -81,8 +81,8 @@ After deploying the signaling Worker, curl the `/health` endpoint on the
 curl -fsS https://warp-signaling.<your-workers-subdomain>.workers.dev/health
 ```
 
-A healthy Worker returns HTTP 200 with the body `ok`. The `-f` flag makes the
-command fail on a non-2xx response, so it can also be used as a quick post-deploy
+A healthy Worker returns HTTP 200 with the body `ok`. The `-f` flag makes curl
+exit non-zero on an HTTP 400 or higher, so it doubles as a quick post-deploy
 smoke check.
 
 Re-deploys: just re-run steps 1 + 3.
