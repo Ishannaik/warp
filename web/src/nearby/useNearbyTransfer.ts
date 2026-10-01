@@ -58,6 +58,8 @@ export interface UseNearbyTransfer {
   rename: (name: string) => void;
   sessions: NearbySession[];
   incoming: IncomingRequest[];
+  /** Open a session with a discovered device without offering files. */
+  open: (peerId: string) => void;
   /** Begin / continue sending `files` to a discovered (or active) device. */
   sendTo: (peerId: string | string[], files: File[]) => void;
   /** Send a text snippet over the active session (no accept needed). */
@@ -282,6 +284,78 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
   // ---- outbound sends ------------------------------------------------------
 
+  /** Shared peer-and-session resolver for open() and sendTo(). */
+  const ensurePeer = useCallback(
+    (peerId: string): WarpPeer | null => {
+      const peerName =
+        devices.find((device) => device.peerId === peerId)?.name ??
+        peerNamesRef.current.get(peerId) ??
+        "Device";
+
+      let peer = peersRef.current.get(peerId);
+      if (peer?.isDisposed) {
+        peersRef.current.delete(peerId);
+        peer = undefined;
+      }
+
+      if (!peer) {
+        const fresh = connectTo(peerId);
+
+        if (!fresh) {
+          setSessions((prev) => {
+            const existing = prev.find((s) => s.peerId === peerId);
+
+            if (existing) {
+              return prev.map((s) =>
+                s.peerId === peerId
+                  ? {
+                      ...s,
+                      connected: false,
+                      errorMessage:
+                        "Network isn't ready yet — give it a second and try again.",
+                    }
+                  : s,
+              );
+            }
+
+            return [
+              ...prev,
+              {
+                peerId,
+                peerName,
+                connected: false,
+                items: [],
+                errorMessage:
+                  "Network isn't ready yet — give it a second and try again.",
+              },
+            ];
+          });
+
+          return null;
+        }
+
+        peer = fresh;
+        openSession(peer, peerId, peerName);
+      } else {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.peerId === peerId ? { ...s, errorMessage: null } : s,
+          ),
+        );
+      }
+
+      return peer;
+    },
+    [connectTo, devices, openSession],
+  );
+
+  const open = useCallback(
+    (peerId: string) => {
+      ensurePeer(peerId);
+    },
+    [ensurePeer],
+  );
+
   const sendTo = useCallback(
     (peerIds: string | string[], files: File[]) => {
       if (!files.length) return;
@@ -289,57 +363,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       const targets = Array.isArray(peerIds) ? peerIds : [peerIds];
 
       for (const peerId of targets) {
-        const peerName =
-          devices.find((device) => device.peerId === peerId)?.name ??
-          peerNamesRef.current.get(peerId) ??
-          "Device";
-
-        let peer = peersRef.current.get(peerId);
-        if (peer?.isDisposed) {
-          peersRef.current.delete(peerId);
-          peer = undefined;
-        }
-
-        if (!peer) {
-          const fresh = connectTo(peerId);
-
-          if (!fresh) {
-            setSessions((prev) => {
-              const existing = prev.find((s) => s.peerId === peerId);
-
-              if (existing) {
-                return prev.map((s) =>
-                  s.peerId === peerId
-                    ? {
-                        ...s,
-                        connected: false,
-                        errorMessage:
-                          "Network isn't ready yet — give it a second and try again.",
-                      }
-                    : s,
-                );
-              }
-
-              return [
-                ...prev,
-                {
-                  peerId,
-                  peerName,
-                  connected: false,
-                  items: [],
-                  errorMessage:
-                    "Network isn't ready yet — give it a second and try again.",
-                },
-              ];
-            });
-
-            continue;
-          }
-
-          peer = fresh;
-          openSession(peer, peerId, peerName);
-        }
-
+        const peer = ensurePeer(peerId);
         if (!peer) continue;
 
         const activePeer = peer;
@@ -365,7 +389,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
            
       }
     },
-    [connectTo, devices, failSession, openSession],
+    [ensurePeer, failSession],
   );
 
   const sendText = useCallback((peerId: string, text: string) => {
@@ -507,7 +531,6 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     setIncoming((prev) =>
       prev.filter((request) => request.peerId !== peerId),
     );
-
     
 
     setSessions((prev) =>
@@ -540,6 +563,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       crowded,
       sessions,
       incoming,
+      open,
       sendTo,
       sendText,
       acceptIncoming,
@@ -559,6 +583,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       crowded,
       sessions,
       incoming,
+      open,
       sendTo,
       sendText,
       acceptIncoming,
