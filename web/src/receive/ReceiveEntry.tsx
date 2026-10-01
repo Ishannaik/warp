@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { navigate } from "../router";
 import WarpLogo from "../WarpLogo";
 import { useIsMobile } from "../lib/useIsMobile";
-import { CODE_LEN, VALID_RE, sanitize } from "../lib/warp/roomCode";
+import { CODE_LEN, VALID_RE, isWordy, sanitize } from "../lib/warp/roomCode";
 import { aliasToCode, looksLikeAlias } from "../../../shared/codewords.js";
 
 /**
@@ -22,11 +22,13 @@ const HAIR = "rgba(239,233,218,.14)";
 export default function ReceiveEntry({
   initialCode = "",
 }: {
-  /** Prefill from a malformed `/r/:code` deep link (already sanitized). */
+  /** Prefill from a malformed `/r/:code` deep link (sanitized, or raw alias words). */
   initialCode?: string;
 }) {
   const isMobile = useIsMobile();
-  const [code, setCode] = useState(() => sanitize(initialCode));
+  const [code, setCode] = useState(() =>
+    isWordy(initialCode) ? initialCode : sanitize(initialCode),
+  );
 
   const valid = useMemo(() => VALID_RE.test(code), [code]);
   // #42: a typed/pasted word alias ("otter maple fox …") resolves to its

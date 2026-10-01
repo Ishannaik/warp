@@ -65,6 +65,10 @@ export interface UseNearbyTransfer {
   acceptIncoming: (peerId: string) => void;
   declineIncoming: (peerId: string) => void;
   cancel: (peerId: string, id: string) => void;
+  /** Pause a file mid-transfer (either direction). */
+  pause: (peerId: string, id: string) => void;
+  /** Resume a paused file: a receive asks the sender; a send re-offers it. */
+  resume: (peerId: string, id: string) => void;
   downloadOne: (peerId: string, id: string) => void;
   downloadAll: (peerId: string) => void;
   dismissSession: (peerId: string) => void;
@@ -93,6 +97,15 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
   /** Display names keyed by discovery peer id. */
   const peerNamesRef = useRef<Map<string, string>>(new Map());
+  /** Transfer id -> the exact File sent, so a paused send re-offers it.
+   *  Filled from offerFiles' onIds; released once the send can't resume. */
+  const fileByIdRef = useRef<Map<string, File>>(new Map());
+  const bindIds = (files: File[]) => (ids: string[]) =>
+    ids.forEach((id, i) => fileByIdRef.current.set(id, files[i]));
+  /** Late-bound so bindPeer can answer a remote resume without a dep cycle. */
+  const reofferRef = useRef<(peerId: string, id: string, notifyPeer: boolean) => void>(
+    () => {},
+  );
 
   // ---- session-state plumbing ---------------------------------------------
 
@@ -140,7 +153,13 @@ export function useNearbyTransfer(): UseNearbyTransfer {
           ),
         ),
       );
-      peer.on("transfer", (item) => upsertItem(peerId, item));
+      peer.on("transfer", (item) => {
+        // Done, declined or cancelled sends can't be resumed: drop the File.
+        if (["done", "declined", "cancelled"].includes(item.status)) {
+          fileByIdRef.current.delete(item.id);
+        }
+        upsertItem(peerId, item);
+      });
       // A FILE offer arrived: surface the accept modal with the manifest.
       peer.on("incoming-offer", (info) =>
         setIncoming((prev) => [
@@ -159,7 +178,9 @@ export function useNearbyTransfer(): UseNearbyTransfer {
       peer.on("text-received", () => {});
       peer.on("declined", () => {});
       peer.on("cancelled", () => {});
-      
+      // The receiver resumed our paused send: re-offer it, without echoing
+      // requestResume back (that would loop).
+      peer.on("resume-requested", ({ id }) => reofferRef.current(peerId, id, false));
 
       peer.on(
         "error",
@@ -323,11 +344,9 @@ export function useNearbyTransfer(): UseNearbyTransfer {
 
         const activePeer = peer;
 
-        
-
         const offer = () =>
           activePeer
-            .offerFiles(files)
+            .offerFiles(files, bindIds(files))
             .catch(() =>
               failSession(
                 peerId,
@@ -377,12 +396,69 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     if (!item || item.status !== "paused" || !peer) return;
 
     if (item.direction === "send") {
-      
+      reofferRef.current(peerId, id, true);
       return;
     }
 
     peer.requestResume(id);
-  }, [failSession]);
+    // The sender answers with a fresh offer under a new id; drop the old row
+    // so it doesn't sit there paused next to the new one.
+    dropItem(peerId, id);
+  }, []);
+
+  const dropItem = (peerId: string, id: string) => {
+    const rest = (itemsRef.current.get(peerId) ?? []).filter((t) => t.id !== id);
+    itemsRef.current.set(peerId, rest);
+    setSessions((prev) =>
+      prev.map((s) => (s.peerId === peerId ? { ...s, items: rest } : s)),
+    );
+  };
+
+  /** A paused send stopped its pump without file-end, so the engine can't
+   *  restart it in place: drop the paused row and offer the File again. The
+   *  receiver re-accepts it like any new offer. */
+  reofferRef.current = (peerId: string, id: string, notifyPeer: boolean) => {
+    const item = itemsRef.current.get(peerId)?.find((t) => t.id === id);
+    const peer = peersRef.current.get(peerId);
+    if (!item || item.status !== "paused" || !peer) return;
+    // The sender resumed a file we were receiving: its new offer replaces
+    // this row.
+    if (item.direction === "receive") {
+      dropItem(peerId, id);
+      return;
+    }
+    const file = fileByIdRef.current.get(id);
+    if (!file) return;
+    fileByIdRef.current.delete(id);
+    dropItem(peerId, id);
+    if (notifyPeer) peer.requestResume(id);
+    let newIds: string[] = [];
+    void peer
+      .offerFiles([file], (ids) => {
+        newIds = ids;
+        bindIds([file])(ids);
+      })
+      .catch(() => {
+        // Session dismissed meanwhile: nothing to restore into.
+        if (peersRef.current.get(peerId) !== peer) return;
+        // Swap the failed replacement row back for the paused one, so Resume
+        // is still there.
+        for (const n of newIds) fileByIdRef.current.delete(n);
+        fileByIdRef.current.set(id, file);
+        const kept = (itemsRef.current.get(peerId) ?? []).filter(
+          (t) => !newIds.includes(t.id) && t.id !== id,
+        );
+        const restored = [...kept, item];
+        itemsRef.current.set(peerId, restored);
+        setSessions((prev) =>
+          prev.map((s) => (s.peerId === peerId ? { ...s, items: restored } : s)),
+        );
+        failSession(
+          peerId,
+          PEER_ERROR_COPY["channel-error"] ?? "The data channel hit an error.",
+        );
+      });
+  };
 
   const downloadOne = useCallback((peerId: string, id: string) => {
     const item = itemsRef.current
@@ -424,6 +500,7 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     peersRef.current.get(peerId)?.close();
     peersRef.current.delete(peerId);
 
+    for (const t of itemsRef.current.get(peerId) ?? []) fileByIdRef.current.delete(t.id);
     itemsRef.current.delete(peerId);
     peerNamesRef.current.delete(peerId);
 

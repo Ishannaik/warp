@@ -41,6 +41,10 @@ export default function NearbyDevices() {
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  // Which device's session the modal shows; falls back to the first one when
+  // unset or when that session was dismissed.
+  const [activePeer, setActivePeer] = useState<string | null>(null);
+  const current = sessions.find((s) => s.peerId === activePeer) ?? sessions[0];
   const isSavingRef = useRef(false);
 
   useEffect(() => {
@@ -418,37 +422,32 @@ export default function NearbyDevices() {
         )}
       </div>
 
-      {sessions.length > 0 && (
-        <SessionModal
-          onClose={() => nearby.dismissSession(sessions[0].peerId)}
-        >
-          {sessions[0].errorMessage ? (
+      {current && (
+        <SessionModal onClose={() => nearby.dismissSession(current.peerId)}>
+          {sessions.length > 1 && (
+            <SessionTabs
+              sessions={sessions}
+              activeId={current.peerId}
+              onPick={setActivePeer}
+            />
+          )}
+          {current.errorMessage ? (
             <SessionError
-              message={sessions[0].errorMessage}
-              onClose={() => nearby.dismissSession(sessions[0].peerId)}
+              message={current.errorMessage}
+              onClose={() => nearby.dismissSession(current.peerId)}
               isMobile={isMobile}
             />
           ) : (
             <SessionView
-              peerLabel={sessions[0].peerName}
-              items={sessions[0].items}
-              onSendFiles={(files) =>
-                nearby.sendTo(sessions[0].peerId, files)
-              }
-              onSendText={(text) =>
-                nearby.sendText(sessions[0].peerId, text)
-              }
-              onCancel={(id) =>
-                nearby.cancel(sessions[0].peerId, id)
-              }
-              onPause={() => {}}
-              onResume={() => {}}
-              onDownloadOne={(id) =>
-                nearby.downloadOne(sessions[0].peerId, id)
-              }
-              onDownloadAll={() =>
-                nearby.downloadAll(sessions[0].peerId)
-              }
+              peerLabel={current.peerName}
+              items={current.items}
+              onSendFiles={(files) => nearby.sendTo(current.peerId, files)}
+              onSendText={(text) => nearby.sendText(current.peerId, text)}
+              onCancel={(id) => nearby.cancel(current.peerId, id)}
+              onPause={(id) => nearby.pause(current.peerId, id)}
+              onResume={(id) => nearby.resume(current.peerId, id)}
+              onDownloadOne={(id) => nearby.downloadOne(current.peerId, id)}
+              onDownloadAll={() => nearby.downloadAll(current.peerId)}
               isMobile={isMobile}
             />
           )}
@@ -848,6 +847,54 @@ function SessionError({
 }
 
 /* ----------------------------------------------------------------- modal shell */
+
+/** One tab per device when a send fans out to several (each has its own
+ *  progress and cancel). Wraps instead of scrolling so it fits at 360px. */
+function SessionTabs({
+  sessions,
+  activeId,
+  onPick,
+}: {
+  sessions: { peerId: string; peerName: string; errorMessage: string | null }[];
+  activeId: string;
+  onPick: (peerId: string) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Devices in this transfer"
+      style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}
+    >
+      {sessions.map((s) => {
+        const active = s.peerId === activeId;
+        return (
+          <button
+            key={s.peerId}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onPick(s.peerId)}
+            style={{
+              fontFamily: MONO,
+              fontSize: "11px",
+              letterSpacing: ".08em",
+              padding: "6px 10px",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+              color: s.errorMessage ? "var(--amb)" : active ? "#efe9da" : "#a8a293",
+              background: active ? "rgba(239,233,218,.08)" : "transparent",
+              border: `1px solid ${active ? "var(--acc)" : "rgba(239,233,218,.14)"}`,
+            }}
+          >
+            {s.peerName}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function SessionModal({
   children,
