@@ -6,7 +6,7 @@ import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/useWarpTransfer";
 import { deviceName } from "../lib/warp/deviceName";
 import { codeToAlias } from "../../../shared/codewords.js";
-import { formatBytes } from "../lib/warp/transfer";
+import { TEXT_SNIPPET_MAX_BYTES, formatBytes, textSnippetFrameBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
 import { copyToClipboard } from "../lib/copyToClipboard";
@@ -48,6 +48,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   // Local file queue (sender only). Each gets a stable id for list keys/removal.
   const [queue, setQueue] = useState<QueuedFile[]>([]);
+  const [draftText, setDraftText] = useState("");
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -80,6 +81,35 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
 
   const inSelect = !showSession && !showPair && !error;
 
+  // Window paste handling (Select and Pair steps only)
+  useEffect(() => {
+    if (showSession || error) return;
+
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === "input" || tagName === "textarea") {
+        return;
+      }
+
+      if (e.clipboardData?.files?.length) {
+        e.preventDefault();
+        addFiles(e.clipboardData.files);
+      } else {
+        const text = e.clipboardData?.getData("text");
+        if (text) {
+          e.preventDefault();
+          setDraftText((prev) => prev + text);
+        }
+      }
+    };
+
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("paste", onPaste);
+    };
+  }, [showSession, error, addFiles]);
+
   // ---- window-level drag overlay (Select step only) ----
   const onWinDragEnter = (e: DragEvent) => {
     if (!inSelect) return;
@@ -104,8 +134,15 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
     if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
   };
 
+  const draftFrameBytes = textSnippetFrameBytes(draftText);
+  const draftTooLong = draftText.length > 0 && draftFrameBytes > TEXT_SNIPPET_MAX_BYTES;
+
   const openChannel = () => {
-    if (!files.length) return;
+    if (draftTooLong) {
+      const file = new File([draftText], "pasted-text.txt", { type: "text/plain" });
+      addFiles([file]);
+      setDraftText("");
+    }
     // Open the channel ONLY. The queue stays editable while pairing; nothing is
     // offered until the user hits "Send" in the session (ShareX stay-in-control).
     wrap.createRoom();
@@ -213,6 +250,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
                 connections={connections}
                 items={items}
                 stats={wrap.stats}
+                initialText={draftText}
                 onSendFiles={wrap.sendFiles}
                 onSendText={wrap.sendText}
                 onCancel={wrap.cancel}
@@ -251,6 +289,7 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
               queue={queue}
               fileCount={fileCount}
               totalBytes={totalBytes}
+              draftText={draftText}
               connecting={status === "connecting"}
               connections={connections}
               onBrowse={browse}
@@ -260,10 +299,12 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
             />
           ) : (
             <SelectStep
-              files={files}
               queue={queue}
               fileCount={fileCount}
               totalBytes={totalBytes}
+              draftText={draftText}
+              setDraftText={setDraftText}
+              draftTooLong={draftTooLong}
               onBrowse={browse}
               onDropFiles={addFiles}
               onRemove={removeFile}
@@ -504,20 +545,24 @@ function QueueList({
 /* ----------------------------------------------------------------- step 01 */
 
 function SelectStep({
-  files,
   queue,
   fileCount,
   totalBytes,
+  draftText,
+  setDraftText,
+  draftTooLong,
   onBrowse,
   onDropFiles,
   onRemove,
   onOpenChannel,
   isMobile,
 }: {
-  files: File[];
   queue: QueuedFile[];
   fileCount: string;
   totalBytes: number;
+  draftText: string;
+  setDraftText: React.Dispatch<React.SetStateAction<string>>;
+  draftTooLong: boolean;
   onBrowse: () => void;
   onDropFiles: (l: FileList) => void;
   onRemove: (id: string) => void;
@@ -577,18 +622,95 @@ function SelectStep({
         </div>
         <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "20px" }}>Drop files here</div>
         <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", marginTop: "8px" }}>
-          or click to browse · any size, any type
+          or click to browse · or paste text below
         </div>
       </div>
 
-      <QueueList
-        queue={queue}
-        fileCount={fileCount}
-        totalBytes={totalBytes}
-        onRemove={onRemove}
-        isMobile={isMobile}
-        style={{ marginTop: "22px" }}
-      />
+      <div style={{ marginTop: "20px", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <textarea
+          value={draftText}
+          onChange={(e) => setDraftText(e.target.value)}
+          placeholder="…or paste text, a link or a password"
+          aria-label="Text to send"
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            resize: "vertical",
+            minHeight: "88px",
+            padding: isMobile ? "9px 11px" : "11px 13px",
+            background: "rgba(239,233,218,.02)",
+            border: "1px solid rgba(239,233,218,.14)",
+            color: "#efe9da",
+            fontFamily: MONO,
+            fontSize: "13px",
+            lineHeight: 1.5,
+          }}
+        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "8px",
+          }}
+        >
+          {draftTooLong ? (
+            <div
+              style={{
+                color: "#ef6a3d",
+                fontFamily: MONO,
+                fontSize: "11px",
+                lineHeight: 1.45,
+              }}
+            >
+              Too long for a text snippet. It will be sent as pasted-text.txt.
+            </div>
+          ) : (
+            <span />
+          )}
+          {typeof navigator !== "undefined" && navigator.clipboard && "readText" in navigator.clipboard && (
+            <button
+              type="button"
+              className="warp-share"
+              onClick={async () => {
+                try {
+                  const clip = await navigator.clipboard.readText();
+                  if (clip) setDraftText((prev) => prev + clip);
+                } catch {
+                  // ignore errors (permission denied)
+                }
+              }}
+              style={{
+                marginLeft: "auto",
+                padding: "7px 14px",
+                border: "1px solid rgba(239,233,218,.22)",
+                color: "#a8a293",
+                fontFamily: MONO,
+                fontSize: "11px",
+                letterSpacing: ".07em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+                background: "rgba(239,233,218,.03)",
+              }}
+            >
+              Paste from clipboard
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Text-only sends skip the queue entirely, so hide it until a file lands. */}
+      {queue.length > 0 && (
+        <QueueList
+          queue={queue}
+          fileCount={fileCount}
+          totalBytes={totalBytes}
+          onRemove={onRemove}
+          isMobile={isMobile}
+          style={{ marginTop: "22px" }}
+        />
+      )}
 
       <div
         style={{
@@ -612,14 +734,13 @@ function SelectStep({
         </span>
         <button
           type="button"
-          className={files.length ? "warp-cta" : undefined}
+          className="warp-cta"
           onClick={onOpenChannel}
-          disabled={!files.length}
           data-testid="open-channel"
           style={{
             display: isMobile ? "block" : "inline-block",
             padding: "15px 26px",
-            background: files.length ? "var(--acc)" : "rgba(239,233,218,.12)",
+            background: "var(--acc)",
             border: 0,
             color: "#fff",
             fontFamily: MONO,
@@ -628,7 +749,7 @@ function SelectStep({
             letterSpacing: ".07em",
             textTransform: "uppercase",
             textAlign: isMobile ? "center" : undefined,
-            cursor: files.length ? "pointer" : "not-allowed",
+            cursor: "pointer",
           }}
         >
           Open secure channel &nbsp;→
@@ -647,6 +768,7 @@ function PairStep({
   queue,
   fileCount,
   totalBytes,
+  draftText,
   connecting,
   connections,
   onBrowse,
@@ -660,6 +782,7 @@ function PairStep({
   queue: QueuedFile[];
   fileCount: string;
   totalBytes: number;
+  draftText: string;
   connecting: boolean;
   connections: Connection[];
   onBrowse: () => void;
@@ -862,6 +985,11 @@ function PairStep({
           <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d" }}>
             {fileCount} files · {formatBytes(totalBytes)} ready to offer
           </div>
+          {draftText.trim().length > 0 && (
+            <div style={{ fontFamily: MONO, fontSize: "12px", color: "#6f6a5d", marginTop: "4px" }}>
+              1 text snippet ready
+            </div>
+          )}
 
           {/* JOINERS — devices show up here the instant they enter the room, even
               before the channel finishes opening. Add a few; send to them all. */}
