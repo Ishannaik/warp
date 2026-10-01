@@ -432,22 +432,32 @@ export function useNearbyTransfer(): UseNearbyTransfer {
     fileByIdRef.current.delete(id);
     dropItem(peerId, id);
     if (notifyPeer) peer.requestResume(id);
-    void peer.offerFiles([file], bindIds([file])).catch(() => {
-      // Put the paused row (and its File) back so Resume is still there.
-      fileByIdRef.current.set(id, file);
-      const current = itemsRef.current.get(peerId) ?? [];
-      if (!current.some((t) => t.id === id)) {
-        const restored = [...current, item];
+    let newIds: string[] = [];
+    void peer
+      .offerFiles([file], (ids) => {
+        newIds = ids;
+        bindIds([file])(ids);
+      })
+      .catch(() => {
+        // Session dismissed meanwhile: nothing to restore into.
+        if (peersRef.current.get(peerId) !== peer) return;
+        // Swap the failed replacement row back for the paused one, so Resume
+        // is still there.
+        for (const n of newIds) fileByIdRef.current.delete(n);
+        fileByIdRef.current.set(id, file);
+        const kept = (itemsRef.current.get(peerId) ?? []).filter(
+          (t) => !newIds.includes(t.id) && t.id !== id,
+        );
+        const restored = [...kept, item];
         itemsRef.current.set(peerId, restored);
         setSessions((prev) =>
           prev.map((s) => (s.peerId === peerId ? { ...s, items: restored } : s)),
         );
-      }
-      failSession(
-        peerId,
-        PEER_ERROR_COPY["channel-error"] ?? "The data channel hit an error.",
-      );
-    });
+        failSession(
+          peerId,
+          PEER_ERROR_COPY["channel-error"] ?? "The data channel hit an error.",
+        );
+      });
   };
 
   const downloadOne = useCallback((peerId: string, id: string) => {
