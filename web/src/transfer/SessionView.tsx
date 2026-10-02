@@ -15,6 +15,7 @@
  * the global keyframes media query.
  */
 
+import { uniqueFiles } from "../lib/warp/uniqueFiles";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
@@ -530,7 +531,11 @@ function Composer({
   // editable pending queue instead of offering immediately. The nearby flow
   // passes none, so picks fall through to the original direct-offer behavior.
   const staging = !!onAddFiles;
-  const acceptFiles = staging ? onAddFiles! : onSendFiles;
+  /** Staged sends share the parent queue; direct sends deduplicate only this selection. */
+  const acceptFiles = (files: File[]) => {
+    if (staging) onAddFiles!(files);
+    else onSendFiles(uniqueFiles(files));
+  };
   const pendingList = pending ?? [];
   // " to N devices" suffix shown only in a mesh room (>1 connected device).
   const fanout = deviceCount > 1 ? ` to ${deviceCount} devices` : "";

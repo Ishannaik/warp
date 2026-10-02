@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
+const out = await build({ entryPoints: [fileURLToPath(new URL("./uniqueFiles.ts", import.meta.url))], bundle: true, format: "esm", write: false, platform: "neutral" });
+const { uniqueFiles } = await import("data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64"));
+const file = (name = "report.pdf", contents = "abc", lastModified = 100) => new File([contents], name, { lastModified });
+const first = file(), duplicate = file(), sizeVariant = file("report.pdf", "abcd"), timeVariant = file("report.pdf", "abc", 101);
+assert.deepEqual(uniqueFiles([first, duplicate]), [first], "same selection keeps first instance");
+assert.deepEqual(uniqueFiles([duplicate], [first]), [], "repeat selection is ignored");
+assert.deepEqual(uniqueFiles([duplicate, sizeVariant, timeVariant], [first]), [sizeVariant, timeVariant], "size and timestamp variants survive");
+assert.deepEqual(uniqueFiles([duplicate], []), [duplicate], "removed file can be re-added");
+const incoming = Object.freeze([first, duplicate]);
+const existing = Object.freeze([sizeVariant]);
+assert.deepEqual(uniqueFiles(incoming, existing), [first], "inputs remain unmodified");
+assert.deepEqual(uniqueFiles([]), [], "empty selection is harmless");
+console.log("uniqueFiles: 6 checks passed");
