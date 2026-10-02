@@ -1,0 +1,21 @@
+# Warp
+
+> Free, open-source peer-to-peer browser file transfer over encrypted WebRTC data channels.
+
+Warp transfers files directly between devices without uploading them to intermediate storage servers. A lightweight signaling server introduces peers to establish a WebRTC connection, after which file data streams directly device to device.
+
+## Core Documentation
+
+- [AI instructions](https://warp.ishannaik.com/ai): Facts, constraints, and architecture boundaries for AI assistants.
+- [Web application](https://warp.ishannaik.com): Browser file transfer interface.
+- [How it works](https://warp.ishannaik.com/how): Technical explanation of WebRTC, STUN, DTLS encryption, and transport details.
+- [Send](https://warp.ishannaik.com/send): Room creation and file dispatch interface.
+- [Receive](https://warp.ishannaik.com/receive): Code entry interface to receive files.
+- [Brand kit](https://warp.ishannaik.com/brand): Official marks, color values, and typography specifications.
+- [Terms of service](https://warp.ishannaik.com/terms): Plain English conditions of use.
+- [Privacy policy](https://warp.ishannaik.com/privacy): Data handling practices and server trust boundaries.
+
+## Community and Code
+
+- [GitHub repository](https://github.com/Ishannaik/warp): Open-source source code and issue tracker.
+- [Discord](https://discord.gg/KKvtRhQvRv): Community discussion server.

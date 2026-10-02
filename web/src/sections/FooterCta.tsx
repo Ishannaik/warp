@@ -20,6 +20,7 @@ const footerLinks: { label: string; href: string; external?: boolean; to?: strin
   { label: "Brand", href: "/brand", to: "/brand" },
   { label: "Terms", href: "/terms", to: "/terms" },
   { label: "Privacy", href: "/privacy", to: "/privacy" },
+  { label: "For AI", href: "/ai" },
   { label: "GitHub", href: "https://github.com/Ishannaik/warp", external: true },
 ];
 
