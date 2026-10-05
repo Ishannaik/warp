@@ -6,6 +6,7 @@ import WarpLogo from "../WarpLogo";
 import { useWarpTransfer, type Connection, type WarpError } from "../lib/warp/useWarpTransfer";
 import { deviceName } from "../lib/warp/deviceName";
 import { codeToAlias } from "../../../shared/codewords.js";
+import { uniqueFiles } from "../lib/warp/uniqueFiles";
 import { TEXT_SNIPPET_MAX_BYTES, formatBytes, textSnippetFrameBytes } from "../lib/warp/transfer";
 import { useIsMobile } from "../lib/useIsMobile";
 import { useTransferTitle } from "../lib/useTransferTitle";
@@ -67,10 +68,11 @@ export default function TransferFlow({ joinCode }: { joinCode?: string }) {
   const totalBytes = useMemo(() => files.reduce((s, f) => s + f.size, 0), [files]);
   const fileCount = String(files.length).padStart(2, "0");
 
+  /** Only pending files participate: removed or previously sent files may be added again. */
   const addFiles = useCallback((list: FileList | File[]) => {
     const incomingList = Array.from(list);
     if (!incomingList.length) return;
-    setQueue((prev) => [...prev, ...incomingList.map((file) => ({ id: crypto.randomUUID(), file }))]);
+    setQueue((prev) => [...prev, ...uniqueFiles(incomingList, prev.map((q) => q.file)).map((file) => ({ id: crypto.randomUUID(), file }))]);
   }, []);
 
   const removeFile = useCallback((id: string) => {

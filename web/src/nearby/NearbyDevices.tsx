@@ -1,3 +1,4 @@
+import { uniqueFiles } from "../lib/warp/uniqueFiles";
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { navigate } from "../router";
@@ -72,9 +73,10 @@ export default function NearbyDevices() {
     setIsEditing(false);
   };
 
+  /** Deduplicate this offer without blocking intentional later sends to the same peer. */
   const sendToDevice = (peerId: string, list: FileList | File[] | null) => {
     if (!list || !("length" in list) || !list.length) return;
-    nearby.sendTo(peerId, Array.from(list));
+    nearby.sendTo(peerId, uniqueFiles(Array.from(list)));
   };
   const togglePeer = (peerId: string) => {
     setSelectedPeers((prev) =>
@@ -84,10 +86,11 @@ export default function NearbyDevices() {
     );
   };
 
+  /** Replace the pending multi-peer selection, keeping each file identity once. */
   const handleMultiSelectFiles = (list: FileList | null) => {
     if (!list || !list.length || !selectedPeers.length) return;
 
-    setSelectedFiles(Array.from(list));
+    setSelectedFiles(uniqueFiles(Array.from(list)));
   };
 
   const sendToSelected = () => {
