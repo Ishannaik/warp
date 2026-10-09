@@ -62,6 +62,15 @@ pnpm --filter @warp/server run deploy
 Gives a `wss://warp-signaling.<your-subdomain>.workers.dev` URL — set it as
 `VITE_SIGNALING_URL` in the web app.
 
+If you deploy the web app to a custom domain, you MUST configure the origin allow-list
+in the server so it accepts WebSocket connections from your domain. Add your origins
+to a comma-separated `ALLOWED_ORIGINS` environment variable (e.g. in `wrangler.toml`):
+
+```toml
+[vars]
+ALLOWED_ORIGINS = "https://your-custom-warp.com,https://another-domain.net"
+```
+
 ## Deliberate limits
 
 - **No TURN, no relay** — STUN-only on the client. Restrictive NATs get an honest
