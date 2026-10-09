@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./fonts.css";
 @import "./styles/keyframes.css";
 
 /* Tailwind v4 CSS-first theme tokens (design system). */
