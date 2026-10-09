@@ -166,6 +166,16 @@ Three sink implementations:
 - `diskSink(open)` — streams straight to a File System Access API writable, opened lazily as the head of a promise chain so every `append()` is ordered behind it. Used when the user accepts a **large** batch (≥ 256 MiB total or any single file, `LARGE_THRESHOLD` in the hook) — the save-location picker is opened *from the accept gesture* (browsers require a user gesture), and multi-GB files never exist in RAM.
 - `idbSink()` ([`idbStage.ts`](../web/src/lib/warp/idbStage.ts)) — the fallback for large receives on browsers *without* the FS Access API (iOS Safari, Firefox): chunks are staged as Blob rows in IndexedDB keyed `(fileId, offset)` (engines keep Blobs file-backed, so final assembly is a lazy Blob-of-Blobs, not a RAM copy). Its companion `estimateFits()` is a pre-accept gate that refuses offers that won't fit — combining the storage-quota estimate with a hard ~1 GiB iOS memory cap, because iOS kills the tab with no catchable error. An honest refusal beats a silent crash.
 
+**Browser Support Matrix**
+
+| Browser / OS | Small Batch (≤ 256 MiB) | Large Batch (> 256 MiB) | Quota & Limitations |
+|--------------|-------------------------|-------------------------|---------------------|
+| **Chrome, Edge, Opera, Brave** (Desktop) | `memorySink` | `diskSink` | Direct-to-disk via File System Access API. No practical limits. |
+| **Chrome** (Android) | `memorySink` | `diskSink` | Direct-to-disk via File System Access API. |
+| **Firefox** (All platforms) | `memorySink` | `idbSink` | Fallback to IDB staging. Browsers may prompt user for storage permission on very large files. |
+| **Safari** (macOS) | `memorySink` | `idbSink` | Fallback to IDB staging. Disk quota is typically generously bounded by free space. |
+| **All Browsers** (iOS / iPadOS) | `memorySink` | `idbSink` | Hard ~1 GiB memory cap before silent eviction. `estimateFits()` actively refuses transfers > ~800MB. |
+
 On `file-end`, `completeIncoming()` quiesces the sink and demands `bytesWritten === item.size` **exactly** — over, under, or poisoned all fail rather than fake "done".
 
 ### Resume: surviving anything short of both users giving up
