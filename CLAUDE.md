@@ -45,6 +45,6 @@ cd web && env -u CLOUDFLARE_API_TOKEN wrangler pages deploy dist --project-name=
 pnpm --filter @warp/server run deploy  # `run` avoids pnpm's `deploy` builtin
 ```
 
-Custom domains: both `ishannaik.com` and `pixalabs.net` use Cloudflare DNS. `warp` in each zone is a proxied CNAME → `wrap-3qq.pages.dev`, and both hosts are attached to the `wrap` Pages project. (Until 2026-10-10 `warp.ishannaik.com` pointed at a stale Vercel deploy and `warp.pixalabs.net` had no record, so Pages deploys never reached users. Check `curl -sI` for `server: cloudflare` after a deploy.) `pixalabs.net` also carries live Zoho email — edit single records via the API, never bulk-replace the zone.
+Custom domains: both `ishannaik.com` and `pixalabs.net` use Cloudflare DNS. `warp` in each zone is a proxied CNAME → `wrap-3qq.pages.dev`, and both hosts are attached to the `wrap` Pages project. (Until 2026-10-10 `warp.ishannaik.com` pointed at a stale Vercel deploy and `warp.pixalabs.net` had no record, so Pages deploys never reached users. After a deploy, confirm the live domain serves the same `assets/index-*.js` name as your local `web/dist/index.html`; a `server: cloudflare` header alone doesn't prove which build is live.) `pixalabs.net` also carries live Zoho email — edit single records via the API, never bulk-replace the zone.
 
-Post-merge CI: Travis runs build → (opt-in) deploy → live Playwright + BrowserStack against the real domain. See `docs/CI.md`.
+Post-merge CI: Travis runs build → (opt-in) deploy → live Playwright against the real domain, plus BrowserStack when `BROWSERSTACK_USERNAME` is set in Travis. See `docs/CI.md`.

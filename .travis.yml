@@ -46,7 +46,8 @@ jobs:
       if: 'type = push AND branch = main AND env(WARP_AUTO_DEPLOY) = "1"'
       script:
         - pnpm --filter @warp/web build
-        - (cd web && npx wrangler pages deploy dist --project-name=wrap --branch=main --commit-dirty=true)
+        # Use the wrangler pinned in @warp/server; npx from web/ can resolve a stale or newest copy.
+        - pnpm --filter @warp/server exec wrangler pages deploy ../web/dist --project-name=wrap --branch=main --commit-dirty=true
         - pnpm --filter @warp/server run deploy
 
     - stage: verify
