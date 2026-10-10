@@ -2,6 +2,10 @@
 
 GitHub Actions is the pull request gate. The workflow is `.github/workflows/ci.yml`. On a pull request that touches the web app it lints, typechecks, builds, runs the engine checks, and runs the local Playwright transfer tests (Chromium and WebKit, Firefox as a non-blocking extra). Server changes run the signaling test. Pull requests do not deploy and do not call BrowserStack.
 
+The live-site checks run today in `.github/workflows/live.yml`: on every push to `main`, weekly on Monday, and from the Actions tab with a custom URL. A Playwright job tests Chromium and WebKit, then a BrowserStack job runs the desktop suite and the Android script. The BrowserStack job reads the repo secrets `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY`.
+
+Travis is wired up but idle. The account is on the GitHub Student Developer Pack plan, which covers private repos only: `public_credits` is 0, so Travis creates jobs for this public repo and never starts them. Travis takes over once they grant open-source credits, which you request from Travis support. Until then `live.yml` does the same work.
+
 Travis CI is the post-merge layer. The config is `.travis.yml`. It runs on a push to `main`, on the cron schedule, and on a manual api build. It does not run on pull requests. There are three stages, in order:
 
 1. Build. Install with `pnpm install --frozen-lockfile`, then lint, typecheck, build, `check:engine`, and the signaling server test.
