@@ -2,7 +2,7 @@
 # Runs on push to main, cron, and manual api builds. Pull requests are skipped:
 # forks have no secrets, and the GitHub workflow already checks them.
 language: node_js
-dist: noble
+dist: jammy
 os: linux
 
 node_js:
