@@ -6,8 +6,14 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "noEmit": true,
+    "allowJs": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["tests", "playwright.config.ts"]
+  "include": [
+    "tests",
+    "playwright.config.ts",
+    "playwright.prod.config.ts",
+    "playwright.browserstack.config.ts"
+  ]
 }

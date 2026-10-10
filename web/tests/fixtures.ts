@@ -9,13 +9,15 @@ export { expect };
 type Pair = { sender: Page; receiver: Page };
 
 export const test = base.extend<Pair>({
-  sender: async ({ browser }, use) => {
-    const ctx = await browser.newContext();
+  sender: async ({ browser, baseURL }, use) => {
+    // browser.newContext() does not inherit the project baseURL. Without it,
+    // page.goto("/send") is an invalid relative URL.
+    const ctx = await browser.newContext({ baseURL });
     await use(await ctx.newPage());
     await ctx.close();
   },
-  receiver: async ({ browser }, use) => {
-    const ctx = await browser.newContext();
+  receiver: async ({ browser, baseURL }, use) => {
+    const ctx = await browser.newContext({ baseURL });
     await use(await ctx.newPage());
     await ctx.close();
   },
