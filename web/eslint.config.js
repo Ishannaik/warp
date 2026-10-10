@@ -9,7 +9,12 @@ export default tseslint.config(
   {
     // Playwright specs are not React code: fixtures legitimately call the
     // fixture-teardown callback `use`, and browser globals differ from app ones.
-    ignores: ['tests/**', 'playwright.config.ts'],
+    ignores: [
+      'tests/**',
+      'playwright.config.ts',
+      'playwright.prod.config.ts',
+      'playwright.browserstack.config.ts',
+    ],
   },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],

@@ -12,6 +12,9 @@
     "check:engine": "node scripts/run-checks.mjs",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "test:e2e": "playwright test",
+    "test:prod": "playwright test -c playwright.prod.config.ts",
+    "test:browserstack": "playwright test -c playwright.browserstack.config.ts --pass-with-no-tests",
+    "test:android": "node scripts/browserstack-android.mjs",
     "lhci": "lhci autorun"
   },
   "dependencies": {

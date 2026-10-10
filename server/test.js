@@ -179,10 +179,40 @@ async function run() {
 
 // Local mode boots `wrangler dev`; remote mode (TEST_WS_URL set) tests a deployed Worker.
 // `pnpm exec` resolves the workspace's wrangler; shell:true lets Windows find it.
+// detached on Unix makes the shell its own process group so teardown can kill
+// wrangler and its workerd child together. A lone srv.kill() leaves workerd
+// holding the inherited stdout pipe, and `node test.js | …` never finishes.
+const detached = !REMOTE && process.platform !== 'win32';
 const srv = REMOTE ? null : spawn('pnpm', ['exec', 'wrangler', 'dev', '--port', String(PORT)], {
   shell: true,
+  detached,
   stdio: 'inherit',
 });
+srv?.on('error', (err) => {
+  console.error('failed to spawn wrangler:', err.message);
+});
+
+function stopServer(child) {
+  if (!child?.pid) return;
+  if (detached) {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+      return;
+    } catch (err) {
+      if (err?.code === 'ESRCH') return;
+      console.error('process group kill failed:', err?.message ?? err);
+    }
+  }
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', shell: true });
+    return;
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // already exited
+  }
+}
 
 try {
   if (!REMOTE) await waitHealthy();
@@ -193,8 +223,7 @@ try {
   console.error('\n✗ test failed:', err.message);
   process.exitCode = 1;
 } finally {
-  srv?.kill();
-  // wrangler spawns a workerd child; give kill a moment, then force-exit so the
-  // test process doesn't hang on a lingering handle.
-  setTimeout(() => process.exit(process.exitCode ?? 0), 1500);
+  stopServer(srv);
+  // Force-exit after the group is dead so a leftover handle cannot keep a pipe open.
+  setTimeout(() => process.exit(process.exitCode ?? 0), 500);
 }

@@ -15,6 +15,9 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 // build time (see e2e/build.sh), so the preview build talks to localhost only.
 export default defineConfig({
   testDir: path.join(root, "tests"),
+  // Live-site specs live under tests/prod and run via playwright.prod.config.ts.
+  // This config boots localhost; leaving them in would hit the wrong origin.
+  testIgnore: ["**/prod/**"],
   timeout: 120_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
