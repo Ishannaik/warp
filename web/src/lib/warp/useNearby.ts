@@ -32,13 +32,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SignalingClient, type SignalData } from "./signaling";
 import { WarpPeer } from "./peer";
+import {
+  guessDeviceType,
+  loadDeviceName,
+  renameDevice,
+  type DeviceType,
+  type UserAgentDataLike,
+} from "./nearbyDevice";
 
-const DEVICE_NAME_KEY = "warp.deviceName";
-/** Pre-rename key; still read once so an existing name survives the migration. */
-const LEGACY_DEVICE_NAME_KEY = "wrap.deviceName";
-
-/** Coarse device shape, guessed client-side for the nearby list's icon. */
-export type DeviceType = "mobile" | "tablet" | "desktop";
+export type { DeviceType } from "./nearbyDevice";
 
 /** A discoverable peer on the same public IP. */
 export interface NearbyDevice {
@@ -54,40 +56,6 @@ interface NearbyMessage {
   selfId: string;
   devices: NearbyDevice[];
   crowded?: boolean;
-}
-
-/** The `navigator.userAgentData` surface Chromium exposes (unstandardized, optional). */
-interface UserAgentDataLike {
-  mobile?: boolean;
-}
-
-/**
- * Best-effort phone/tablet/desktop guess from the UA — never throws, never blocks.
- * iPadOS 13+ reports a Mac UA, so a touch-capable "Macintosh" is treated as a tablet
- * before the mobile checks run. Anything that doesn't clearly read as a handheld
- * falls back to "desktop", which is also the generic/unrecognized-UA icon.
- */
-function guessDeviceType(): DeviceType {
-  try {
-    const ua = navigator.userAgent || "";
-    const uaData = (navigator as Navigator & { userAgentData?: UserAgentDataLike })
-      .userAgentData;
-
-    if (/iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) {
-      return "tablet";
-    }
-    if (/Tablet|PlayBook|Kindle|Silk/i.test(ua)) return "tablet";
-    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return "tablet";
-
-    if (uaData && typeof uaData.mobile === "boolean") {
-      return uaData.mobile ? "mobile" : "desktop";
-    }
-    if (/Mobi|iPhone|iPod|Android|Windows Phone/i.test(ua)) return "mobile";
-
-    return "desktop";
-  } catch {
-    return "desktop";
-  }
 }
 
 /**
@@ -135,54 +103,14 @@ interface SignalingInternals {
   ws: WebSocket | null;
 }
 
-const ADJECTIVES = [
-  "Amber", "Brisk", "Cobalt", "Dusky", "Ember", "Fleet", "Gilded", "Hazel",
-  "Ivory", "Jade", "Keen", "Lunar", "Mossy", "Noble", "Onyx", "Plum",
-  "Quartz", "Rusty", "Slate", "Teal", "Umber", "Velvet", "Warm", "Zephyr",
-];
-const NOUNS = [
-  "Otter", "Falcon", "Maple", "Comet", "Heron", "Lynx", "Pylon", "Quokka",
-  "Raven", "Tapir", "Willow", "Badger", "Cedar", "Drake", "Finch", "Glade",
-];
-
-/** Pick a stable, friendly "Adjective Noun" — falls back to Device-XXXX. */
-function generateDeviceName(): string {
+/** This tab's device type, read from `navigator` (which can throw outside a browser). */
+function currentDeviceType(): DeviceType {
   try {
-    const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-    const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-    return `${a} ${n}`;
+    const nav = navigator as Navigator & { userAgentData?: UserAgentDataLike };
+    return guessDeviceType(nav.userAgent || "", nav.userAgentData, nav.maxTouchPoints);
   } catch {
-    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-    return `Device-${suffix}`;
+    return "desktop";
   }
-}
-
-/** Read the persisted device name, minting + saving one on first run. */
-function loadDeviceName(): string {
-  try {
-    const existing = localStorage.getItem(DEVICE_NAME_KEY);
-    if (existing && existing.trim()) return existing;
-
-    const legacy = localStorage.getItem(LEGACY_DEVICE_NAME_KEY);
-    if (legacy && legacy.trim()) {
-      localStorage.setItem(DEVICE_NAME_KEY, legacy);
-      try {
-        localStorage.removeItem(LEGACY_DEVICE_NAME_KEY);
-      } catch {
-        /* best-effort cleanup */
-      }
-      return legacy;
-    }
-  } catch {
-    /* storage unavailable (private mode / SSR) — fall through to a fresh name */
-  }
-  const fresh = generateDeviceName();
-  try {
-    localStorage.setItem(DEVICE_NAME_KEY, fresh);
-  } catch {
-    /* best-effort persistence */
-  }
-  return fresh;
 }
 
 export function useNearby(): UseNearby {
@@ -192,7 +120,7 @@ export function useNearby(): UseNearby {
   const [deviceName, setDeviceName] = useState<string>(() => loadDeviceName());
 
   /** Computed once per session — the UA doesn't change while the tab is open. */
-  const deviceTypeRef = useRef<DeviceType>(guessDeviceType());
+  const deviceTypeRef = useRef<DeviceType>(currentDeviceType());
 
   const sigRef = useRef<SignalingClient | null>(null);
   /** Latest snapshot, kept in a ref so callbacks resolve names without re-binding. */
@@ -265,14 +193,9 @@ export function useNearby(): UseNearby {
 
   const rename = useCallback(
     (name: string) => {
-      const clean = name.trim().slice(0, 40) || "Device";
+      const clean = renameDevice(name);
       setDeviceName(clean);
       nameRef.current = clean;
-      try {
-        localStorage.setItem(DEVICE_NAME_KEY, clean);
-      } catch {
-        /* best-effort */
-      }
       // Re-announce so same-IP peers receive a fresh snapshot with the new name.
       announce(clean);
     },

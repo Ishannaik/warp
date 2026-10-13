@@ -48,36 +48,14 @@ import { streamZipDownload } from "./zipDownload";
 import { formatBytes, type OfferItem, type TransferItem } from "./transfer";
 import { SpeedTracker } from "./transferStats";
 import { guardTargetFor } from "./receiveGuards";
-
-/**
- * One in-flight (or paused) incoming file's durable state, owned by the HOOK
- * (not the peer) so it SURVIVES a peer rebuild on reconnect — the key to resume.
- * Keyed by the file's stable `key`. `sink.bytesWritten` is the resume offset.
- */
-interface RxEntry {
-  key: string;
-  size: number;
-  /** The sender's token; a re-offer must present the same one to auto-resume (H5). */
-  resumeToken: string;
-  sink: ReceiveSink;
-  /** Disk target for this file (absent = in-memory). */
-  target?: AcceptTarget;
-  /** True while a peer is actively receiving into it. A drop sets it false. */
-  active: boolean;
-  /** Which peer currently owns writes (H4): a chunk from a non-owner is dropped. */
-  ownerToken?: string;
-  /** On-disk name chosen (disk mode). */
-  savedName?: string;
-  /**
-   * Durable coordinates for reload-resume (issue #36), present only for the
-   * origin-storage sinks whose staged bytes SURVIVE a tab reload (IDB today; OPFS
-   * recorded for forward-compat). `fileId` is the staging name the sink used, so a
-   * reload reconstructs the SAME sink over the SAME bytes; the ledger row this
-   * feeds is written on durable progress and read back at mount to repopulate the
-   * registry. Absent for memory / disk sinks (they can't reload-resume here).
-   */
-  ledger?: { fileId: string; sinkKind: LedgerSinkKind; mime: string; name: string };
-}
+import {
+  collectResumeOffsets,
+  isAutoResumable,
+  reconcileLedgerRow,
+  syncLedgerSinkKind,
+  type RxEntry,
+} from "./receiveResume";
+import { uniqueName } from "./uniqueName";
 
 /**
  * Minimal File System Access API surface the hook calls. `lib.dom` here doesn't
@@ -211,63 +189,6 @@ const RECONNECT_WATCHDOG_MS = 25_000;
  *  from the id itself, so both peers see the same name with zero state. */
 function labelFor(peerId: string): string {
   return deviceName(peerId);
-}
-
-/**
- * Does `name` already exist in `dir`?
- *
- * Deliberately cheap: ONE `getFileHandle` for the exact name, never a directory
- * scan. A `NotFoundError` is the API's way of saying the slot is free.
- *
- * Returns "unknown" when the probe fails for any OTHER reason (a revoked
- * permission, a transient FS error). That third state matters: treating an
- * unreadable directory as "free" would let us overwrite a file we simply could
- * not see, and treating it as "taken" would spin forever looking for a free slot.
- */
-async function existsInDir(dir: FsDirHandle, name: string): Promise<boolean | "unknown"> {
-  try {
-    await dir.getFileHandle(name);
-    return true;
-  } catch (err) {
-    return (err as { name?: string } | null)?.name === "NotFoundError" ? false : "unknown";
-  }
-}
-
-/**
- * De-dupe a filename for a folder target: "a.txt", "a (1).txt", …
- *
- * Two different things can collide and both are checked:
- *   - names already claimed by EARLIER FILES IN THE SAME BATCH (`used`), and
- *   - files ALREADY ON DISK in the chosen folder (`dir`).
- *
- * Without the second check, receiving `report.pdf` into a folder that already
- * holds one silently clobbered the existing file (issue #133). The existing file
- * now always wins its name and the incoming one steps aside.
- *
- * When a disk probe is inconclusive we take the current candidate and stop
- * probing, so the real `create: true` write surfaces the real error rather than
- * this helper inventing a different filename or looping.
- *
- * `dir` is optional so callers with no folder target keep the pure in-batch
- * behaviour.
- */
-async function uniqueName(used: Set<string>, name: string, dir?: FsDirHandle): Promise<string> {
-  const dot = name.lastIndexOf(".");
-  // dot > 0 keeps dotfiles whole: ".env" stems to ".env", not "" + ".env".
-  const stem = dot > 0 ? name.slice(0, dot) : name;
-  const ext = dot > 0 ? name.slice(dot) : "";
-
-  let candidate = name;
-  for (let n = 1; ; n += 1) {
-    if (!used.has(candidate)) {
-      const onDisk = dir ? await existsInDir(dir, candidate) : false;
-      if (onDisk !== true) {
-        used.add(candidate);
-        return candidate;
-      }
-    }
-    candidate = `${stem} (${n})${ext}`;
-  }
 }
 
 export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
@@ -409,36 +330,14 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
   }, []);
 
   /**
-   * Decide what to do with an inbound offer (Fable H3/H5/M1/M2): if EVERY item is a
-   * known in-progress file — its key is in the registry, not active, token matches,
-   * not cancelled, AND its sink is healthy — auto-accept it with each file's durable
-   * resume offset and NO modal. Otherwise surface the accept modal. Duplicate keys
-   * in one batch disable resume (force the modal). A POISONED sink (a failed write)
-   * also forces the modal: silently auto-resuming onto a sink that can no longer
-   * accept bytes would just stream the whole tail into nowhere and die at file-end.
+   * Decide what to do with an inbound offer: auto-accept a known in-progress batch
+   * with each file's durable resume offset and NO modal, otherwise surface the
+   * accept modal. The rules (Fable H3/H5/M1/M2) live in `isAutoResumable`.
    */
   const handleIncomingOffer = useCallback(
     (peerId: string, info: { batchId: string; items: OfferItem[] }) => {
       const reg = receiveRegRef.current;
-      const keys = info.items.map((i) => i.key);
-      const dupKeys = new Set(keys).size !== keys.length;
-      const allResumable =
-        !dupKeys &&
-        info.items.length > 0 &&
-        info.items.every((it) => {
-          const e = it.key ? reg.get(it.key) : undefined;
-          return (
-            !!e &&
-            !e.active &&
-            !e.sink.failed &&
-            !!it.resumeToken &&
-            e.resumeToken === it.resumeToken &&
-            !cancelledKeysRef.current.has(it.key!) &&
-            !pausedKeysRef.current.has(it.key!)
-          );
-        });
-
-      if (!allResumable) {
+      if (!isAutoResumable(info.items, reg, cancelledKeysRef.current, pausedKeysRef.current)) {
         setIncoming({ ...info, peerId });
         return;
       }
@@ -447,15 +346,8 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       const peer = peersRef.current.get(peerId);
       if (!peer) return;
       void (async () => {
-        const resume: Record<string, number> = {};
-        let target: AcceptTarget | undefined;
-        for (const it of info.items) {
-          const e = reg.get(it.key!)!;
-          await e.sink.quiesce();
-          resume[it.id] = e.sink.bytesWritten;
-          rxIdKeyRef.current.set(it.id, it.key!);
-          if (!target) target = e.target;
-        }
+        const { resume, target } = await collectResumeOffsets(info.items, reg);
+        for (const it of info.items) rxIdKeyRef.current.set(it.id, it.key!);
         peer.acceptOffer(info.batchId, target, resume, supportedCodecs());
       })();
     },
@@ -517,12 +409,9 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
           const e = key ? receiveRegRef.current.get(key) : undefined;
           const room = codeRef.current;
           if (e?.ledger && key && room) {
-            // Keep the ledger row's sinkKind in step with the sink that ACTUALLY
-            // holds the bytes: an OPFS receive that fell back to IDB (#170) reports
-            // activeKind "idb", so a reload reconstructs an idbSink over the IDB
-            // rows rather than probing an OPFS file that was never written.
-            const liveKind = (e.sink as { activeKind?: LedgerSinkKind }).activeKind;
-            if (liveKind) e.ledger.sinkKind = liveKind;
+            // Keep the row's sinkKind in step with the sink that ACTUALLY holds
+            // the bytes (an OPFS -> IDB fallback, #170) before persisting it.
+            syncLedgerSinkKind(e.ledger, e.sink);
             void putRxLedger({
               key,
               room,
@@ -1245,75 +1134,34 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
    * key + token match. So reload-survival is just "rebuild the entries from durable
    * storage on mount"; the existing auto-resume path does the rest.
    *
-   * Both durable kinds reconcile the ledger offset against what is REALLY staged now
-   * and resume at `min(real, ledger)` — never the ledger alone (H1). The ledger's
-   * `bytesWritten` was durable when written, but it can outlive the staged bytes:
-   * OPFS flushes are BATCHED, so after an unclean close the file's real length can lag
-   * the ledger (#169, measured via `opfsDurableLength`); and the IDB staging rows and
-   * the ledger row live in separate databases with independent TTL GCs, so a prefix
-   * row can be reaped while a fresher ledger row survives (measured via
-   * `idbDurableLength`, the contiguous-prefix length). If the durable length can't be
-   * read (OPFS file gone / unavailable) we drop the row; if it measures 0 we resume at
-   * 0 (an honest full re-receive through the auto-resume path). Memory / disk receives
-   * have no row and restart honestly (the sender's re-offer shows the accept modal).
+   * `reconcileLedgerRow` decides each row: resume at `min(durable length, ledger)`
+   * (never the ledger alone, H1), drop a row whose prefix can't be proven, or leave
+   * it be. Memory / disk receives have no row and restart honestly (the sender's
+   * re-offer shows the accept modal).
    */
   const hydrateFromLedger = useCallback(async (room: string) => {
     const rows = await readRxLedger(room);
     const reg = receiveRegRef.current;
     for (const row of rows) {
-      if (row.sinkKind !== "idb" && row.sinkKind !== "opfs") continue; // others: honest restart
-      // Trust the offset only if it's a sane, incomplete count — a corrupt or
-      // already-complete row is dropped, never resumed (H1/H2).
-      if (!Number.isInteger(row.bytesWritten) || row.bytesWritten < 0 || row.bytesWritten >= row.size) {
+      const plan = await reconcileLedgerRow(row, reg.has(row.key), {
+        idbLength: idbDurableLength,
+        opfsLength: opfsDurableLength,
+      });
+      if (plan.action === "drop") {
         void removeRxLedger(row.key);
         continue;
       }
-      if (reg.has(row.key)) continue; // a live entry already owns this file
-      if (row.sinkKind === "idb") {
-        // Reconcile the ledger offset against the rows that are ACTUALLY durable now,
-        // mirroring the OPFS branch below. The ledger's bytesWritten was durable when
-        // written, but the staging rows and the ledger row live in separate databases
-        // with independent TTL GCs (gcOrphanStaging vs gcRxLedger), so a prefix row can
-        // be reaped while a fresher ledger row survives. Trusting the ledger alone
-        // would then report an offset whose prefix is gone and finalize a truncated
-        // file (H1). Resume at min(durable prefix, ledger) — never the ledger alone.
-        const real = await idbDurableLength(row.fileId);
-        const offset = Math.min(real, row.bytesWritten);
-        if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) {
-          void removeRxLedger(row.key);
-          continue;
-        }
-        reg.set(row.key, {
-          key: row.key,
-          size: row.size,
-          resumeToken: row.resumeToken,
-          sink: idbSink(row.fileId, row.mime, offset),
-          active: false,
-          ledger: { fileId: row.fileId, sinkKind: "idb", mime: row.mime, name: row.name },
-        });
-        continue;
-      }
-      // OPFS: reconcile the ledger offset against the file's real durable length.
-      // A length we can't read means we can't prove where the durable prefix ends, so
-      // drop the row and let the sender's re-offer show the accept modal (honest
-      // restart) rather than resume onto a hole.
-      const real = await opfsDurableLength(row.fileId);
-      if (real === undefined) {
-        void removeRxLedger(row.key);
-        continue;
-      }
-      const offset = Math.min(real, row.bytesWritten);
-      if (!Number.isInteger(offset) || offset < 0 || offset >= row.size) {
-        void removeRxLedger(row.key);
-        continue;
-      }
+      if (plan.action === "skip") continue;
       reg.set(row.key, {
         key: row.key,
         size: row.size,
         resumeToken: row.resumeToken,
-        sink: opfsSink(row.fileId, row.mime, offset),
+        sink:
+          row.sinkKind === "idb"
+            ? idbSink(row.fileId, row.mime, plan.offset)
+            : opfsSink(row.fileId, row.mime, plan.offset),
         active: false,
-        ledger: { fileId: row.fileId, sinkKind: "opfs", mime: row.mime, name: row.name },
+        ledger: { fileId: row.fileId, sinkKind: row.sinkKind, mime: row.mime, name: row.name },
       });
     }
   }, []);

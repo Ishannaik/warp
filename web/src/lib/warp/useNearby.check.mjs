@@ -1,5 +1,7 @@
 /**
- * Runnable check for useNearby device rename logic.
+ * Runnable check for useNearby's device identity: rename, persisted-name load
+ * (incl. the wrap -> warp key migration) and the device-type guess, all imported
+ * from nearbyDevice.ts.
  * Run: node src/lib/warp/useNearby.check.mjs (from web/)
  */
 
@@ -16,31 +18,30 @@ if (!globalThis.localStorage || typeof globalThis.localStorage.getItem !== "func
   };
 }
 
-const DEVICE_NAME_KEY = "warp.deviceName";
-const LEGACY_DEVICE_NAME_KEY = "wrap.deviceName";
-
-function renameDevice(name) {
-  const clean = name.trim().slice(0, 40) || "Device";
-  try {
-    localStorage.setItem(DEVICE_NAME_KEY, clean);
-  } catch {
-    /* best-effort */
-  }
-  return clean;
+// --- load the REAL nearbyDevice.ts (esbuild transpile, no local copies) -----
+// A mirrored copy here once drifted from the hook (loadDeviceName returned null
+// where the real one mints a name) and stayed green; #341 removed the copies.
+let esbuild;
+try {
+  esbuild = await import("esbuild");
+} catch (e) {
+  console.error("FAIL: esbuild is required for useNearby.check.mjs —", e.message);
+  process.exit(1);
 }
 
-function loadDeviceName() {
-  const existing = localStorage.getItem(DEVICE_NAME_KEY);
-  if (existing && existing.trim()) return existing;
-
-  const legacy = localStorage.getItem(LEGACY_DEVICE_NAME_KEY);
-  if (legacy && legacy.trim()) {
-    localStorage.setItem(DEVICE_NAME_KEY, legacy);
-    localStorage.removeItem(LEGACY_DEVICE_NAME_KEY);
-    return legacy;
-  }
-  return null;
-}
+const url = await import("node:url");
+const path = await import("node:path");
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const out = await esbuild.build({
+  entryPoints: [path.join(here, "nearbyDevice.ts")],
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const dataUrl = "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64");
+const { DEVICE_NAME_KEY, LEGACY_DEVICE_NAME_KEY, guessDeviceType, loadDeviceName, renameDevice } =
+  await import(dataUrl);
 
 // 1. Trimming and clamping to 40 characters
 {
@@ -75,30 +76,28 @@ function loadDeviceName() {
   assert.equal(localStorage.getItem(LEGACY_DEVICE_NAME_KEY), null);
 }
 
-// 5. No stored name at all -> loadDeviceName has nothing to fall back to
+// 5. No stored name at all -> loadDeviceName mints a friendly name and persists it
 {
   storage.clear();
-  assert.equal(loadDeviceName(), null);
+  const minted = loadDeviceName();
+  assert.match(minted, /^[A-Z][a-z]+ [A-Z][a-z]+$/, `minted name: ${minted}`);
+  assert.equal(localStorage.getItem(DEVICE_NAME_KEY), minted);
+  assert.equal(loadDeviceName(), minted, "the minted name is stable across loads");
 }
 
-// --- #138 device-type guess (mirrors guessDeviceType in useNearby.ts) -------
-
-function guessDeviceType(ua, uaData, maxTouchPoints) {
-  try {
-    if (/iPad/i.test(ua) || (/Macintosh/i.test(ua) && maxTouchPoints > 1)) return "tablet";
-    if (/Tablet|PlayBook|Kindle|Silk/i.test(ua)) return "tablet";
-    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return "tablet";
-
-    if (uaData && typeof uaData.mobile === "boolean") {
-      return uaData.mobile ? "mobile" : "desktop";
-    }
-    if (/Mobi|iPhone|iPod|Android|Windows Phone/i.test(ua)) return "mobile";
-
-    return "desktop";
-  } catch {
-    return "desktop";
-  }
+// 5b. An existing name wins; a whitespace-only one is ignored
+{
+  storage.clear();
+  localStorage.setItem(DEVICE_NAME_KEY, "Kitchen iPad");
+  localStorage.setItem(LEGACY_DEVICE_NAME_KEY, "Old Wrap Name");
+  assert.equal(loadDeviceName(), "Kitchen iPad");
+  assert.equal(localStorage.getItem(LEGACY_DEVICE_NAME_KEY), "Old Wrap Name", "legacy key untouched when current exists");
+  localStorage.setItem(DEVICE_NAME_KEY, "   ");
+  storage.delete(LEGACY_DEVICE_NAME_KEY);
+  assert.notEqual(loadDeviceName().trim(), "", "a blank stored name is replaced, not returned");
 }
+
+// --- #138 device-type guess (guessDeviceType in nearbyDevice.ts) ----------
 
 const IPHONE_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148";
