@@ -98,6 +98,8 @@ These are non-negotiable. A PR that violates one will be asked to change, no mat
 
 ## Finding something to work on
 
+Join the [Discord](https://discord.gg/KKvtRhQvRv) before picking an issue. Claim it there or comment on the issue so two people don't build the same thing.
+
 - **[`good first issue`](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22good%20first%20issue%22)** — scoped, self-contained, and picked because you can land them without knowing the whole codebase. Start here.
 - **[`help wanted`](https://github.com/Ishannaik/warp/issues?q=is:open+label:%22help%20wanted%22)** — bigger or fuzzier, but we actively want a hand.
 - A good first issue for *you* is one where you can (a) reproduce or visualize the current behaviour locally in under 15 minutes, and (b) point at the one or two files involved. If an issue looks interesting but you can't tell where to start, **comment on it and ask** — getting a pointer is what the comments are for.
