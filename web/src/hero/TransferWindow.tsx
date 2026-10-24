@@ -255,6 +255,7 @@ export default function TransferWindow() {
                         <span style={{ width: "6px", height: "6px", background: ic }} />
                       </span>
                       <span
+                        title={r.name}
                         style={{
                           fontSize: "13px",
                           fontWeight: 500,
@@ -419,6 +420,7 @@ export default function TransferWindow() {
               >
                 <span style={{ color: "var(--acc)", fontFamily: MONO }}>✓</span>
                 <span
+                  title={name}
                   style={{
                     fontSize: "13px",
                     fontWeight: 500,
@@ -552,6 +554,7 @@ function PeerRow({ name, meta, tag, tagColor, dotBorder, dotBg, dotBlink }: Peer
       </div>
       <div style={{ minWidth: 0 }}>
         <div
+          title={name}
           style={{
             fontSize: "13px",
             fontWeight: 600,
@@ -564,6 +567,7 @@ function PeerRow({ name, meta, tag, tagColor, dotBorder, dotBg, dotBlink }: Peer
           {name}
         </div>
         <div
+          title={meta}
           style={{
             fontFamily: MONO,
             fontSize: "10.5px",
