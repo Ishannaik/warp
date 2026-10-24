@@ -4,6 +4,9 @@
   X-Frame-Options: SAMEORIGIN
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Permissions-Policy: geolocation=(), microphone=(), camera=(self)
+  # CSP allows 'unsafe-inline' for styles due to heavy inline style usage.
+  # connect-src hardcodes the signaling server (note: if VITE_SIGNALING_URL becomes configurable, this might need updating).
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' wss://warp-signaling.ishannaik7.workers.dev; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
