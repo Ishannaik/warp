@@ -29,7 +29,12 @@ function setMeta(attr: "name" | "property", key: string, content: string): void 
   el.setAttribute("content", content);
 }
 
-export function useDocumentSeo(title: string, description?: string, path?: string): void {
+export function useDocumentSeo(
+  title: string,
+  description?: string,
+  path?: string,
+  jsonLd?: Record<string, unknown>
+): void {
   useEffect(() => {
     if (typeof document === "undefined") return;
 
@@ -54,5 +59,21 @@ export function useDocumentSeo(title: string, description?: string, path?: strin
       link.setAttribute("href", canonical);
       setMeta("property", "og:url", canonical);
     }
-  }, [title, description, path]);
+
+    if (jsonLd !== undefined) {
+      let script = document.querySelector<HTMLScriptElement>('script[type="application/ld+json"][data-route="true"]');
+      if (!script) {
+        script = document.createElement("script");
+        script.setAttribute("type", "application/ld+json");
+        script.setAttribute("data-route", "true");
+        document.head.appendChild(script);
+      }
+      script.textContent = JSON.stringify(jsonLd);
+    } else {
+      const script = document.querySelector<HTMLScriptElement>('script[type="application/ld+json"][data-route="true"]');
+      if (script) {
+        script.remove();
+      }
+    }
+  }, [title, description, path, jsonLd]);
 }
