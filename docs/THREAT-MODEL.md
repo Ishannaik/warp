@@ -29,7 +29,24 @@ For additional background on the networking model, see [theory-content.md](./the
 
 ## Malicious Peer
 
-(To be documented.)
+A malicious peer is anyone who has the room code, whether they got it legitimately and turned hostile or just guessed/intercepted it (see Room Code Entropy below for how hard that is). Once joined, they are indistinguishable from any other peer at the protocol level — Warp has no separate notion of "trusted" vs "untrusted" member of a room.
+
+### What they can do
+
+- **Send offers, chunks, and control frames on the data channel.** `peer.ts` and `transfer.ts` don't check who's on the other end before accepting a `ControlMessage` (`offer`, `accept`, `decline`, `file-begin`, `file-end`, `cancel`, `text`) — any peer with an open channel can send any of these at any time. A malicious peer can offer a file named to look benign, cancel a transfer mid-stream, or send unsolicited text snippets.
+- **Occupy a mesh slot.** Joining at all takes one of the `MAX_PEERS = 8` (`server/src/index.js:5`) slots in the room, which is a capacity cap, not a trust boundary — the server doesn't distinguish the room owner from anyone else who joined with the code.
+- **Relay through the signaling server like any other peer.** `handleSignal` (`server/src/index.js:161-175`) forwards `signal` messages to whichever peer `msg.to` names, scoped to the sender's own room or discoverable network; `from` is stamped by the server from the sender's own `peerId`, so a peer cannot spoof being someone else in the relay.
+
+### What they cannot do
+
+- **Write file data without the receiver's explicit accept.** An `offer` only shows a modal (`useWarpTransfer.ts` `accept()`, around line 730 onward); file data does not stream until the receiving user clicks Accept. Decline (or just ignoring the offer) means zero file bytes are written, in memory or to disk — though a `text` control frame is a separate case: it's stored and surfaced without any accept step at all (see "What they can do" above).
+- **Escalate through the server.** The signaling relay (`server/src/index.js`) grants no peer any privilege beyond passing messages — no admin peer, no moderator role, nothing a malicious peer could claim to get more access than a normal one.
+- **Read or tamper with another peer's files in flight.** The data channel is direct and encrypted (DTLS-SRTP under WebRTC); a peer only sees the bytes offered to it, not what other peers in the room are sending each other.
+- **Force their way past a receiver who declines or never accepts.** There's no separate "push" path that bypasses the offer/accept handshake.
+
+### The gate is the room code, and it's a weak one
+
+None of this depends on strong authentication, because there isn't any — the 6-character room code is the only thing standing between a stranger and being treated as a legitimate peer. See Room Code Entropy below for the actual math (≈29.7 bits, online-guessable, no rate limiting today per [#31](https://github.com/Ishannaik/warp/issues/31)). The honest summary: a peer inside the room has real capabilities, bounded by the receiver's own decision to accept, and getting into the room in the first place is not as hard as the bit count alone suggests.
 
 ## Room Code Entropy
 
@@ -177,4 +194,3 @@ The hero's **"INTEGRITY ✓ SHA-256"** claim (`web/src/hero/Hero.tsx:45`) curren
 | No `Content-Security-Policy` header | Open | [#48](https://github.com/Ishannaik/warp/issues/48) |
 | SHA-256 digests computed but never compared cross-peer (no verified badge) | Open | [#6](https://github.com/Ishannaik/warp/issues/6) |
 | No rate limit on signaling `join` guesses (room-code brute force) | Open | [#31](https://github.com/Ishannaik/warp/issues/31) |
-| Malicious Peer section | Not yet written | [#158](https://github.com/Ishannaik/warp/issues/158) |
