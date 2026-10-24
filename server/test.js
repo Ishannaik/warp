@@ -50,6 +50,15 @@ async function waitHealthy() {
 }
 
 async function run() {
+  // 0. Origin allow-list guard (#99)
+  const evilReq = await fetch(HTTP, { headers: { Origin: 'https://evil.com' } });
+  assert.equal(evilReq.status, 403, 'rejects unlisted origin');
+  await evilReq.text();
+  
+  const goodReq = await fetch(HTTP, { headers: { Origin: 'https://warp.ishannaik.com' } });
+  assert.equal(goodReq.status, 200, 'allows listed origin');
+  await goodReq.text();
+
   // 1. A creates a room.
   const a = await connect();
   sendj(a, { type: 'join' });
