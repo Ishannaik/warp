@@ -55,7 +55,7 @@ import {
   syncLedgerSinkKind,
   type RxEntry,
 } from "./receiveResume";
-import { uniqueName } from "./uniqueName";
+import { folderTarget } from "./uniqueName";
 
 /**
  * Minimal File System Access API surface the hook calls. `lib.dom` here doesn't
@@ -792,10 +792,11 @@ export function useWarpTransfer(joinCode?: string): UseWarpTransfer {
       if (target && "dirHandle" in target) {
         const dir = target.dirHandle;
         // Probes the folder as well as this batch, so an existing file keeps its
-        // name and the incoming one becomes "name (1).ext" (issue #133).
-        savedName = await uniqueName(usedNames, it.name, dir);
-        const name = savedName;
-        sink = diskSink(async () => (await dir.getFileHandle(name, { create: true })).createWritable());
+        // name and the incoming one becomes "name (1).ext" (issue #133). A name
+        // the probe could not verify is never opened: only this file fails (#352).
+        const picked = await folderTarget(usedNames, it.name, dir);
+        savedName = picked.savedName;
+        sink = diskSink(picked.open);
       } else if (target && "fileHandle" in target) {
         savedName = target.fileHandle.name || it.name;
         const fh = target.fileHandle;

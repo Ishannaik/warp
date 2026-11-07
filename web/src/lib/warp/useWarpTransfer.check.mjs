@@ -49,7 +49,8 @@ async function load(file) {
 
 const { isAutoResumable, collectResumeOffsets, reconcileLedgerRow, syncLedgerSinkKind } =
   await load("receiveResume.ts");
-const { uniqueName } = await load("uniqueName.ts");
+const { uniqueName, folderTarget } = await load("uniqueName.ts");
+const { diskSink } = await load("receiveController.ts");
 
 let failures = 0;
 function assert(cond, msg) {
@@ -813,15 +814,73 @@ async function resolveBatch(dir, names) {
 }
 
 // 9f. An inconclusive probe (revoked permission) must NOT loop and must NOT be
-//     read as "free to overwrite something else". It yields the current
-//     candidate so the real create:true write reports the real error.
+//     read as "free" (#352): uniqueName throws instead of returning a name the
+//     caller would open with create:true, and does not try other candidates.
 {
   const denied = new Error("permission denied");
   denied.name = "NotAllowedError";
   const dir = fakeDir(["a.txt"], { throwOnProbe: denied });
-  const got = await resolveBatch(dir, ["a.txt"]);
-  assert(got[0] === "a.txt", "an unreadable directory yields the original name and defers to the real write");
+  const used = new Set();
+  let thrown;
+  try {
+    await uniqueName(used, "a.txt", dir);
+  } catch (e) {
+    thrown = e;
+  }
+  assert(thrown?.name === "UnverifiedNameError", "an unreadable directory throws UnverifiedNameError, no name returned");
+  assert(thrown?.cause === denied, "the probe's own error is kept as the cause");
   assert(dir.probes.length === 1, "an inconclusive probe stops probing instead of spinning for a free slot");
+  assert(!used.has("a.txt"), "an unverified name is not reserved for the batch");
+}
+
+// 9f2. #352 end to end through the real folderTarget + diskSink: a TRANSIENT
+//      probe error on a name that DOES exist must not truncate that file. The
+//      fake fails only the first probe; the create:true open would succeed.
+{
+  const flaky = new Error("transient I/O error");
+  flaky.name = "InvalidStateError";
+  const dir = fakeDir(["report.pdf"]);
+  const realGet = dir.getFileHandle.bind(dir);
+  let failNext = true;
+  dir.getFileHandle = async (name, options) => {
+    if (!options?.create && failNext) {
+      failNext = false;
+      dir.probes.push(name);
+      throw flaky;
+    }
+    return realGet(name, options);
+  };
+  const picked = await folderTarget(new Set(), "report.pdf", dir);
+  assert(picked.savedName === undefined, "an unverified name is not reported as the saved name");
+  const sink = diskSink(picked.open);
+  await sink.quiesce();
+  assert(sink.failed, "the file's sink is poisoned, so only this file's receive fails");
+  assert(dir.created.length === 0, "nothing is opened with create:true after an unknown probe");
+}
+
+// 9f3. The same failure inside a batch leaves the other files alone.
+{
+  const denied = new Error("permission denied");
+  denied.name = "NotAllowedError";
+  const dir = fakeDir([]);
+  const realGet = dir.getFileHandle.bind(dir);
+  dir.getFileHandle = async (name, options) => {
+    if (!options?.create && name === "b.txt") throw denied;
+    const handle = await realGet(name, options);
+    // The real opener goes on to createWritable(); give created files one.
+    return { ...handle, createWritable: async () => ({ write: async () => {}, close: async () => {} }) };
+  };
+  const used = new Set();
+  const a = await folderTarget(used, "a.txt", dir);
+  const b = await folderTarget(used, "b.txt", dir);
+  const c = await folderTarget(used, "c.txt", dir);
+  const sinks = [a, b, c].map((p) => diskSink(p.open));
+  await Promise.all(sinks.map((s) => s.quiesce()));
+  assert(
+    JSON.stringify(sinks.map((s) => s.failed)) === JSON.stringify([false, true, false]),
+    "only the unverifiable file fails; its neighbours in the batch still open",
+  );
+  assert(JSON.stringify(dir.created) === JSON.stringify(["a.txt", "c.txt"]), "only verified names are created");
 }
 
 // 9g. No directory target (single-file picker / in-memory): pure in-batch
