@@ -5,7 +5,22 @@
  * exercises the real de-dupe rather than a hand-mirrored copy (#341).
  */
 
-import type { FsDirHandle } from "./peer";
+import type { FsDirHandle, FsWritable } from "./peer";
+
+/**
+ * The folder probe could not tell whether a name is free (#352).
+ *
+ * `cause` is the probe's own error (a revoked permission, a transient FS
+ * error), kept so the original failure is not lost.
+ */
+export class UnverifiedNameError extends Error {
+  readonly fileName: string;
+  constructor(fileName: string, cause: unknown) {
+    super(`Could not check whether "${fileName}" already exists in the chosen folder`, { cause });
+    this.name = "UnverifiedNameError";
+    this.fileName = fileName;
+  }
+}
 
 /**
  * Does `name` already exist in `dir`?
@@ -19,11 +34,21 @@ import type { FsDirHandle } from "./peer";
  * not see, and treating it as "taken" would spin forever looking for a free slot.
  */
 export async function existsInDir(dir: FsDirHandle, name: string): Promise<boolean | "unknown"> {
+  return (await probeInDir(dir, name)).state;
+}
+
+/** existsInDir, plus the error behind an "unknown" so it can be reported. */
+async function probeInDir(
+  dir: FsDirHandle,
+  name: string,
+): Promise<{ state: boolean | "unknown"; error?: unknown }> {
   try {
     await dir.getFileHandle(name);
-    return true;
+    return { state: true };
   } catch (err) {
-    return (err as { name?: string } | null)?.name === "NotFoundError" ? false : "unknown";
+    return (err as { name?: string } | null)?.name === "NotFoundError"
+      ? { state: false }
+      : { state: "unknown", error: err };
   }
 }
 
@@ -38,9 +63,13 @@ export async function existsInDir(dir: FsDirHandle, name: string): Promise<boole
  * holds one silently clobbered the existing file (issue #133). The existing file
  * now always wins its name and the incoming one steps aside.
  *
- * When a disk probe is inconclusive we take the current candidate and stop
- * probing, so the real `create: true` write surfaces the real error rather than
- * this helper inventing a different filename or looping.
+ * A candidate is only returned once the probe CONFIRMS it is absent. When a
+ * probe is inconclusive this throws `UnverifiedNameError` instead (#352): the
+ * caller would open the name with `create: true`, and if the probe failed
+ * transiently while the file does exist, that open succeeds and
+ * `createWritable()` truncates it, the very overwrite #133 fixed. It does not
+ * move on to the next candidate either: a persistent error would then skip or
+ * loop over names.
  *
  * `dir` is optional so callers with no folder target keep the pure in-batch
  * behaviour.
@@ -54,12 +83,36 @@ export async function uniqueName(used: Set<string>, name: string, dir?: FsDirHan
   let candidate = name;
   for (let n = 1; ; n += 1) {
     if (!used.has(candidate)) {
-      const onDisk = dir ? await existsInDir(dir, candidate) : false;
-      if (onDisk !== true) {
+      const probe = dir ? await probeInDir(dir, candidate) : { state: false };
+      if (probe.state === "unknown") throw new UnverifiedNameError(candidate, probe.error);
+      if (probe.state === false) {
         used.add(candidate);
         return candidate;
       }
     }
     candidate = `${stem} (${n})${ext}`;
   }
+}
+
+/**
+ * Resolve a de-duped name in `dir` and the opener for its writable, for one file
+ * of a folder receive.
+ *
+ * If the name cannot be verified free, `savedName` is undefined and `open`
+ * rejects with the `UnverifiedNameError` without touching the folder. A failed
+ * open poisons only that file's sink, so the rest of the batch still lands and
+ * nothing is ever opened with `create: true` on an unchecked name.
+ */
+export async function folderTarget(
+  used: Set<string>,
+  name: string,
+  dir: FsDirHandle,
+): Promise<{ savedName: string | undefined; open: () => Promise<FsWritable> }> {
+  let savedName: string;
+  try {
+    savedName = await uniqueName(used, name, dir);
+  } catch (err) {
+    return { savedName: undefined, open: () => Promise.reject(err) };
+  }
+  return { savedName, open: async () => (await dir.getFileHandle(savedName, { create: true })).createWritable() };
 }
