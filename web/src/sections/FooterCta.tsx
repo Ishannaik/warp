@@ -177,7 +177,8 @@ export default function FooterCta() {
             letterSpacing: ".06em",
           }}
         >
-          MIT LICENSED &middot; MADE FOR THE OPEN WEB
+          <FooterLink label="MIT LICENSED" href="https://github.com/Ishannaik/warp/blob/main/LICENSE" external />
+          {" "}&middot; MADE FOR THE OPEN WEB
         </div>
       </div>
     </section>
